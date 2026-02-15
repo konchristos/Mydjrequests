@@ -35,6 +35,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors = 'Please enter and confirm your password.';
         } elseif ($pw !== $pw2) {
             $errors = 'Passwords do not match.';
+        } elseif (($_POST['dj_software'] ?? '') === 'other' && trim((string)($_POST['dj_software_other'] ?? '')) === '') {
+            $errors = 'Please specify your DJ software when selecting Other.';
         } else {
             $auth = new AuthController();
             $res  = $auth->register($_POST);
@@ -175,6 +177,47 @@ require __DIR__ . '/auth_layout.php';
   Displayed on your public profile and used for DJ discovery
 </small>
 
+<!-- DJ SOFTWARE -->
+<div class="form-section">DJ Setup</div>
+
+<label>Which DJ software platform do you use? *</label>
+<select name="dj_software" id="dj_software" required>
+  <option value="">Select software</option>
+  <option value="rekordbox" <?php echo (($_POST['dj_software'] ?? '') === 'rekordbox') ? 'selected' : ''; ?>>Rekordbox</option>
+  <option value="serato" <?php echo (($_POST['dj_software'] ?? '') === 'serato') ? 'selected' : ''; ?>>Serato</option>
+  <option value="traktor" <?php echo (($_POST['dj_software'] ?? '') === 'traktor') ? 'selected' : ''; ?>>Traktor</option>
+  <option value="virtualdj" <?php echo (($_POST['dj_software'] ?? '') === 'virtualdj') ? 'selected' : ''; ?>>VirtualDJ</option>
+  <option value="djay" <?php echo (($_POST['dj_software'] ?? '') === 'djay') ? 'selected' : ''; ?>>djay / djay Pro</option>
+  <option value="other" <?php echo (($_POST['dj_software'] ?? '') === 'other') ? 'selected' : ''; ?>>Other</option>
+</select>
+
+<div id="djSoftwareOtherWrap" style="<?php echo (($_POST['dj_software'] ?? '') === 'other') ? '' : 'display:none;'; ?>">
+  <label>Please specify (Other)</label>
+  <input
+    type="text"
+    id="dj_software_other"
+    name="dj_software_other"
+    placeholder="e.g. Engine DJ, Mixxx..."
+    value="<?php echo e($_POST['dj_software_other'] ?? ''); ?>"
+  >
+</div>
+
+<label style="margin-top:12px;">Which premium subscriptions do you currently use?</label>
+<div style="display:grid;gap:8px;margin-top:8px;">
+  <label style="display:flex;align-items:center;gap:8px;margin:0;color:#cfcfd8;font-weight:400;">
+    <input type="checkbox" name="sub_spotify" value="1" <?php echo !empty($_POST['sub_spotify']) ? 'checked' : ''; ?> style="width:auto;height:auto;">
+    Spotify
+  </label>
+  <label style="display:flex;align-items:center;gap:8px;margin:0;color:#cfcfd8;font-weight:400;">
+    <input type="checkbox" name="sub_apple_music" value="1" <?php echo !empty($_POST['sub_apple_music']) ? 'checked' : ''; ?> style="width:auto;height:auto;">
+    Apple Music
+  </label>
+  <label style="display:flex;align-items:center;gap:8px;margin:0;color:#cfcfd8;font-weight:400;">
+    <input type="checkbox" name="sub_beatport" value="1" <?php echo !empty($_POST['sub_beatport']) ? 'checked' : ''; ?> style="width:auto;height:auto;">
+    Beatport
+  </label>
+</div>
+
 <!-- ACCOUNT -->
 <div class="form-section">Account access</div>
 
@@ -205,6 +248,22 @@ document.addEventListener('DOMContentLoaded', function () {
   var input = document.getElementById('browser_timezone');
   if (input && tz) {
     input.value = tz;
+  }
+
+  var softwareSelect = document.getElementById('dj_software');
+  var otherWrap = document.getElementById('djSoftwareOtherWrap');
+  var otherInput = document.getElementById('dj_software_other');
+  if (softwareSelect && otherWrap && otherInput) {
+    var toggleOther = function () {
+      var isOther = softwareSelect.value === 'other';
+      otherWrap.style.display = isOther ? '' : 'none';
+      otherInput.required = isOther;
+      if (!isOther) {
+        otherInput.value = '';
+      }
+    };
+    softwareSelect.addEventListener('change', toggleOther);
+    toggleOther();
   }
 });
 </script>

@@ -132,6 +132,8 @@ $settings = [
     'bpm_on_request_fill_year_enabled' => perfGetSetting($db, 'bpm_on_request_fill_year_enabled', '0'),
     'track_enrichment_worker_enabled' => perfGetSetting($db, 'track_enrichment_worker_enabled', '1'),
     'bpm_owner_user_id' => perfGetSetting($db, 'bpm_owner_user_id', (string)((int)($_SESSION['dj_id'] ?? 0))),
+    'patron_payments_enabled_prod' => perfGetSetting($db, 'patron_payments_enabled_prod', perfGetSetting($db, 'patron_payments_enabled', '0')),
+    'patron_payments_enabled_dev' => perfGetSetting($db, 'patron_payments_enabled_dev', perfGetSetting($db, 'patron_payments_enabled', '0')),
 ];
 
 $queueCounts = [
@@ -210,6 +212,14 @@ include APP_ROOT . '/dj/layout.php';
 
             <div class="perf-row">
                 <div class="perf-help">BPM/Year display owner user ID: <strong><?php echo (int)$settings['bpm_owner_user_id']; ?></strong> (set to current admin when saving toggles)</div>
+            </div>
+
+            <div class="perf-row">
+                <div class="perf-help">
+                    Tips/Boost platform visibility:
+                    Production page: <strong><?php echo $settings['patron_payments_enabled_prod'] === '1' ? 'ENABLED' : 'DISABLED'; ?></strong>
+                    · Dev page: <strong><?php echo $settings['patron_payments_enabled_dev'] === '1' ? 'ENABLED' : 'DISABLED'; ?></strong>
+                </div>
             </div>
 
             <div class="perf-row">

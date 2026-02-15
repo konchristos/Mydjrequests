@@ -18,9 +18,22 @@ public function register(array $data): array
     $djName   = trim($data['dj_name'] ?? '');
     $country  = trim($data['country'] ?? '');
     $city     = trim($data['city'] ?? '');
+    $djSoftware = strtolower(trim((string)($data['dj_software'] ?? '')));
+    $djSoftwareOther = trim((string)($data['dj_software_other'] ?? ''));
+    $hasSpotify = !empty($data['sub_spotify']) ? 1 : 0;
+    $hasAppleMusic = !empty($data['sub_apple_music']) ? 1 : 0;
+    $hasBeatport = !empty($data['sub_beatport']) ? 1 : 0;
 
-    if ($email === '' || $password === '' || $name === '' || $country === '') {
+    if ($email === '' || $password === '' || $name === '' || $country === '' || $djSoftware === '') {
         return ['success' => false, 'message' => 'Missing required fields.'];
+    }
+
+    $allowedSoftware = ['rekordbox', 'serato', 'traktor', 'virtualdj', 'djay', 'other'];
+    if (!in_array($djSoftware, $allowedSoftware, true)) {
+        return ['success' => false, 'message' => 'Please select a valid DJ software option.'];
+    }
+    if ($djSoftware === 'other' && $djSoftwareOther === '') {
+        return ['success' => false, 'message' => 'Please specify your DJ software when selecting Other.'];
     }
 
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -48,6 +61,16 @@ public function register(array $data): array
         $country,
         $city ?: null,
         $trialEndsAt
+    );
+
+    // Save onboarding profile answers for future product personalization.
+    $this->saveUserOnboardingProfile(
+        $userId,
+        $djSoftware,
+        $djSoftware === 'other' ? $djSoftwareOther : null,
+        $hasSpotify,
+        $hasAppleMusic,
+        $hasBeatport
     );
 
     // Create free subscription record (initial free access)
@@ -91,6 +114,57 @@ public function register(array $data): array
         'success' => true,
         'message' => 'Registration successful. Please check your email to verify your account.'
     ];
+}
+
+private function ensureUserOnboardingProfileTable(): void
+{
+    $sql = "
+        CREATE TABLE IF NOT EXISTS user_onboarding_profiles (
+            user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+            dj_software VARCHAR(32) NOT NULL,
+            dj_software_other VARCHAR(255) DEFAULT NULL,
+            has_spotify TINYINT(1) NOT NULL DEFAULT 0,
+            has_apple_music TINYINT(1) NOT NULL DEFAULT 0,
+            has_beatport TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ";
+    db()->exec($sql);
+}
+
+private function saveUserOnboardingProfile(
+    int $userId,
+    string $djSoftware,
+    ?string $djSoftwareOther,
+    int $hasSpotify,
+    int $hasAppleMusic,
+    int $hasBeatport
+): void {
+    $this->ensureUserOnboardingProfileTable();
+
+    $stmt = db()->prepare("
+        INSERT INTO user_onboarding_profiles
+            (user_id, dj_software, dj_software_other, has_spotify, has_apple_music, has_beatport, created_at, updated_at)
+        VALUES
+            (:user_id, :dj_software, :dj_software_other, :has_spotify, :has_apple_music, :has_beatport, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+        ON DUPLICATE KEY UPDATE
+            dj_software = VALUES(dj_software),
+            dj_software_other = VALUES(dj_software_other),
+            has_spotify = VALUES(has_spotify),
+            has_apple_music = VALUES(has_apple_music),
+            has_beatport = VALUES(has_beatport),
+            updated_at = UTC_TIMESTAMP()
+    ");
+
+    $stmt->execute([
+        'user_id' => $userId,
+        'dj_software' => substr($djSoftware, 0, 32),
+        'dj_software_other' => $djSoftwareOther ? substr($djSoftwareOther, 0, 255) : null,
+        'has_spotify' => $hasSpotify ? 1 : 0,
+        'has_apple_music' => $hasAppleMusic ? 1 : 0,
+        'has_beatport' => $hasBeatport ? 1 : 0,
+    ]);
 }
 
 

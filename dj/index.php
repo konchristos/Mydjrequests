@@ -9,25 +9,78 @@ if (!$eventUuid) {
 
 $db = db();
 
-$stmt = $db->prepare("
-  SELECT 
+function djHasColumn(PDO $db, string $table, string $column): bool
+{
+    $stmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND COLUMN_NAME = ?
+    ");
+    $stmt->execute([$table, $column]);
+    return ((int)$stmt->fetchColumn()) > 0;
+}
+
+$hasTipsBoostOverride = djHasColumn($db, 'events', 'tips_boost_enabled');
+$eventSelect = "
+  SELECT
     id,
     uuid,
     title,
     event_date,
     location,
     is_active,
-    event_state
+    event_state" . ($hasTipsBoostOverride ? ", tips_boost_enabled" : "") . "
   FROM events
   WHERE uuid = ?
   LIMIT 1
-");
+";
+$stmt = $db->prepare($eventSelect);
 $stmt->execute([$eventUuid]);
 $event = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$event) {
     die("Event not found");
 }
+
+// Effective tips/boost visibility for DJ support tile:
+// global prod toggle AND (event override if set, else DJ default).
+$platformTipsBoostEnabled = false;
+try {
+    $settingsStmt = $db->prepare("
+        SELECT `value`
+        FROM app_settings
+        WHERE `key` IN ('patron_payments_enabled_prod', 'patron_payments_enabled')
+        ORDER BY FIELD(`key`, 'patron_payments_enabled_prod', 'patron_payments_enabled')
+        LIMIT 1
+    ");
+    $settingsStmt->execute();
+    $platformTipsBoostEnabled = ((string)$settingsStmt->fetchColumn() === '1');
+} catch (Throwable $e) {
+    $platformTipsBoostEnabled = false;
+}
+
+$djDefaultTipsBoostEnabled = false;
+try {
+    $userSettingStmt = $db->prepare("
+        SELECT default_tips_boost_enabled
+        FROM user_settings
+        WHERE user_id = ?
+        LIMIT 1
+    ");
+    $userSettingStmt->execute([(int)($event['user_id'] ?? 0)]);
+    $djDefaultTipsBoostEnabled = ((string)$userSettingStmt->fetchColumn() === '1');
+} catch (Throwable $e) {
+    $djDefaultTipsBoostEnabled = false;
+}
+
+$eventOverrideRaw = $event['tips_boost_enabled'] ?? null;
+$eventTipsBoostEnabled = ($eventOverrideRaw === null || $eventOverrideRaw === '')
+    ? $djDefaultTipsBoostEnabled
+    : ((int)$eventOverrideRaw === 1);
+
+$tipsBoostVisible = $platformTipsBoostEnabled && $eventTipsBoostEnabled;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -239,6 +292,7 @@ window.DJ_CONFIG = {
   eventTitle: "<?= htmlspecialchars($event['title']) ?>",
   eventDate: "<?= htmlspecialchars($event['event_date'] ?? '') ?>",
   eventState: "<?= htmlspecialchars($event['event_state']) ?>",
+  tipsBoostVisible: <?= $tipsBoostVisible ? 'true' : 'false' ?>,
   pollInterval: 10000
 };
 </script>

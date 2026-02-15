@@ -7,6 +7,7 @@ const DJ_CONFIG = window.DJ_CONFIG || {};
 const EVENT_ID  = DJ_CONFIG.eventId || null;
 const EVENT_UUID = DJ_CONFIG.eventUuid || null;
 const POLL_MS   = DJ_CONFIG.pollInterval || 10000
+const TIPS_BOOST_VISIBLE = !!DJ_CONFIG.tipsBoostVisible;
 
 if (!EVENT_ID) {
   console.error("❌ EVENT_ID missing — DJ page cannot function");
@@ -1848,12 +1849,19 @@ async function loadDjInsights() {
 loadDjRequests();
 loadDjMessages();
 loadDjMood();
-loadDjSupport();
+if (TIPS_BOOST_VISIBLE) {
+  loadDjSupport();
+} else {
+  document.getElementById('djSupportTile')?.classList.add('hidden');
+  document.getElementById('supportModal')?.classList.add('hidden');
+}
 loadDjInsights();
 
 setInterval(loadDjRequests, POLL_MS);
 setInterval(loadDjMessages, POLL_MS);
-setInterval(loadDjSupport, POLL_MS);
+if (TIPS_BOOST_VISIBLE) {
+  setInterval(loadDjSupport, POLL_MS);
+}
 setInterval(loadDjInsights, POLL_MS);
 setInterval(loadDjMood, 15000);
 
@@ -1934,6 +1942,7 @@ function renderVote(v) {
 let lastSupportTotal = null;
 
 async function loadDjSupport() {
+  if (!TIPS_BOOST_VISIBLE) return;
   const tile = document.getElementById('djSupportTile');
   if (!tile) return;
 

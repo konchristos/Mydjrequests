@@ -363,8 +363,9 @@ if (!empty($_SESSION['dj_id'])) {
     <i class="fa-solid fa-user"></i> Profile ▾
 </span>
 
-        <div class="profile-dropdown-menu">
+<div class="profile-dropdown-menu">
     <a href="<?php echo e(url('account/')); ?>">Account</a>
+    <a href="<?php echo e(url('dj/settings.php')); ?>">Settings</a>
     <a href="<?php echo e(url('dj/dj_profile_edit.php')); ?>">Public Profile</a>
     <a href="<?php echo e(url('dj/message_statuses.php')); ?>">Message Statuses</a>
     <a href="<?php echo e(url('dj/broadcasts.php')); ?>">Broadcast Messages</a>
@@ -393,7 +394,7 @@ if (!empty($_SESSION['dj_id'])) {
     </a>
 <?php endif; ?>
     
-    <a href="<?php echo e(url('dj/account_settings.php')); ?>">Account Settings</a>
+    <a href="<?php echo e(url('dj/settings.php')); ?>">Settings</a>
     <a href="<?php echo e(url('dj/dj_profile_edit.php')); ?>">Public Profile</a>
     <a href="<?php echo e(url('dj/logout.php')); ?>">Logout</a>
 </div>

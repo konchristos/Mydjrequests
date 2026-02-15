@@ -96,6 +96,63 @@ if (!$event || (int)$event['user_id'] !== $djId) {
     redirect('dj/events.php');
 }
 
+// Ensure per-event tip/boost override column exists.
+function ensureEventTipsBoostColumn(PDO $db): void
+{
+    $stmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'events'
+          AND COLUMN_NAME = 'tips_boost_enabled'
+    ");
+    $stmt->execute();
+    if ((int)$stmt->fetchColumn() === 0) {
+        $db->exec("ALTER TABLE events ADD COLUMN tips_boost_enabled TINYINT(1) NULL DEFAULT NULL");
+    }
+}
+
+ensureEventTipsBoostColumn($db);
+
+// Reload event to include any newly added column.
+$event = $eventModel->findById((int)$event['id']) ?: $event;
+
+// Global platform gate from app_settings (production patron page).
+$platformTipsBoostEnabled = false;
+try {
+    $stmt = $db->prepare("
+        SELECT `value`
+        FROM app_settings
+        WHERE `key` IN ('patron_payments_enabled_prod','patron_payments_enabled')
+        ORDER BY FIELD(`key`, 'patron_payments_enabled_prod','patron_payments_enabled')
+        LIMIT 1
+    ");
+    $stmt->execute();
+    $platformTipsBoostEnabled = ((string)$stmt->fetchColumn() === '1');
+} catch (Throwable $e) {
+    $platformTipsBoostEnabled = false;
+}
+
+// DJ default preference fallback from user settings.
+$djDefaultTipsBoostEnabled = false;
+try {
+    $stmt = $db->prepare("
+        SELECT default_tips_boost_enabled
+        FROM user_settings
+        WHERE user_id = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$djId]);
+    $djDefaultTipsBoostEnabled = ((string)$stmt->fetchColumn() === '1');
+} catch (Throwable $e) {
+    $djDefaultTipsBoostEnabled = false;
+}
+
+$eventTipsBoostOverrideRaw = $event['tips_boost_enabled'] ?? null;
+$eventTipsBoostEnabled = ($eventTipsBoostOverrideRaw === null || $eventTipsBoostOverrideRaw === '')
+    ? $djDefaultTipsBoostEnabled
+    : ((int)$eventTipsBoostOverrideRaw === 1);
+
 // Format event date for poster output
 $posterDate = $event['event_date'];
 if ($posterDate) {
@@ -684,6 +741,46 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
   color: #fff;
 }
 
+.tips-boost-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.tips-boost-status {
+  font-size: 13px;
+  color: #c9cad8;
+  margin-top: 4px;
+}
+
+.tips-boost-status strong {
+  color: #fff;
+}
+
+.tips-boost-toggle-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tips-boost-note {
+  font-size: 11px;
+  color: #9ea0af;
+  white-space: nowrap;
+}
+
+.btn-tips-on {
+  background: #2ecc71;
+  color: #000;
+}
+
+.btn-tips-off {
+  background: #6a6f7e;
+  color: #fff;
+}
+
 .event-upcoming {
   background: rgba(255,255,255,0.12);
   color: #fff;
@@ -1131,6 +1228,34 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 </div>
 </div>
+
+<?php if ($platformTipsBoostEnabled): ?>
+<!-- TIPS / BOOST SETTINGS -->
+<div class="section-card">
+    <div class="tips-boost-card-row">
+        <div style="min-width:280px;flex:1;">
+            <h2 style="margin-top:0;">Tips & Boost Settings</h2>
+            <p class="tips-boost-status">
+                Event setting: <strong><?php echo $eventTipsBoostEnabled ? 'ON' : 'OFF'; ?></strong><br>
+                Platform: <strong>ENABLED</strong>
+            </p>
+        </div>
+
+        <div class="tips-boost-toggle-wrap">
+            <button
+              id="toggleTipsBoostBtn"
+              type="button"
+              class="event-state-btn <?php echo $eventTipsBoostEnabled ? 'btn-tips-on' : 'btn-tips-off'; ?>"
+              data-event-id="<?php echo (int)$event['id']; ?>"
+              data-current-enabled="<?php echo $eventTipsBoostEnabled ? '1' : '0'; ?>"
+            >
+              Tips/Boost: <?php echo $eventTipsBoostEnabled ? 'ON' : 'OFF'; ?>
+            </button>
+            <span class="tips-boost-note">Per-event override</span>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- VIEW DJ PAGE (PROMINENT) -->
 <div class="section-card">
@@ -2192,6 +2317,38 @@ document.getElementById('revertUpcomingBtn')?.addEventListener('click', async fu
 
     } catch (e) {
         alert('Could not revert event.');
+        btn.disabled = false;
+    }
+});
+</script>
+
+<script>
+document.getElementById('toggleTipsBoostBtn')?.addEventListener('click', async function () {
+    const btn = this;
+    const eventId = btn.dataset.eventId;
+    const current = btn.dataset.currentEnabled === '1';
+    const next = current ? '0' : '1';
+
+    if (!confirm(`Set tips/boost for this event to ${next === '1' ? 'ON' : 'OFF'}?`)) return;
+
+    btn.disabled = true;
+
+    try {
+        const res = await fetch('/dj/api/event_tip_boost_toggle.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                event_id: eventId,
+                enabled: next
+            })
+        });
+
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Failed');
+
+        location.reload();
+    } catch (e) {
+        alert(e.message || 'Could not update tips/boost setting.');
         btn.disabled = false;
     }
 });

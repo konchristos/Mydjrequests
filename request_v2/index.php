@@ -6,16 +6,6 @@ require_once __DIR__ . '/../app/bootstrap_public.php';
 require_once __DIR__ . '/../app/config/stripe.php';
 
 $ENABLE_PATRON_PAYMENTS = false;
-try {
-    $stmt = db()->prepare("SELECT `value` FROM app_settings WHERE `key` IN ('patron_payments_enabled_dev','patron_payments_enabled') ORDER BY FIELD(`key`, 'patron_payments_enabled_dev','patron_payments_enabled') LIMIT 1");
-    $stmt->execute();
-    $v = $stmt->fetchColumn();
-    if ($v !== false) {
-        $ENABLE_PATRON_PAYMENTS = ((string)$v === '1');
-    }
-} catch (Throwable $e) {
-    // default stays false
-}
 
 
 // -------------------------
@@ -43,6 +33,47 @@ if (!$event) {
 // 2.5 Resolve event notice
 // -------------------------
 $db = db();
+
+// Dev request page toggle: app_settings.patron_payments_enabled_dev
+// Legacy fallback: app_settings.patron_payments_enabled
+try {
+    $stmt = $db->prepare("
+        SELECT `key`, `value`
+        FROM app_settings
+        WHERE `key` IN ('patron_payments_enabled_dev', 'patron_payments_enabled')
+    ");
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+    $raw = $rows['patron_payments_enabled_dev']
+        ?? $rows['patron_payments_enabled']
+        ?? '0';
+    $ENABLE_PATRON_PAYMENTS = ((string)$raw === '1');
+} catch (Throwable $e) {
+    // Leave false when app_settings is unavailable.
+}
+
+// Resolve per-event tips/boost visibility:
+// global app setting (dev) AND (event override if set, otherwise DJ default).
+$djDefaultTipsBoostEnabled = false;
+try {
+    $userSettingStmt = $db->prepare("
+        SELECT default_tips_boost_enabled
+        FROM user_settings
+        WHERE user_id = ?
+        LIMIT 1
+    ");
+    $userSettingStmt->execute([(int)$event['user_id']]);
+    $djDefaultTipsBoostEnabled = ((string)$userSettingStmt->fetchColumn() === '1');
+} catch (Throwable $e) {
+    $djDefaultTipsBoostEnabled = false;
+}
+
+$eventOverrideRaw = $event['tips_boost_enabled'] ?? null;
+$eventTipsBoostEnabled = $eventOverrideRaw === null || $eventOverrideRaw === ''
+    ? $djDefaultTipsBoostEnabled
+    : ((int)$eventOverrideRaw === 1);
+
+$ENABLE_PATRON_PAYMENTS = $ENABLE_PATRON_PAYMENTS && $eventTipsBoostEnabled;
 
 $eventState = $event['event_state'] ?? 'upcoming';
 
