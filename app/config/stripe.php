@@ -11,3 +11,4 @@ if (!defined('STRIPE_PUBLISHABLE_KEY')) {
 if (!defined('STRIPE_WEBHOOK_SECRET')) {
     define('STRIPE_WEBHOOK_SECRET', (string)mdjr_secret('STRIPE_WEBHOOK_SECRET', ''));
 }
+

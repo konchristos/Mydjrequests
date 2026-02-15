@@ -5,7 +5,7 @@ header('Content-Type: text/html; charset=UTF-8');
 require_once __DIR__ . '/../app/bootstrap_public.php';
 require_once __DIR__ . '/../app/config/stripe.php';
 
-$ENABLE_PATRON_PAYMENTS = false; // Set true when tipping/boost is ready for production.
+$ENABLE_PATRON_PAYMENTS = true; // Set true when tipping/boost is ready for production.
 
 
 // -------------------------
@@ -1113,6 +1113,45 @@ select.mdjr-menu {
     color: #fff;
 }
 
+.msg-tab-badge {
+    display: none;
+    min-width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: #ff2fd2;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 24px;
+    text-align: center;
+    padding: 0 5px;
+    box-shadow: 0 0 0 0 rgba(255, 47, 210, 0.55);
+}
+
+.msg-tab-badge.show {
+    display: inline-block;
+    animation: msgPulse 1.3s ease-out infinite;
+}
+
+.msg-tab-has-unread i {
+    display: none;
+}
+
+@keyframes msgPulse {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(255, 47, 210, 0.55);
+    }
+    70% {
+        transform: scale(1.08);
+        box-shadow: 0 0 0 9px rgba(255, 47, 210, 0);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(255, 47, 210, 0);
+    }
+}
+
 @media (max-width: 360px) {
     #mdjr-nav button span {
         display: none;
@@ -1159,6 +1198,7 @@ select.mdjr-menu {
 
     <button data-target="section-message">
         <i class="fa fa-comment"></i>
+        <span id="messageUnreadBadge" class="msg-tab-badge">0</span>
         <span>Message</span>
     </button>
 
@@ -1530,6 +1570,13 @@ const EVENT_TITLE = <?= json_encode($event['title']); ?>;
 const STRIPE_PUBLISHABLE_KEY = "<?= e(STRIPE_PUBLISHABLE_KEY); ?>";
 const ENABLE_PATRON_PAYMENTS = <?= $ENABLE_PATRON_PAYMENTS ? 'true' : 'false'; ?>;
 let currentActiveTab = "section-home";
+const MESSAGE_SEEN_KEY = "mdjr_message_seen_<?= e($uuid); ?>";
+const messageUnreadBadgeEl = document.getElementById("messageUnreadBadge");
+const messageTabBtnEl = document.querySelector('#mdjr-nav button[data-target="section-message"]');
+let messageThreadRowsCache = [];
+let messageSeenAnchor = null;
+let messageSeenLoaded = false;
+let messageReadTimer = null;
 
 
 /* =========================
@@ -1749,6 +1796,133 @@ function formatThreadTime(ts) {
     });
 }
 
+function isIncomingMessage(row) {
+    return row && (row.sender === "dj" || row.sender === "broadcast");
+}
+
+function getMessageRank(row) {
+    const created = String(row?.created_at || "");
+    const ms = created ? Date.parse(created.replace(" ", "T") + "Z") : 0;
+    const id = Number(row?.id || 0);
+    return { ms: Number.isFinite(ms) ? ms : 0, id };
+}
+
+function compareMessageRank(a, b) {
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    if (a.ms !== b.ms) return a.ms - b.ms;
+    return a.id - b.id;
+}
+
+function loadMessageSeenAnchor() {
+    if (messageSeenLoaded) return;
+    messageSeenLoaded = true;
+    try {
+        const raw = localStorage.getItem(MESSAGE_SEEN_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === "object") {
+                messageSeenAnchor = {
+                    ms: Number(parsed.ms || 0),
+                    id: Number(parsed.id || 0)
+                };
+            }
+        }
+    } catch (e) {}
+}
+
+function saveMessageSeenAnchor(anchor) {
+    messageSeenAnchor = anchor;
+    try {
+        localStorage.setItem(MESSAGE_SEEN_KEY, JSON.stringify(anchor));
+    } catch (e) {}
+}
+
+function latestIncomingAnchor(rows) {
+    let latest = null;
+    (rows || []).forEach(row => {
+        if (!isIncomingMessage(row)) return;
+        const rank = getMessageRank(row);
+        if (compareMessageRank(rank, latest) > 0) {
+            latest = rank;
+        }
+    });
+    return latest;
+}
+
+function markMessagesRead() {
+    const latest = latestIncomingAnchor(messageThreadRowsCache);
+    if (!latest) {
+        updateMessageUnreadBadge(0);
+        return;
+    }
+    saveMessageSeenAnchor(latest);
+    updateMessageUnreadBadge(0);
+}
+
+function scheduleMarkMessagesRead() {
+    if (messageReadTimer) {
+        clearTimeout(messageReadTimer);
+        messageReadTimer = null;
+    }
+    messageReadTimer = setTimeout(() => {
+        if (currentActiveTab === "section-message") {
+            markMessagesRead();
+        }
+    }, 3000);
+}
+
+function cancelMarkMessagesRead() {
+    if (messageReadTimer) {
+        clearTimeout(messageReadTimer);
+        messageReadTimer = null;
+    }
+}
+
+function updateMessageUnreadBadge(count) {
+    if (!messageUnreadBadgeEl) return;
+    if (!count || count <= 0) {
+        messageUnreadBadgeEl.textContent = "0";
+        messageUnreadBadgeEl.classList.remove("show");
+        if (messageTabBtnEl) {
+            messageTabBtnEl.classList.remove("msg-tab-has-unread");
+        }
+        return;
+    }
+    messageUnreadBadgeEl.textContent = count > 99 ? "99+" : String(count);
+    messageUnreadBadgeEl.classList.add("show");
+    if (messageTabBtnEl) {
+        messageTabBtnEl.classList.add("msg-tab-has-unread");
+    }
+}
+
+function recomputeMessageUnread(rows) {
+    loadMessageSeenAnchor();
+    messageThreadRowsCache = Array.isArray(rows) ? rows : [];
+
+    const incomingRows = messageThreadRowsCache.filter(isIncomingMessage);
+    if (!incomingRows.length) {
+        updateMessageUnreadBadge(0);
+        return;
+    }
+
+    let unread = 0;
+    if (!messageSeenAnchor) {
+        // First open/reopen should show backlog as unread.
+        unread = incomingRows.length;
+    } else {
+        unread = incomingRows.filter(row =>
+            compareMessageRank(getMessageRank(row), messageSeenAnchor) > 0
+        ).length;
+    }
+
+    updateMessageUnreadBadge(unread);
+    if (currentActiveTab === "section-message" && unread > 0) {
+        scheduleMarkMessagesRead();
+    }
+}
+
 function renderMessageThread(rows) {
     if (!messageThreadEl) return;
 
@@ -1782,7 +1956,9 @@ async function loadMessageThread() {
 
         if (!data.ok) return;
 
-        renderMessageThread(data.rows || []);
+        const rows = data.rows || [];
+        renderMessageThread(rows);
+        recomputeMessageUnread(rows);
 
         const blocked = data.guest_status === "blocked";
         const textEl = document.getElementById("message");
@@ -2530,6 +2706,9 @@ await openBoostFlow({
 
 let livePollTimer = null;
 let livePollingActive = false;
+let messageBadgePollTimer = null;
+let messageBadgePollingActive = false;
+const MESSAGE_BADGE_POLL_MS = 6000;
 
 function getPollIntervalForTab(tabId) {
     switch (tabId) {
@@ -2558,8 +2737,6 @@ async function runTabPollCycle() {
         if (typeof window.fetchMoodStats === "function") {
             window.fetchMoodStats();
         }
-    } else if (currentActiveTab === "section-message") {
-        loadMessageThread();
     } else if (currentActiveTab === "section-request" || currentActiveTab === "section-requests") {
         refreshRequests();
     }
@@ -2596,12 +2773,49 @@ function stopLivePolling() {
     }
 }
 
+async function runMessageBadgePoll() {
+    await loadMessageThread();
+}
+
+function scheduleNextMessageBadgePoll() {
+    if (!messageBadgePollingActive) return;
+    if (messageBadgePollTimer) {
+        clearTimeout(messageBadgePollTimer);
+        messageBadgePollTimer = null;
+    }
+    messageBadgePollTimer = setTimeout(async () => {
+        await runMessageBadgePoll();
+        scheduleNextMessageBadgePoll();
+    }, MESSAGE_BADGE_POLL_MS);
+}
+
+function startMessageBadgePolling() {
+    if (messageBadgePollingActive) return;
+    messageBadgePollingActive = true;
+    runMessageBadgePoll();
+    scheduleNextMessageBadgePoll();
+}
+
+function stopMessageBadgePolling() {
+    messageBadgePollingActive = false;
+    if (messageBadgePollTimer) {
+        clearTimeout(messageBadgePollTimer);
+        messageBadgePollTimer = null;
+    }
+}
+
 // Visibility API
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
         startLivePolling();
+        startMessageBadgePolling();
+        if (currentActiveTab === "section-message") {
+            scheduleMarkMessagesRead();
+        }
     } else {
         stopLivePolling();
+        stopMessageBadgePolling();
+        cancelMarkMessagesRead();
     }
 });
 
@@ -2609,6 +2823,7 @@ document.addEventListener("visibilitychange", () => {
 // Initial state
 if (document.visibilityState === "visible") {
     startLivePolling();
+    startMessageBadgePolling();
 }
 
 
@@ -3441,6 +3656,12 @@ function activateTab(targetId) {
         try {
             sessionStorage.setItem(tabStorageKey, targetId);
         } catch (e) {}
+
+        if (targetId === "section-message") {
+            scheduleMarkMessagesRead();
+        } else {
+            cancelMarkMessagesRead();
+        }
 
         // On tab change, refresh relevant data now and reschedule polling cadence.
         runTabPollCycle();

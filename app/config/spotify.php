@@ -1,10 +1,20 @@
 <?php
 // app/config/spotify.php
 
-// 1) Put your real Spotify API credentials here
-//    from https://developer.spotify.com/dashboard
-define('SPOTIFY_CLIENT_ID',     'ef773cfe093c4f9382afde1cee5599e5');
-define('SPOTIFY_CLIENT_SECRET', '26cb4899442b4eb3af050842b72a70c9');
+if (!function_exists('mdjr_secret')) {
+    function mdjr_secret(string $key, $default = '')
+    {
+        $env = getenv($key);
+        return ($env !== false && $env !== '') ? $env : $default;
+    }
+}
+
+if (!defined('SPOTIFY_CLIENT_ID')) {
+    define('SPOTIFY_CLIENT_ID', (string)mdjr_secret('SPOTIFY_CLIENT_ID', ''));
+}
+if (!defined('SPOTIFY_CLIENT_SECRET')) {
+    define('SPOTIFY_CLIENT_SECRET', (string)mdjr_secret('SPOTIFY_CLIENT_SECRET', ''));
+}
 
 // 2) Where to cache the access token
 //    Make sure this folder is writeable (or change path if needed)

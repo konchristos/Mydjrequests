@@ -49,10 +49,11 @@ function isTruthySetting(?string $v, bool $default = false): bool
     return in_array(strtolower(trim($v)), ['1', 'true', 'yes', 'on'], true);
 }
 
-$bpmFeatureEnabled = isTruthySetting(getAppSettingValue($db, 'bpm_fuzzy_on_request_enabled', '0'), false);
 $bpmOwnerId = (int)(getAppSettingValue($db, 'bpm_owner_user_id', '0') ?? '0');
 $currentDjId = (int)($_SESSION['dj_id'] ?? 0);
-$allowBpmMeta = $bpmFeatureEnabled && is_admin() && $bpmOwnerId > 0 && $currentDjId === $bpmOwnerId;
+// BPM display in DJ view is independent from queue-fuzzy toggle.
+// Queue toggle controls ingestion only (submit_song + worker), not display.
+$allowBpmMeta = is_admin() && $bpmOwnerId > 0 && $currentDjId === $bpmOwnerId;
 
 $sql = "
 SELECT

@@ -1,7 +1,20 @@
-
 .DS_Store
-app/.DS_Store
+*.log
+*.zip
+
+# Secrets
+.env
+/home/*/.secrets/
+mydjrequests.php.secrets-template
+
+# Runtime/debug artifacts
+api/public/debug_guest.log
+api/stripe/webhook.log
+app/debug_path.log
+BPM/_parse_debug.log
+
+# Uploaded raw sources
+BPM/uploads/
+
+# Dependencies (prefer composer install in deploy pipeline)
 vendor/
-
-.DS_Store
-app/.DS_Store

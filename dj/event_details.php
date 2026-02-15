@@ -1132,6 +1132,45 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </div>
 </div>
 
+<!-- VIEW DJ PAGE (PROMINENT) -->
+<div class="section-card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;">
+        <div style="min-width:280px;flex:1;">
+            <h2 style="margin-top:0;">View DJ Event Page</h2>
+            <p style="color:#bbb;margin-bottom:0;">
+                Open the DJ control page for this event.
+            </p>
+        </div>
+
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:10px;min-width:300px;">
+            <a
+                href="<?php echo e(url('dj/?event=' . $event['uuid'])); ?>"
+                target="_blank"
+                class="qr-prod-btn"
+                style="display:inline-flex;padding:12px 18px;font-size:16px;"
+            >
+                🎧 View DJ Event Page
+                <?php if ($isLiveEvent): ?>
+                    <span class="live-indicator">
+                        <span class="dot"></span> LIVE
+                    </span>
+                <?php endif; ?>
+            </a>
+
+            <?php if (is_admin()): ?>
+                <a
+                    href="<?php echo e(url('dj/index.dev.php?event=' . $event['uuid'])); ?>"
+                    target="_blank"
+                    class="qr-dev-btn"
+                    title="Development DJ Page"
+                >
+                    🧪 DJ Page V2
+                </a>
+            <?php endif; ?>
+        </div>
+    </div>
+</div>
+
 
 <!-- GUEST/PATRON LINK BLOCK -->
 <div class="section-card">
@@ -1181,33 +1220,10 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <div class="qr-header">
 
-    <?php if (is_admin()): ?>
-        <a
-            href="<?php echo e(url('dj/index.dev.php?event=' . $event['uuid'])); ?>"
-            target="_blank"
-            class="qr-dev-btn"
-            title="Development DJ Page"
-        >
-            🧪 DJ Page V2
-        </a>
-    <?php else: ?>
-        <span></span>
-    <?php endif; ?>
+    <span></span>
 
     <h2>Event QR Code</h2>
-
-    <a
-        href="<?php echo e(url('dj/?event=' . $event['uuid'])); ?>"
-        target="_blank"
-        class="qr-prod-btn"
-    >
-        🎧 View DJ Page
-        <?php if ($isLiveEvent): ?>
-            <span class="live-indicator">
-                <span class="dot"></span> LIVE
-            </span>
-        <?php endif; ?>
-    </a>
+    <span></span>
 
 </div>
 

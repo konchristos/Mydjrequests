@@ -5,7 +5,6 @@ header('Content-Type: text/html; charset=UTF-8');
 require_once __DIR__ . '/../app/bootstrap_public.php';
 require_once __DIR__ . '/../app/config/stripe.php';
 
-$ENABLE_PATRON_PAYMENTS = false; // Set true when tipping/boost is ready for production.
 
 
 // -------------------------
@@ -103,9 +102,7 @@ $stmt->execute([
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <title><?= e($event['title']); ?> – Requests</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<?php if ($ENABLE_PATRON_PAYMENTS): ?>
 <script src="https://js.stripe.com/v3/"></script>
-<?php endif; ?>
 
 
 <style>
@@ -184,161 +181,6 @@ input, textarea {
 
 .clear-btn {
     display: none;
-}
-
-.message-thread {
-    height: 280px;
-    overflow-y: auto;
-    margin-top: 12px;
-    margin-bottom: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px 8px;
-    border: 1px solid rgba(255,255,255,0.10);
-    border-radius: 12px;
-    background: rgba(8,8,15,0.55);
-    padding-right: 4px;
-}
-
-.thread-empty {
-    text-align: center;
-    color: #8d8d9a;
-    font-size: 13px;
-    padding: 10px 6px;
-}
-
-.thread-row {
-    display: flex;
-}
-
-.thread-row.guest {
-    justify-content: flex-end;
-}
-
-.thread-row.dj {
-    justify-content: flex-start;
-}
-
-.thread-bubble {
-    max-width: 74%;
-    border-radius: 14px;
-    padding: 4px 10px;
-    border: 1px solid rgba(255,255,255,0.12);
-    line-height: 1.32;
-    font-size: 14px;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.thread-row.guest .thread-bubble {
-    background: linear-gradient(135deg, #2f55ff, #326fff);
-    color: #fff;
-}
-
-.thread-row.dj .thread-bubble {
-    background: #1b1b27;
-    color: #e7e7f1;
-}
-
-.thread-row.broadcast {
-    justify-content: flex-start;
-}
-
-.thread-row.broadcast .thread-bubble {
-    max-width: 90%;
-    background: rgba(255, 47, 210, 0.16);
-    border: 1px solid rgba(255, 47, 210, 0.45);
-    color: #ffd8f5;
-}
-
-.thread-badge {
-    display: inline-block;
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-right: 6px;
-    padding: 2px 6px;
-    border-radius: 999px;
-    background: rgba(255, 47, 210, 0.25);
-    border: 1px solid rgba(255, 47, 210, 0.5);
-    color: #fff;
-}
-
-.thread-time {
-    display: block;
-    margin-top: 1px;
-    font-size: 11px;
-    opacity: 0.75;
-}
-
-.requests-stats {
-    display:flex;
-    gap:8px;
-    flex-wrap:wrap;
-    margin-top:8px;
-}
-
-.my-requests-header {
-    display:flex;
-    flex-direction:column;
-    gap:8px;
-}
-
-.my-requests-top {
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:10px;
-    flex-wrap:nowrap;
-}
-
-.my-requests-top h3 {
-    margin:0;
-}
-
-#requests_sort_my {
-    max-width: 210px;
-}
-
-.stat-pill {
-    display:inline-flex;
-    align-items:center;
-    gap:6px;
-    padding:4px 10px;
-    border-radius:999px;
-    font-size:12px;
-    border:1px solid rgba(255,255,255,0.18);
-    background:rgba(255,255,255,0.06);
-    color:#e9e9f7;
-}
-
-.rank-cup {
-    display:inline-flex;
-    align-items:center;
-    gap:4px;
-    margin-bottom:4px;
-    font-size:11px;
-    font-weight:700;
-    letter-spacing:.03em;
-    text-transform:uppercase;
-    padding:3px 8px;
-    border-radius:999px;
-    width:fit-content;
-}
-
-.rank-cup.gold {
-    color:#2b1a00;
-    background:linear-gradient(135deg,#ffd86b,#ffb300);
-}
-.rank-cup.silver {
-    color:#20212a;
-    background:linear-gradient(135deg,#f0f2f7,#aeb7c8);
-}
-.rank-cup.bronze {
-    color:#271708;
-    background:linear-gradient(135deg,#ffc08a,#b87333);
 }
 
 /* Buttons */
@@ -539,20 +381,17 @@ button.send-btn:hover {
 /* ===========================
    Requests List Scroll Cap
 =========================== */
-#myRequestsList,
-#allRequestsList {
+#myRequestsList {
     max-height: 720px;   /* ~9–10 items comfortably */
     overflow-y: auto;
     padding-right: 4px;
 }
 
 /* Subtle scrollbar styling (WebKit only, safe fallback elsewhere) */
-#myRequestsList::-webkit-scrollbar,
-#allRequestsList::-webkit-scrollbar {
+#myRequestsList::-webkit-scrollbar {
     width: 6px;
 }
-#myRequestsList::-webkit-scrollbar-thumb,
-#allRequestsList::-webkit-scrollbar-thumb {
+#myRequestsList::-webkit-scrollbar-thumb {
     background: rgba(255,255,255,0.2);
     border-radius: 6px;
 }
@@ -664,8 +503,7 @@ button.send-btn:hover {
         flex-wrap: wrap;          /* allow second row */
     }
 
-    #requests_sort_my,
-    #requests_sort_all {
+    #requests_sort {
         max-width: 150px;         /* prevent overflow */
         font-size: 12px;
         padding: 5px 8px;
@@ -1123,17 +961,6 @@ select.mdjr-menu {
     }
 }
 
-.tab-panel { display: none; }
-.tab-panel.active {
-    display: block;
-    animation: fadeTabIn .2s ease;
-}
-
-@keyframes fadeTabIn {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
 
 </style>
 </head>
@@ -1149,12 +976,12 @@ select.mdjr-menu {
 
     <button data-target="section-request">
         <i class="fa fa-music"></i>
-        <span>My Requests</span>
+        <span>Request</span>
     </button>
 
     <button data-target="section-requests">
         <i class="fa fa-list"></i>
-        <span>All Requests</span>
+        <span>Requests</span>
     </button>
 
     <button data-target="section-message">
@@ -1185,9 +1012,8 @@ select.mdjr-menu {
     Patron Page · V1.4 Preview
 </div>
 
-    <div class="tab-panel active" id="section-home">
     <!-- EVENT HEADER -->
-    <div class="event-card">
+    <div class="event-card" id="section-home">
         <h1><?= e($event['title']); ?></h1>
         <div class="event-meta">
             <div><strong>Date:</strong> <?= e($event['event_date'] ?: 'TBA'); ?></div>
@@ -1201,7 +1027,6 @@ select.mdjr-menu {
  <div id="noticeWrapper"></div>   
 
 
-<?php if ($ENABLE_PATRON_PAYMENTS): ?>
 <!-- SUPPORT THE DJ -->
 <div class="card stripe-tip-card">
     <div class="stripe-tip-inner">
@@ -1262,7 +1087,6 @@ select.mdjr-menu {
         Thank you for supporting the DJ
     </div>
 </div>
-<?php endif; ?>
 
 
     <!-- MOOD WIDGET -->
@@ -1279,12 +1103,10 @@ select.mdjr-menu {
         Saved automatically ✔
     </div>
 </div>
-    </div>
 
 
 <!-- SONG REQUEST FORM -->
-<div class="tab-panel" id="section-request">
-<div class="card request-card">
+<div class="card request-card" id="section-request">
     <h3>Request a Song 🎵</h3>
 
     <form id="songForm">
@@ -1333,11 +1155,17 @@ select.mdjr-menu {
     </form>
 </div>
 
-<div class="card" style="margin-top:16px;">
-    <div class="my-requests-header">
-        <div class="my-requests-top">
-            <h3>🎵 My Requests</h3>
-            <select id="requests_sort_my"
+
+
+<!-- MY REQUESTS TILE -->
+<div class="card" id="section-requests">
+    <div class="requests-header">
+        <h3 style="margin:0;">🎶 Requests</h3>
+
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+
+            <!-- View dropdown (replaces toggle) -->
+            <select id="requests_view"
                     style="
                         background:#11111a;
                         color:#fff;
@@ -1346,29 +1174,12 @@ select.mdjr-menu {
                         padding:6px 10px;
                         font-size:13px;
                     ">
-                <option value="last">Sort: Last Requested</option>
-                <option value="title">Sort: Title</option>
-                <option value="artist">Sort: Artist</option>
+                <option value="all">Show: All Requests</option>
+                <option value="mine">Show: My Requests</option>
             </select>
-        </div>
 
-        <div id="myRequestsStats" class="requests-stats"></div>
-    </div>
-
-    <div id="myRequestsList" style="margin-top:12px;"></div>
-</div>
-</div>
-
-
-
-<!-- MY REQUESTS TILE -->
-<div class="tab-panel" id="section-requests">
-<div class="card">
-    <div class="requests-header">
-        <h3 style="margin:0;">🎶 All Requests</h3>
-
-        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-            <select id="requests_sort_all"
+            <!-- Your existing sort dropdown stays -->
+            <select id="requests_sort"
                     style="
                         background:#11111a;
                         color:#fff;
@@ -1386,17 +1197,14 @@ select.mdjr-menu {
         </div>
     </div>
 
-    <div id="allRequestsList" style="margin-top:12px;"></div>
-</div>
+    <div id="myRequestsList" style="margin-top:12px;"></div>
 </div>
 
 
 
 <!-- MESSAGE FORM -->
-<div class="tab-panel" id="section-message">
-<div class="card message-card">
+<div class="card message-card" id="section-message">
     <h3>Send DJ a Message 💬</h3>
-    <div id="messageThread" class="message-thread"></div>
 
     <form id="messageForm">
         <input type="hidden" name="event_uuid" value="<?= e($uuid); ?>">
@@ -1411,7 +1219,6 @@ select.mdjr-menu {
         <div id="msgStatus" class="status"></div>
     </form>
 </div>
-</div>
 
 
 <?php
@@ -1422,9 +1229,8 @@ $profileModel = new DjProfile();
 $djProfile = $profileModel->findByUserId($event['user_id']);
 ?>
 
-<div class="tab-panel" id="section-contact">
 <?php if ($djProfile): ?>
-<div class="card dj-profile-card">
+<div class="card dj-profile-card" id="section-contact">
     <h3>Your DJ's Profile</h3>
 
     <?php if (!empty($djProfile['display_name'])): ?>
@@ -1507,15 +1313,7 @@ $djProfile = $profileModel->findByUserId($event['user_id']);
        Save to Contacts
     </a>
 </div>
-<?php else: ?>
-<div class="card dj-profile-card">
-    <h3>Your DJ's Profile</h3>
-    <div style="color:#bbb;font-size:14px;">
-        DJ profile details are not available for this event yet.
-    </div>
-</div>
 <?php endif; ?>
-</div>
 
 
 <div class="footer-note">
@@ -1528,15 +1326,12 @@ $djProfile = $profileModel->findByUserId($event['user_id']);
 const EVENT_UUID = "<?= e($uuid); ?>";
 const EVENT_TITLE = <?= json_encode($event['title']); ?>;
 const STRIPE_PUBLISHABLE_KEY = "<?= e(STRIPE_PUBLISHABLE_KEY); ?>";
-const ENABLE_PATRON_PAYMENTS = <?= $ENABLE_PATRON_PAYMENTS ? 'true' : 'false'; ?>;
-let currentActiveTab = "section-home";
 
 
 /* =========================
    MY SUPPORT CONFIRMATION
 ========================= */
 async function loadMySupportTile() {
-    if (!ENABLE_PATRON_PAYMENTS) return;
     try {
         const res = await fetch(
             "/api/public/get_my_support.php?event_uuid=" + encodeURIComponent(EVENT_UUID)
@@ -1726,81 +1521,6 @@ function normalizeTitle(title) {
 // =============================
 const messageForm = document.getElementById("messageForm");
 const msgStatus   = document.getElementById("msgStatus");
-const messageThreadEl = document.getElementById("messageThread");
-
-function escapeHtml(str) {
-    return String(str ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-}
-
-function formatThreadTime(ts) {
-    if (!ts) return "";
-    const d = new Date(ts.replace(" ", "T") + "Z");
-    return d.toLocaleString([], {
-        weekday: "short",
-        day: "numeric",
-        month: "short",
-        hour: "2-digit",
-        minute: "2-digit"
-    });
-}
-
-function renderMessageThread(rows) {
-    if (!messageThreadEl) return;
-
-    if (!rows || !rows.length) {
-        messageThreadEl.innerHTML = `<div class="thread-empty">No messages yet.</div>`;
-        return;
-    }
-
-    messageThreadEl.innerHTML = rows.map(row => {
-        let sender = 'guest';
-        if (row.sender === 'dj') sender = 'dj';
-        if (row.sender === 'broadcast') sender = 'broadcast';
-
-        const badge = sender === 'broadcast'
-            ? '<span class="thread-badge">Broadcast</span>'
-            : '';
-
-        return `<div class="thread-row ${sender}"><div class="thread-bubble">${badge}${escapeHtml(row.body || "")}<span class="thread-time">${formatThreadTime(row.created_at)}</span></div></div>`;
-    }).join("");
-
-    messageThreadEl.scrollTop = messageThreadEl.scrollHeight;
-}
-
-async function loadMessageThread() {
-    if (!messageThreadEl) return;
-    try {
-        const res = await fetch(
-            "/api/public/get_message_thread.php?event_uuid=" + encodeURIComponent("<?= e($uuid); ?>")
-        );
-        const data = await res.json();
-
-        if (!data.ok) return;
-
-        renderMessageThread(data.rows || []);
-
-        const blocked = data.guest_status === "blocked";
-        const textEl = document.getElementById("message");
-        const sendBtn = messageForm?.querySelector('button[type="submit"]');
-        if (textEl) {
-            textEl.disabled = blocked;
-            textEl.placeholder = blocked
-                ? "Messaging is unavailable for this event."
-                : "Type your message…";
-        }
-        if (sendBtn) {
-            sendBtn.disabled = blocked;
-            sendBtn.style.opacity = blocked ? "0.55" : "1";
-        }
-    } catch (e) {
-        console.warn("Message thread load failed", e);
-    }
-}
 
 
 messageForm.addEventListener("submit", async (e) => {
@@ -1815,12 +1535,7 @@ messageForm.addEventListener("submit", async (e) => {
 
     if (data.success) {
         msgStatus.textContent = "Message sent! 💬";
-        const textEl = document.getElementById("message");
-        if (textEl) {
-            textEl.value = "";
-            textEl.dispatchEvent(new Event("input"));
-        }
-        await loadMessageThread();
+        messageForm.reset();
     } else {
         msgStatus.textContent = data.message || "Something went wrong.";
     }
@@ -1961,8 +1676,6 @@ async function loadMyRequests() {
         const data = await res.json();
 
         if (!data.ok || !data.rows.length) {
-            myRequestsCache = [];
-            updateMyRequestStats();
             list.innerHTML = `
                 <div style="color:#777;font-size:14px;text-align:center;">
                     You haven’t requested any songs yet
@@ -1972,7 +1685,6 @@ async function loadMyRequests() {
 
         // ✅ cache
         myRequestsCache = data.rows;
-        updateMyRequestStats();
         
         myTrackKeys.clear();
 
@@ -1992,8 +1704,6 @@ data.rows.forEach(r => {
         renderMyRequests();
 
     } catch {
-        myRequestsCache = [];
-        updateMyRequestStats();
         list.innerHTML = `
             <div style="color:#777;font-size:14px;text-align:center;">
                 Unable to load requests
@@ -2020,7 +1730,7 @@ function timeAgo(ts) {
 // ALL REQUESTS (AGGREGATED)
 // =============================
 async function loadAllRequests() {
-    const list = document.getElementById("allRequestsList");
+    const list = document.getElementById("myRequestsList");
 
     try {
         const res = await fetch(
@@ -2029,8 +1739,6 @@ async function loadAllRequests() {
         const data = await res.json();
 
         if (!data.ok || !data.rows.length) {
-            allRequestsCache = [];
-            updateMyRequestStats();
             list.innerHTML = `
                 <div style="color:#777;font-size:14px;text-align:center;">
                     No requests yet
@@ -2039,12 +1747,9 @@ async function loadAllRequests() {
         }
 
         allRequestsCache = data.rows;
-        updateMyRequestStats();
         renderAllRequests();
 
     } catch {
-        allRequestsCache = [];
-        updateMyRequestStats();
         list.innerHTML = `
             <div style="color:#777;font-size:14px;text-align:center;">
                 Unable to load requests
@@ -2053,24 +1758,9 @@ async function loadAllRequests() {
 }
 
 
-function buildGroupKey(title, artist) {
-    return `${normalizeTitle(title || '')}::${(artist || '').trim().toLowerCase()}`;
-}
-
-function updateMyRequestStats() {
-    const statsEl = document.getElementById('myRequestsStats');
-    if (!statsEl) return;
-
-    const myRequestCount = myRequestsCache.length;
-
-    statsEl.innerHTML = `
-        <span class="stat-pill">🎵 ${myRequestCount} requests</span>
-    `;
-}
-
 function renderMyRequests() {
     const list = document.getElementById("myRequestsList");
-    const sortMode = document.getElementById("requests_sort_my").value;
+    const sortMode = document.getElementById("requests_sort").value;
 
     let rows = [...myRequestsCache];
 
@@ -2127,8 +1817,8 @@ function renderMyRequests() {
 
 
 function renderAllRequests() {
-    const list = document.getElementById("allRequestsList");
-    const sortMode = document.getElementById("requests_sort_all").value;
+    const list = document.getElementById("myRequestsList");
+    const sortMode = document.getElementById("requests_sort").value;
 
     if (!allRequestsCache.length) {
         list.innerHTML = `
@@ -2199,13 +1889,6 @@ Object.values(groups).forEach(g => {
         Number(g.vote_count || 0);
 });
 
-const popularityRank = new Map();
-Object.values(groups)
-    .sort((a, b) => b.popularity_count - a.popularity_count)
-    .slice(0, 3)
-    .forEach((g, idx) => {
-        popularityRank.set(buildGroupKey(g.base_title, g.artist), idx + 1);
-    });
 
 
     // -----------------------------------
@@ -2275,14 +1958,6 @@ el.innerHTML = `
     <div class="all-request-meta">
     
     
-        ${(() => {
-            const rank = popularityRank.get(buildGroupKey(group.base_title, group.artist));
-            if (rank === 1) return `<div class="rank-cup gold">🏆 1st</div>`;
-            if (rank === 2) return `<div class="rank-cup silver">🥈 2nd</div>`;
-            if (rank === 3) return `<div class="rank-cup bronze">🥉 3rd</div>`;
-            return "";
-        })()}
-
         <div class="all-request-title">${group.base_title}</div>
         
         
@@ -2293,7 +1968,7 @@ el.innerHTML = `
         </div>
 
 <div class="track-actions">
-${
+    ${
         group.isMine
             ? ''   // 🚫 hide vote button if mine
             : `
@@ -2309,7 +1984,6 @@ ${
               `
     }
 
-${ENABLE_PATRON_PAYMENTS ? `
 <button
     type="button"
     class="track-btn highlight-btn ${boosted ? 'boosted' : ''}"
@@ -2320,7 +1994,7 @@ ${ENABLE_PATRON_PAYMENTS ? `
     ${boosted ? 'disabled' : ''}
 >
     ${boosted ? '⚡ BOOSTED' : '🚀 BOOST'}
-</button>` : ``}
+</button>
 </div>
 
 
@@ -2375,10 +2049,10 @@ ${ENABLE_PATRON_PAYMENTS ? `
 
 
 // =============================
-// REQUESTS LOAD + SORT
+// REQUESTS VIEW DROPDOWN
 // =============================
-const requestsSortMy = document.getElementById("requests_sort_my");
-const requestsSortAll = document.getElementById("requests_sort_all");
+const requestsView = document.getElementById("requests_view");
+const requestsSort = document.getElementById("requests_sort");
 
 async function refreshRequests() {
     if (requestsFetchInProgress) return;
@@ -2387,29 +2061,33 @@ async function refreshRequests() {
     lockScrollPosition(); // 👈 ADD
 
     try {
-        await Promise.all([
-            loadMyRequests(),
-            loadAllRequests()
-        ]);
+        const view = requestsView.value;
+
+        if (view === "all") {
+            await loadAllRequests();
+        } else {
+            await loadMyRequests();
+        }
     } finally {
         requestsFetchInProgress = false;
     }
 }
 
-// Load both tabs on start.
+// Default: All Requests (for future voting/highlighting)
+requestsView.value = "all";
 refreshRequests();
 
-if (requestsSortAll) {
-    requestsSortAll.addEventListener("change", () => {
-        renderAllRequests();
-    });
-}
+// When view changes
+requestsView.addEventListener("change", refreshRequests);
 
-if (requestsSortMy) {
-    requestsSortMy.addEventListener("change", () => {
+// When sort changes
+requestsSort.addEventListener("change", () => {
+    if (requestsView.value === "all") {
+        renderAllRequests();
+    } else {
         renderMyRequests();
-    });
-}
+    }
+});
 
 
 
@@ -2505,7 +2183,6 @@ if (e.target.classList.contains("highlight-btn")) {
 
 // 🚀 BOOST (open modal, no redirect)
 if (e.target.classList.contains("highlight-btn")) {
-  if (!ENABLE_PATRON_PAYMENTS) return;
   e.preventDefault();
   e.stopPropagation();
 
@@ -2528,72 +2205,33 @@ await openBoostFlow({
 
 });
 
-let livePollTimer = null;
-let livePollingActive = false;
+let livePollInterval = null;
 
-function getPollIntervalForTab(tabId) {
-    switch (tabId) {
-        case "section-message":
-            return 8000;
-        case "section-request":
-        case "section-requests":
-            return 12000;
-        case "section-home":
-            return 30000;
-        case "section-contact":
-            return 0; // no background polling needed
-        default:
-            return 15000;
+function startLivePolling() {
+    if (livePollInterval) return;
+
+    refreshRequests();
+
+    if (typeof window.fetchMoodStats === "function") {
+        window.fetchMoodStats();
     }
-}
 
-async function runTabPollCycle() {
-    // Always keep event notice current except on Contact tab.
-    if (currentActiveTab !== "section-contact" && typeof fetchEventNotice === "function") {
+    livePollInterval = setInterval(() => {
+        refreshRequests();
         fetchEventNotice();
-    }
+        loadMySupportTile(); // 👈 ADD HERE
 
-    if (currentActiveTab === "section-home") {
-        loadMySupportTile();
         if (typeof window.fetchMoodStats === "function") {
             window.fetchMoodStats();
         }
-    } else if (currentActiveTab === "section-message") {
-        loadMessageThread();
-    } else if (currentActiveTab === "section-request" || currentActiveTab === "section-requests") {
-        refreshRequests();
-    }
-}
-
-function scheduleNextTabPoll() {
-    if (!livePollingActive) return;
-    if (livePollTimer) {
-        clearTimeout(livePollTimer);
-        livePollTimer = null;
-    }
-
-    const waitMs = getPollIntervalForTab(currentActiveTab);
-    if (waitMs <= 0) return;
-
-    livePollTimer = setTimeout(async () => {
-        await runTabPollCycle();
-        scheduleNextTabPoll();
-    }, waitMs);
-}
-
-function startLivePolling() {
-    if (livePollingActive) return;
-    livePollingActive = true;
-    runTabPollCycle();
-    scheduleNextTabPoll();
+    }, 30000);
 }
 
 function stopLivePolling() {
-    livePollingActive = false;
-    if (livePollTimer) {
-        clearTimeout(livePollTimer);
-        livePollTimer = null;
-    }
+    if (!livePollInterval) return;
+
+    clearInterval(livePollInterval);
+    livePollInterval = null;
 }
 
 // Visibility API
@@ -2615,8 +2253,13 @@ if (document.visibilityState === "visible") {
 // on load
 document.addEventListener("DOMContentLoaded", () => {
     // 🔔 Load notice immediately
-    if (typeof fetchEventNotice === "function") {
-        fetchEventNotice();
+    fetchEventNotice();
+    
+    // Immediate fetch so widgets don't sit in "Loading"
+    refreshRequests();
+
+    if (typeof window.fetchMoodStats === "function") {
+        window.fetchMoodStats();
     }
 
     startLivePolling();
@@ -2732,7 +2375,6 @@ function initNoticeBehaviour(type) {
 
 <script>
 document.querySelectorAll(".tip-preset").forEach(btn => {
-  if (!ENABLE_PATRON_PAYMENTS) return;
   btn.addEventListener("click", async () => {
     let amount;
 
@@ -3420,55 +3062,41 @@ document.addEventListener("DOMContentLoaded", () => {
 
 <script>
 const navButtons = document.querySelectorAll("#mdjr-nav button");
-const panels = document.querySelectorAll(".tab-panel");
-const tabStorageKey = "mdjr_active_tab_<?= e($uuid); ?>";
-
-function activateTab(targetId) {
-    let found = false;
-
-    panels.forEach(panel => {
-        const isActive = panel.id === targetId;
-        panel.classList.toggle("active", isActive);
-        if (isActive) found = true;
-    });
-
-    navButtons.forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.target === targetId);
-    });
-
-    if (found) {
-        currentActiveTab = targetId;
-        try {
-            sessionStorage.setItem(tabStorageKey, targetId);
-        } catch (e) {}
-
-        // On tab change, refresh relevant data now and reschedule polling cadence.
-        runTabPollCycle();
-        scheduleNextTabPoll();
-    }
-
-    return found;
-}
+const nav = document.getElementById("mdjr-nav");
+const navHeight = nav.offsetHeight;
 
 navButtons.forEach(btn => {
     btn.addEventListener("click", () => {
-        const targetId = btn.dataset.target;
-        if (!activateTab(targetId)) return;
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        const target = document.getElementById(btn.dataset.target);
+        if (!target) return;
+
+        const y =
+            target.getBoundingClientRect().top +
+            window.pageYOffset -
+            navHeight - 10;
+
+        window.scrollTo({ top: y, behavior: "smooth" });
     });
 });
 
-let initialTab = "section-home";
-try {
-    const savedTab = sessionStorage.getItem(tabStorageKey);
-    if (savedTab) {
-        initialTab = savedTab;
-    }
-} catch (e) {}
+const sections = [...navButtons].map(b =>
+    document.getElementById(b.dataset.target)
+);
 
-if (!activateTab(initialTab)) {
-    activateTab("section-home");
-}
+window.addEventListener("scroll", () => {
+    let current = null;
+
+    sections.forEach(sec => {
+        if (!sec) return;
+        if (sec.getBoundingClientRect().top <= navHeight + 20) {
+            current = sec.id;
+        }
+    });
+
+    navButtons.forEach(b =>
+        b.classList.toggle("active", b.dataset.target === current)
+    );
+});
 </script>
 
 </body>

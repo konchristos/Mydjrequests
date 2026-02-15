@@ -205,7 +205,7 @@ include APP_ROOT . '/dj/layout.php';
                     <input type="checkbox" name="bpm_fuzzy_on_request_enabled" value="1" <?php echo $settings['bpm_fuzzy_on_request_enabled'] === '1' ? 'checked' : ''; ?>>
                     Enable queued fuzzy enrichment for new requests
                 </label>
-                <div class="perf-help">Flow: cache/link now, queue fuzzy worker later. Keep OFF to disable queue ingestion.</div>
+                <div class="perf-help">Flow: cache/link now, queue fuzzy worker later. Keep OFF to disable queue ingestion only. Existing/manual BPM display is unaffected.</div>
             </div>
 
             <div class="perf-row">

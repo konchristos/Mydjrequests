@@ -232,6 +232,8 @@ if (percentEl) {
     }
 }
 
+// Load immediately on first render.
+window.fetchMoodStats();
 
 }); // ✅ CLOSE DOMContentLoaded
 </script>

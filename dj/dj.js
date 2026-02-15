@@ -616,6 +616,21 @@ if (requestStatusFilter !== "all") {
   /* SORT (existing) */
 
 switch (currentSort) {
+  case "bpm":
+    rows.sort((a, b) => {
+      const aBpm = Number(a?.bpm);
+      const bBpm = Number(b?.bpm);
+      const aHas = Number.isFinite(aBpm) && aBpm > 0;
+      const bHas = Number.isFinite(bBpm) && bBpm > 0;
+
+      if (aHas && bHas) return aBpm - bBpm;
+      if (aHas) return -1;
+      if (bHas) return 1;
+
+      return (a.song_title || "").localeCompare(b.song_title || "");
+    });
+    break;
+
   case "last":
     rows.sort(
       (a, b) => new Date(b.last_requested_at) - new Date(a.last_requested_at)
@@ -2095,3 +2110,75 @@ if (broadcastForm) {
     await sendEventBroadcast();
   });
 }
+
+/* =========================================
+   COLUMN SPLITTERS (RESET ON RELOAD)
+========================================= */
+function initColumnSplitters() {
+  const app = document.querySelector('.dj-app');
+  const left = document.getElementById('splitterLeft');
+  const right = document.getElementById('splitterRight');
+  if (!app || !left || !right) return;
+
+  const mobile = window.matchMedia('(max-width: 768px)');
+  if (mobile.matches) return;
+
+  const MIN_LEFT = 300;
+  const MIN_MIDDLE = 460;
+  const MIN_RIGHT = 300;
+
+  let active = null;
+
+  const onMove = (clientX) => {
+    if (!active) return;
+    const rect = app.getBoundingClientRect();
+    const totalW = rect.width;
+    const splitW = 10;
+
+    const currentLeft = parseFloat(getComputedStyle(app).getPropertyValue('--left-col-width')) || 420;
+    const currentRight = parseFloat(getComputedStyle(app).getPropertyValue('--right-col-width')) || 360;
+
+    if (active === 'left') {
+      let nextLeft = clientX - rect.left;
+      const maxLeft = totalW - currentRight - MIN_MIDDLE - (splitW * 2);
+      nextLeft = Math.max(MIN_LEFT, Math.min(nextLeft, maxLeft));
+      app.style.setProperty('--left-col-width', `${Math.round(nextLeft)}px`);
+      return;
+    }
+
+    if (active === 'right') {
+      let nextRight = rect.right - clientX;
+      const maxRight = totalW - currentLeft - MIN_MIDDLE - (splitW * 2);
+      nextRight = Math.max(MIN_RIGHT, Math.min(nextRight, maxRight));
+      app.style.setProperty('--right-col-width', `${Math.round(nextRight)}px`);
+    }
+  };
+
+  const onPointerMove = (e) => onMove(e.clientX);
+
+  const stopDrag = () => {
+    active = null;
+    app.classList.remove('is-resizing');
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup', stopDrag);
+  };
+
+  const startDrag = (which) => {
+    active = which;
+    app.classList.add('is-resizing');
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', stopDrag, { once: true });
+  };
+
+  left.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    startDrag('left');
+  });
+
+  right.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    startDrag('right');
+  });
+}
+
+document.addEventListener('DOMContentLoaded', initColumnSplitters);

@@ -1,1 +1,25 @@
 
+[2026-02-13 19:38:32] --- parseRekordboxTxt() START ---
+[2026-02-13 19:38:32] File path: /home/mydjrequests/public_html/BPM/uploads/rekordbox_1770971912.txt
+[2026-02-13 19:38:32] Detected encoding: UTF-16LE → converting to UTF-8
+[2026-02-13 19:38:32] Detected delimiter: "\t"
+[2026-02-13 19:38:32] Headers: ["#","Artwork","DJ Play Count","My Tag","Year","Track Title","Artist","Album","Genre","BPM","Rating","Time","Key","Date Added"]
+[2026-02-13 19:38:32] First data row: {"#":"1","Artwork":"","DJ Play Count":"0","My Tag":"","Year":"2013","Track Title":"***Flawless (feat. Chimamanda Ngozi Adichie)","Artist":"Beyonc\u00e9, Chimamanda Ngozi Adichie","Album":"BEYONC\u00c9 [Platinum Edition]","Genre":"Hip-Hop Pop Soul Neo Soul","BPM":"136.37","Rating":"","Time":"04:11","Key":"5A","Date Added":"2026-01-28"}
+[2026-02-13 19:38:32] Rows parsed: 215
+[2026-02-13 19:38:32] --- parseRekordboxTxt() END ---
+[2026-02-13 19:38:43] --- parseRekordboxTxt() START ---
+[2026-02-13 19:38:43] File path: /home/mydjrequests/public_html/BPM/uploads/rekordbox_1770971912.txt
+[2026-02-13 19:38:43] Detected encoding: UTF-16LE → converting to UTF-8
+[2026-02-13 19:38:43] Detected delimiter: "\t"
+[2026-02-13 19:38:43] Headers: ["#","Artwork","DJ Play Count","My Tag","Year","Track Title","Artist","Album","Genre","BPM","Rating","Time","Key","Date Added"]
+[2026-02-13 19:38:43] First data row: {"#":"1","Artwork":"","DJ Play Count":"0","My Tag":"","Year":"2013","Track Title":"***Flawless (feat. Chimamanda Ngozi Adichie)","Artist":"Beyonc\u00e9, Chimamanda Ngozi Adichie","Album":"BEYONC\u00c9 [Platinum Edition]","Genre":"Hip-Hop Pop Soul Neo Soul","BPM":"136.37","Rating":"","Time":"04:11","Key":"5A","Date Added":"2026-01-28"}
+[2026-02-13 19:38:43] Rows parsed: 215
+[2026-02-13 19:38:43] --- parseRekordboxTxt() END ---
+[2026-02-14 13:26:03] --- parseRekordboxTxt() START ---
+[2026-02-14 13:26:03] File path: /home/mydjrequests/public_html/BPM/uploads/rekordbox_1770971912.txt
+[2026-02-14 13:26:03] Detected encoding: UTF-16LE → converting to UTF-8
+[2026-02-14 13:26:03] Detected delimiter: "\t"
+[2026-02-14 13:26:03] Headers: ["#","Artwork","DJ Play Count","My Tag","Year","Track Title","Artist","Album","Genre","BPM","Rating","Time","Key","Date Added"]
+[2026-02-14 13:26:03] First data row: {"#":"1","Artwork":"","DJ Play Count":"0","My Tag":"","Year":"2013","Track Title":"***Flawless (feat. Chimamanda Ngozi Adichie)","Artist":"Beyonc\u00e9, Chimamanda Ngozi Adichie","Album":"BEYONC\u00c9 [Platinum Edition]","Genre":"Hip-Hop Pop Soul Neo Soul","BPM":"136.37","Rating":"","Time":"04:11","Key":"5A","Date Added":"2026-01-28"}
+[2026-02-14 13:26:03] Rows parsed: 215
+[2026-02-14 13:26:03] --- parseRekordboxTxt() END ---

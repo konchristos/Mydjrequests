@@ -39,8 +39,6 @@ if (!$event) {
 </head>
 
 <body class="dj-body">
-    
-<body>
 <div class="container">
     <div style="
     position: fixed;
@@ -54,8 +52,7 @@ if (!$event) {
     opacity: 0.75;
     z-index: 9999;
 ">
-    DJ Page · V2 Preview
-</div>    
+    DJ Page · V1.5 Preview</div>    
 
 <div class="dj-app">
 
@@ -66,6 +63,9 @@ if (!$event) {
   <div class="dj-controls">
     <select id="djSort">
       <option value="popularity">Popularity</option>
+      <?php if (is_admin()): ?>
+        <option value="bpm">BPM (Low to High)</option>
+      <?php endif; ?>
       <option value="last">Last Requested</option>
       <option value="title">Title</option>
     </select>
@@ -109,6 +109,8 @@ if (!$event) {
 </div>
     <div class="request-list"></div>
   </aside>
+
+  <div class="column-splitter" id="splitterLeft" role="separator" aria-label="Resize left panel" tabindex="0"></div>
 
   <!-- MIDDLE -->
 <main class="dj-detail">
@@ -189,6 +191,7 @@ if (!$event) {
 
 </main>
 
+  <div class="column-splitter" id="splitterRight" role="separator" aria-label="Resize right panel" tabindex="0"></div>
 
 <!-- RIGHT -->
 <aside class="dj-messages">

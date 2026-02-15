@@ -39,8 +39,6 @@ if (!$event) {
 </head>
 
 <body class="dj-body">
-    
-<body>
 <div class="container">
     <div style="
     position: fixed;
@@ -54,8 +52,7 @@ if (!$event) {
     opacity: 0.75;
     z-index: 9999;
 ">
-    DJ Page · V2
-</div>    
+    DJ Page · V1.4</div>    
 
 <div class="dj-app">
 
@@ -66,6 +63,9 @@ if (!$event) {
   <div class="dj-controls">
     <select id="djSort">
       <option value="popularity">Popularity</option>
+      <?php if (is_admin()): ?>
+        <option value="bpm">BPM (Low to High)</option>
+      <?php endif; ?>
       <option value="last">Last Requested</option>
       <option value="title">Title</option>
     </select>
@@ -110,6 +110,8 @@ if (!$event) {
     <div class="request-list"></div>
   </aside>
 
+  <div class="column-splitter" id="splitterLeft" role="separator" aria-label="Resize left panel" tabindex="0"></div>
+
   <!-- MIDDLE -->
 <main class="dj-detail">
     
@@ -140,24 +142,41 @@ if (!$event) {
 <!-- TOP WIDGETS ROW -->
 <div class="dj-top-widgets">
 
-    <!-- 💜 SUPPORT -->
-<div id="djSupportTile" class="dj-support-tile">
-  <div class="dj-tile-inner">
-    <div class="support-label">💜 Support</div>
-    <div id="djSupportAmount" class="support-amount">$112.00</div>
-    <div class="support-sub">Tips & boosts</div>
-  </div>
-</div>
-
-    <!-- 🎭 MOOD -->
-    <div id="djMood" class="dj-mood clickable"></div>
-
-    <!-- 📢 BROADCAST -->
-    <div id="djBroadcastTile" class="broadcast-tile dj-tile">
-      <div class="support-label">📢 Broadcast</div>
-      <div class="support-amount">Message</div>
-      <div class="support-sub">Send to patrons</div>
+  <div id="djSupportTile" class="dj-support-tile">
+    <div class="dj-tile-inner">
+      <div class="support-label">💜 Support</div>
+      <div id="djSupportAmount" class="support-amount">$0.00</div>
+      <div class="support-sub">Tips & boosts</div>
     </div>
+  </div>
+
+  <div id="djMood" class="dj-mood clickable"></div>
+
+  <div class="dj-insights-grid">
+    <button id="djBroadcastQuickTile" class="insight-tile" type="button">
+      <div class="insight-label">📢 Broadcast</div>
+      <div class="insight-value">Message</div>
+      <div class="insight-sub">Send to patrons</div>
+    </button>
+
+    <button id="djConnectedTile" class="insight-tile" type="button">
+      <div class="insight-label">👥 Connected</div>
+      <div id="djConnectedCount" class="insight-value">0</div>
+      <div class="insight-sub">Patrons joined</div>
+    </button>
+
+    <button id="djTopPatronsTile" class="insight-tile" type="button">
+      <div class="insight-label">🏆 Top Patron</div>
+      <div id="djTopPatronName" class="insight-value small">—</div>
+      <div id="djTopPatronMeta" class="insight-sub">No activity yet</div>
+    </button>
+
+    <div class="insight-tile">
+      <div class="insight-label">📈 Engagement</div>
+      <div id="djEngagementRate" class="insight-value">0%</div>
+      <div id="djEngagementMeta" class="insight-sub">0 active</div>
+    </div>
+  </div>
 
 </div>
   
@@ -172,6 +191,7 @@ if (!$event) {
 
 </main>
 
+  <div class="column-splitter" id="splitterRight" role="separator" aria-label="Resize right panel" tabindex="0"></div>
 
 <!-- RIGHT -->
 <aside class="dj-messages">
@@ -196,6 +216,16 @@ if (!$event) {
 
   <!-- Message list -->
   <div id="messageList"></div>
+  <div id="djMessageThread" class="dj-message-thread hidden"></div>
+
+  <div id="messageReplyBox" class="message-reply-box hidden">
+    <div id="replyGuestLabel" class="reply-guest-label">Reply target: none selected</div>
+    <textarea id="djReplyText" rows="2" placeholder="Type a private reply..."></textarea>
+    <div class="reply-actions">
+      <button id="djReplyCancel" type="button" class="reply-btn secondary">Cancel Reply</button>
+      <button id="djReplySend" type="button" class="reply-btn primary">Send Reply</button>
+    </div>
+  </div>
 
 </aside>
 
@@ -216,6 +246,7 @@ window.DJ_CONFIG = {
 
 
 <div id="messageActionSheet" class="message-actions hidden">
+  <button data-action="reply">Reply</button>
   <button data-action="filter">🔍 Filter by guest</button>
   <button data-action="mute">🔕 Mute guest</button>
   <button data-action="block">⛔ Block guest</button>
@@ -262,6 +293,47 @@ window.DJ_CONFIG = {
     
         </div>
     </div>
+</div>
+
+<div id="connectedPatronsModal" class="support-modal hidden">
+  <div class="support-modal-content insights-modal-content">
+    <div class="mood-modal-header">
+      <h3>👥 Connected Patrons</h3>
+      <button id="closeConnectedPatronsModal" type="button">✕</button>
+    </div>
+
+    <div id="connectedPatronsList" class="top-patrons-list"></div>
+  </div>
+</div>
+
+<div id="topPatronsModal" class="support-modal hidden">
+  <div class="support-modal-content insights-modal-content">
+    <div class="mood-modal-header">
+      <h3>🏆 Top Patrons</h3>
+      <button id="closeTopPatronsModal" type="button">✕</button>
+    </div>
+
+    <div id="topPatronsList" class="top-patrons-list"></div>
+  </div>
+</div>
+
+<div id="broadcastModal" class="support-modal hidden">
+  <div class="support-modal-content insights-modal-content">
+    <div class="mood-modal-header">
+      <h3>📢 Event Broadcast</h3>
+      <button id="closeBroadcastModal" type="button">✕</button>
+    </div>
+
+    <form id="broadcastForm" class="broadcast-form">
+      <p class="broadcast-help">Send to all patrons connected to this event. New patrons will also see this in their message history.</p>
+      <textarea id="broadcastMessage" name="message" rows="5" maxlength="1000" placeholder="Type your broadcast message..." required></textarea>
+      <div class="broadcast-form-actions">
+        <button type="button" class="reply-btn secondary" id="broadcastCancelBtn">Cancel</button>
+        <button type="submit" class="reply-btn primary" id="broadcastSendBtn">Send Broadcast</button>
+      </div>
+      <div id="broadcastStatus" class="broadcast-status"></div>
+    </form>
+  </div>
 </div>
 
 <!-- TIP MODAL -->
