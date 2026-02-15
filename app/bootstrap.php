@@ -63,6 +63,7 @@ $authBypassPaths = [
     '/dj/verify_2fa_email.php',
     '/dj/logout.php',
     '/feedback.php',
+    '/feedback_verify.php',
 
     '/api/auth/forgot_password.php',
     '/api/auth/reset_password.php',
@@ -190,5 +191,4 @@ if (!$isCli && !empty($_SESSION['dj_id']) && !empty($_SESSION['session_id'])) {
         exit;
     }
 }
-
 

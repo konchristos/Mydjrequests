@@ -53,6 +53,24 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
         letter-spacing: 0.5px;
     }
 
+    .nav-left {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+
+    .admin-left-link {
+        text-decoration: none;
+        color: #ff2fd2;
+        font-size: 14px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .admin-left-link:hover {
+        color: #ff70e3;
+    }
+
     .hamburger {
         font-size: 26px;
         cursor: pointer;
@@ -283,29 +301,26 @@ if (!empty($_SESSION['dj_id'])) {
 ?>
 
 <div class="navbar">
-    <div class="logo">
-    <a href="<?php echo e(url('dj/dashboard.php')); ?>" style="display:flex;align-items:center;">
-        <img
-            src="/assets/logo/MYDJRequests_Logo-white.png"
-            alt="MyDJRequests"
-            style="height:32px; width:auto;"
-        >
-    </a>
-</div>
+    <div class="nav-left">
+        <div class="logo">
+            <a href="<?php echo e(url('dj/dashboard.php')); ?>" style="display:flex;align-items:center;">
+                <img
+                    src="/assets/logo/MYDJRequests_Logo-white.png"
+                    alt="MyDJRequests"
+                    style="height:32px; width:auto;"
+                >
+            </a>
+        </div>
+        <?php if (is_admin()): ?>
+            <a href="<?php echo e(url('admin/dashboard.php')); ?>" class="admin-left-link">Admin</a>
+        <?php endif; ?>
+    </div>
 <div class="nav-links">
 
     <a href="<?php echo e(url('dj/dashboard.php')); ?>">Dashboard</a>
     <a href="<?php echo e(url('dj/events.php')); ?>">My Events</a>
     <a href="<?php echo e(url('dj/how_to.php')); ?>">How To</a>
     <a href="<?php echo e(url('dj/terms.php')); ?>">Terms</a>
-
-    
-    <?php if (is_admin()): ?>
-    <a href="<?php echo e(url('admin/dashboard.php')); ?>" style="color:#ff2fd2;">
-        Admin
-    </a>
-<?php endif; ?>
-
 
     <div class="notif-wrap">
         <span class="notif-bell" title="Notifications">

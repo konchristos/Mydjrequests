@@ -7,6 +7,19 @@ $pageBodyClass = 'admin-page';
 
 $db = db();
 
+// Mark this report as seen for current admin (used for dashboard "new" counter).
+try {
+    $seenKey = 'admin_seen_notify_signups_' . (int)($_SESSION['dj_id'] ?? 0);
+    $seenStmt = $db->prepare("
+        INSERT INTO app_settings (`key`, `value`)
+        VALUES (?, UTC_TIMESTAMP())
+        ON DUPLICATE KEY UPDATE `value` = UTC_TIMESTAMP()
+    ");
+    $seenStmt->execute([$seenKey]);
+} catch (Throwable $e) {
+    // Non-blocking.
+}
+
 // Fetch signups
 $stmt = $db->query("
     SELECT

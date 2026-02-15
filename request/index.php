@@ -5,7 +5,17 @@ header('Content-Type: text/html; charset=UTF-8');
 require_once __DIR__ . '/../app/bootstrap_public.php';
 require_once __DIR__ . '/../app/config/stripe.php';
 
-$ENABLE_PATRON_PAYMENTS = false; // Set true when tipping/boost is ready for production.
+$ENABLE_PATRON_PAYMENTS = false;
+try {
+    $settingsStmt = db()->prepare("SELECT `value` FROM app_settings WHERE `key` IN ('patron_payments_enabled_prod','patron_payments_enabled') ORDER BY FIELD(`key`, 'patron_payments_enabled_prod','patron_payments_enabled') LIMIT 1");
+    $settingsStmt->execute();
+    $settingVal = $settingsStmt->fetchColumn();
+    if ($settingVal !== false) {
+        $ENABLE_PATRON_PAYMENTS = ((string)$settingVal === '1');
+    }
+} catch (Throwable $e) {
+    // Keep payments OFF if setting/table is unavailable.
+}
 
 
 // -------------------------
