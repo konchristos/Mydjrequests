@@ -1,0 +1,689 @@
+## dj/terms.php
+NEW FILE
+
+```php
+<?php
+// dj/terms.php
+require_once __DIR__ . '/../app/bootstrap.php';
+require_dj_login();
+
+$userId = (int)($_SESSION['dj_id'] ?? 0);
+$userModel = new User();
+$user = $userModel->findById($userId);
+
+$config = file_exists(APP_ROOT . '/app/config/subscriptions.php')
+    ? require APP_ROOT . '/app/config/subscriptions.php'
+    : [];
+
+$termsVersion = (string)($config['terms_version'] ?? 'v1');
+$acceptedVersion = (string)($user['terms_accepted_version'] ?? '');
+$hasAccepted = ($acceptedVersion === $termsVersion);
+$termsTitle = 'Terms and Conditions';
+
+$error = '';
+
+// Safe return path
+$returnTo = $_GET['return'] ?? '/dj/dashboard.php';
+if (!is_string($returnTo) || $returnTo === '' || $returnTo[0] !== '/') {
+    $returnTo = '/dj/dashboard.php';
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if ($hasAccepted) {
+        redirect(ltrim($returnTo, '/'));
+        exit;
+    }
+
+    if (!verify_csrf_token()) {
+        $error = 'Invalid session. Please refresh and try again.';
+    } else {
+        $userModel->acceptTerms($userId, $termsVersion);
+        redirect(ltrim($returnTo, '/'));
+        exit;
+    }
+}
+
+$pageTitle = $termsTitle;
+require __DIR__ . '/layout.php';
+?>
+
+<style>
+.terms-wrap {
+    max-width: 760px;
+    margin: 0 auto;
+}
+
+.terms-card {
+    background: #111116;
+    border: 1px solid #1f1f29;
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.terms-card h1 {
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+.terms-card .meta {
+    color: #aaa;
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+
+.terms-card p,
+.terms-card li {
+    color: #d7d7df;
+    line-height: 1.6;
+}
+
+.terms-actions {
+    margin-top: 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.terms-actions input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #ff2fd2;
+}
+
+.btn-primary {
+    background: #ff2fd2;
+    color: #fff;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.error {
+    color: #ff8080;
+    margin: 10px 0 0;
+}
+</style>
+
+<div class="terms-wrap">
+    <div class="terms-card">
+        <h1><?php echo e($termsTitle); ?></h1>
+        <div class="meta">Version: <?php echo e($termsVersion); ?></div>
+
+        
+        <p>Welcome to MYDJREQUESTS. By creating an account or using the Service, you agree to these Terms.</p>
+
+        <p class="meta"><strong>Last updated:</strong> February 8, 2026</p>
+
+        <h2>1. About These Terms</h2>
+        <p>These Terms govern your access to and use of the MYDJREQUESTS platform (“Service”), operated by MYDJREQUESTS (ABN 22 842 315 565) (“we”, “us”, “our”). If you do not agree, do not use the Service.</p>
+
+        <h2>2. Availability and Territory</h2>
+        <p>The Service is available to DJs worldwide. You are responsible for ensuring your use complies with laws in your country or region.</p>
+
+        <h2>3. Eligibility</h2>
+        <p>You must be at least 13 years old to use the Service. If you are under 18, you must have permission from a parent or guardian.</p>
+
+        <h2>4. Accounts and Security</h2>
+        <p>You are responsible for keeping your login credentials secure and for all activity under your account. You must provide accurate information and keep it up to date.</p>
+
+        <h2>5. The Service</h2>
+        <p>MYDJREQUESTS provides tools for DJs to create public profiles, manage live events, and accept requests or messages from guests. We may add, modify, or remove features at any time.</p>
+
+        <h2>6. Trial / Free Access</h2>
+        <p>We currently provide free access. We may change or end free access at any time, including requiring a subscription or payment to continue use. If you have paid for a plan, your access continues for the paid period unless otherwise specified.</p>
+
+        <h2>7. Acceptable Use</h2>
+        <p>You must not:</p>
+        <ul>
+            <li>Use the Service for illegal, harmful, or abusive activity.</li>
+            <li>Post, transmit, or display content that is defamatory, hateful, harassing, obscene, or infringes intellectual property rights.</li>
+            <li>Attempt to gain unauthorised access to any account, system, or data.</li>
+            <li>Interfere with the Service, its infrastructure, or other users.</li>
+        </ul>
+        <p>We may suspend or terminate access where we reasonably believe these rules are breached.</p>
+
+        <h2>8. Content and Requests</h2>
+        <p>You are responsible for content you submit or display (including guest requests, messages, and DJ profile content). We do not actively monitor all content and are not responsible for user-generated content.</p>
+
+        <h2>9. Patrons, Guests, and Messaging</h2>
+        <p>Patrons (including guests submitting requests or messages) must use the Service respectfully and lawfully. You must not send abusive, threatening, harassing, or inappropriate messages to DJs or other users. We may block or suspend access for misuse, including repeated spam or abuse of messaging features.</p>
+        <p>Song requests are requests only. DJs are not required to play any particular request, and there is no guarantee a request will be played.</p>
+
+        <h2>10. Tips, Boosts, and Payments (Not Yet Active)</h2>
+        <p>Tips, boosts, and other paid features are not currently enabled. If and when paid features are introduced, additional payment terms will apply, and we may require acceptance of updated Terms.</p>
+        <p>When payments are enabled, transactions will be processed by a third-party payment provider (such as Stripe) and will be subject to their terms. Payments are generally non-refundable unless required by law. Tips are given as a gesture of goodwill and do not guarantee any specific outcome or service.</p>
+
+        <h2>11. Intellectual Property</h2>
+        <p>The Service, its branding, software, and content (excluding user-submitted content) are owned by or licensed to us. You must not copy, modify, distribute, or reverse-engineer any part of the Service unless permitted by law.</p>
+        <p>You grant us a non-exclusive, worldwide, royalty-free licence to use, display, and host your content for the purpose of operating the Service.</p>
+
+        <h2>12. Privacy</h2>
+        <p>Your use of the Service is also subject to our Privacy Policy. If you do not yet have a Privacy Policy, we strongly recommend you adopt one.</p>
+
+        <h2>13. Termination and Suspension</h2>
+        <p>We may suspend or terminate your access if you breach these Terms, or if we reasonably believe your access causes risk to the Service or other users. You may stop using the Service at any time.</p>
+
+        <h2>14. Disclaimers</h2>
+        <p>To the maximum extent permitted by law, the Service is provided “as is” and “as available”. We do not guarantee uninterrupted or error-free operation.</p>
+
+        <h2>15. Limitation of Liability</h2>
+        <p>To the maximum extent permitted by law, we are not liable for any indirect, incidental, special, consequential, or punitive loss arising from your use of the Service, including loss of profits, business, or data.</p>
+        <p>Where liability cannot be excluded under the Australian Consumer Law, our liability is limited (at our option) to supplying the service again or paying the cost of having the service supplied again.</p>
+
+        <h2>16. Indemnity</h2>
+        <p>You agree to indemnify us against any claim, loss, or damage arising from your breach of these Terms, your misuse of the Service, or any content you submit.</p>
+
+        <h2>17. Changes to These Terms</h2>
+        <p>We may update these Terms from time to time. If changes are material, we will provide notice. Continued use after changes means you accept the updated Terms.</p>
+
+        <h2>18. Governing Law</h2>
+        <p>These Terms are governed by the laws of Victoria, Australia. You submit to the non-exclusive jurisdiction of the courts of Victoria and the Commonwealth of Australia.</p>
+
+        <h2>19. Contact</h2>
+        <p>For questions or legal notices, contact: info@mydjrequests.com</p>
+
+<?php if ($error): ?>
+            <div class="error"><?php echo e($error); ?></div>
+        <?php endif; ?>
+
+        <?php if (!$hasAccepted): ?>
+        <form method="POST">
+            <?php echo csrf_field(); ?>
+            <div class="terms-actions">
+                <input type="checkbox" id="agree" required>
+                <label for="agree">I agree to the Terms and Conditions</label>
+            </div>
+
+            <div class="terms-actions" style="margin-top:14px;">
+                <button type="submit" class="btn-primary">Accept and Continue</button>
+            </div>
+        </form>
+<?php else: ?>
+        <p class="meta">You have already accepted these Terms.</p>
+<?php endif; ?>
+    </div>
+</div>
+
+```
+
+## terms.php
+NEW FILE
+
+```php
+<?php
+// public terms.php (no login required)
+$pageTitle = 'MYDJREQUESTS Terms and Conditions';
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8'); ?></title>
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon-v2.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            background: #0d0d0f;
+            color: #e5e5ef;
+        }
+
+        .wrap {
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 0 20px 60px;
+        }
+
+        .card {
+            background: #111116;
+            border: 1px solid #1f1f29;
+            border-radius: 14px;
+            padding: 28px;
+        }
+
+        h1, h2 {
+            color: #fff;
+        }
+
+        h1 { margin-top: 0; }
+        h2 { margin-top: 26px; }
+
+        p, li { line-height: 1.65; color: #d7d7df; }
+
+        .meta {
+            color: #aaa;
+            font-size: 14px;
+            margin-bottom: 18px;
+        }
+
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .brand img { height: 34px; }
+
+        footer {
+            text-align: center;
+            color: #777;
+            margin-top: 26px;
+        }
+
+        a { color: #ff2fd2; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="brand">
+            <a href="/">
+                <img src="/assets/logo/MYDJRequests_Logo-white.png" alt="MYDJREQUESTS">
+            </a>
+        </div>
+
+        <div class="card">
+            <h1>MYDJREQUESTS Terms and Conditions</h1>
+            <div class="meta"><strong>Last updated:</strong> February 8, 2026</div>
+
+            <h2>1. About These Terms</h2>
+            <p>These Terms govern your access to and use of the MYDJREQUESTS platform (“Service”), operated by MYDJREQUESTS (ABN 22 842 315 565) (“we”, “us”, “our”). If you do not agree, do not use the Service.</p>
+
+            <h2>2. Availability and Territory</h2>
+            <p>The Service is available to DJs worldwide. You are responsible for ensuring your use complies with laws in your country or region.</p>
+
+            <h2>3. Eligibility</h2>
+            <p>You must be at least 13 years old to use the Service. If you are under 18, you must have permission from a parent or guardian.</p>
+
+            <h2>4. Accounts and Security</h2>
+            <p>You are responsible for keeping your login credentials secure and for all activity under your account. You must provide accurate information and keep it up to date.</p>
+
+            <h2>5. The Service</h2>
+            <p>MYDJREQUESTS provides tools for DJs to create public profiles, manage live events, and accept requests or messages from guests. We may add, modify, or remove features at any time.</p>
+
+            <h2>6. Trial / Free Access</h2>
+            <p>We currently provide free access. We may change or end free access at any time, including requiring a subscription or payment to continue use. If you have paid for a plan, your access continues for the paid period unless otherwise specified.</p>
+
+            <h2>7. Acceptable Use</h2>
+            <p>You must not:</p>
+            <ul>
+                <li>Use the Service for illegal, harmful, or abusive activity.</li>
+                <li>Post, transmit, or display content that is defamatory, hateful, harassing, obscene, or infringes intellectual property rights.</li>
+                <li>Attempt to gain unauthorised access to any account, system, or data.</li>
+                <li>Interfere with the Service, its infrastructure, or other users.</li>
+            </ul>
+            <p>We may suspend or terminate access where we reasonably believe these rules are breached.</p>
+
+            <h2>8. Content and Requests</h2>
+            <p>You are responsible for content you submit or display (including guest requests, messages, and DJ profile content). We do not actively monitor all content and are not responsible for user-generated content.</p>
+
+            <h2>9. Patrons, Guests, and Messaging</h2>
+            <p>Patrons (including guests submitting requests or messages) must use the Service respectfully and lawfully. You must not send abusive, threatening, harassing, or inappropriate messages to DJs or other users. We may block or suspend access for misuse, including repeated spam or abuse of messaging features.</p>
+            <p>Song requests are requests only. DJs are not required to play any particular request, and there is no guarantee a request will be played.</p>
+
+            <h2>10. Tips, Boosts, and Payments (Not Yet Active)</h2>
+            <p>Tips, boosts, and other paid features are not currently enabled. If and when paid features are introduced, additional payment terms will apply, and we may require acceptance of updated Terms.</p>
+            <p>When payments are enabled, transactions will be processed by a third-party payment provider (such as Stripe) and will be subject to their terms. Payments are generally non-refundable unless required by law. Tips are given as a gesture of goodwill and do not guarantee any specific outcome or service.</p>
+
+            <h2>11. Intellectual Property</h2>
+            <p>The Service, its branding, software, and content (excluding user-submitted content) are owned by or licensed to us. You must not copy, modify, distribute, or reverse-engineer any part of the Service unless permitted by law.</p>
+            <p>You grant us a non-exclusive, worldwide, royalty-free licence to use, display, and host your content for the purpose of operating the Service.</p>
+
+            <h2>12. Privacy</h2>
+            <p>Your use of the Service is also subject to our Privacy Policy. If you do not yet have a Privacy Policy, we strongly recommend you adopt one.</p>
+
+            <h2>13. Termination and Suspension</h2>
+            <p>We may suspend or terminate your access if you breach these Terms, or if we reasonably believe your access causes risk to the Service or other users. You may stop using the Service at any time.</p>
+
+            <h2>14. Disclaimers</h2>
+            <p>To the maximum extent permitted by law, the Service is provided “as is” and “as available”. We do not guarantee uninterrupted or error-free operation.</p>
+
+            <h2>15. Limitation of Liability</h2>
+            <p>To the maximum extent permitted by law, we are not liable for any indirect, incidental, special, consequential, or punitive loss arising from your use of the Service, including loss of profits, business, or data.</p>
+            <p>Where liability cannot be excluded under the Australian Consumer Law, our liability is limited (at our option) to supplying the service again or paying the cost of having the service supplied again.</p>
+
+            <h2>16. Indemnity</h2>
+            <p>You agree to indemnify us against any claim, loss, or damage arising from your breach of these Terms, your misuse of the Service, or any content you submit.</p>
+
+            <h2>17. Changes to These Terms</h2>
+            <p>We may update these Terms from time to time. If changes are material, we will provide notice. Continued use after changes means you accept the updated Terms.</p>
+
+            <h2>18. Governing Law</h2>
+            <p>These Terms are governed by the laws of Victoria, Australia. You submit to the non-exclusive jurisdiction of the courts of Victoria and the Commonwealth of Australia.</p>
+
+            <h2>19. Contact</h2>
+            <p>For questions or legal notices, contact: info@mydjrequests.com</p>
+        </div>
+
+        <footer>
+            &copy; <?php echo date('Y'); ?> MYDJREQUESTS
+        </footer>
+    </div>
+</body>
+</html>
+
+```
+
+## dj/layout.php
+```diff
+--- a/dj/layout.php
++++ b/dj/layout.php
+@@ -224,6 +224,8 @@
+ 
+     <a href="<?php echo e(url('dj/dashboard.php')); ?>">Dashboard</a>
+     <a href="<?php echo e(url('dj/events.php')); ?>">My Events</a>
++    <a href="<?php echo e(url('dj/terms.php')); ?>">Terms</a>
++    <a href="<?php echo e(url('dj/terms.php')); ?>">Terms</a>
+     
+     <?php if (is_admin()): ?>
+     <a href="<?php echo e(url('admin/dashboard.php')); ?>" style="color:#ff2fd2;">
+```
+
+## dj/footer.php
+```diff
+--- a/dj/footer.php
++++ b/dj/footer.php
+@@ -1,7 +1,7 @@
+ </div> <!-- content -->
+ 
+ <footer style="text-align:center; padding:25px; color:#777; margin-top:40px;">
+-    &copy; <?php echo date("Y"); ?> MyDJRequests — DJ Panel
++    &copy; <?php echo date("Y"); ?> MyDJRequests — DJ Panel · <a href="/dj/terms.php" style="color:#aaa; text-decoration:none;">Terms</a>
+ </footer>
+ 
+ </body>
+```
+
+## app/config/helpers.php
+```diff
+--- a/app/config/helpers.php
++++ b/app/config/helpers.php
+@@ -79,10 +79,80 @@
+  * Require DJ login before accessing DJ tools
+  * If not logged in → redirect to login WITH key (if needed).
+  */
++function current_path(): string
++{
++    if (PHP_SAPI === 'cli') {
++        return '';
++    }
++
++    $uri = $_SERVER['REQUEST_URI'] ?? '';
++    if ($uri === '') {
++        return '';
++    }
++
++    return parse_url($uri, PHP_URL_PATH) ?? '';
++}
++
++
++/**
++ * Require DJ login before accessing DJ tools
++ * If not logged in → redirect to login WITH key (if needed).
++ * Also enforces trial auto-renew + terms acceptance (if enabled).
++ */
+ function require_dj_login(): void
+ {
+     if (!is_dj_logged_in()) {
+         header("Location: " . mdjr_url('dj/login.php'));
+         exit;
+     }
++
++    if (PHP_SAPI === 'cli') {
++        return;
++    }
++
++    $userId = (int)($_SESSION['dj_id'] ?? 0);
++    if ($userId <= 0) {
++        session_destroy();
++        header('Location: /dj/login.php');
++        exit;
++    }
++
++    $userModel = new User();
++    $user = $userModel->findById($userId);
++
++    if (!$user) {
++        session_destroy();
++        header('Location: /dj/login.php');
++        exit;
++    }
++
++    $configPath = APP_ROOT . '/app/config/subscriptions.php';
++    $config = file_exists($configPath) ? require $configPath : [];
++    $currentPath = current_path();
++
++    // ✅ Auto-renew free access using subscriptions table
++    if (!empty($config['auto_renew_trial'])) {
++        $autoDays = (int)($config['auto_renew_days'] ?? 30);
++        $autoDays = $autoDays > 0 ? $autoDays : 30;
++
++        $subscriptionModel = new Subscription();
++        $subscriptionModel->ensureFreeActive($userId, $autoDays);
++    }
++
++    // ✅ Terms acceptance gate (optional)
++    if (!empty($config['require_terms'])) {
++        $termsVersion = (string)($config['terms_version'] ?? 'v1');
++        $termsPath = '/dj/terms.php';
++
++        if ($currentPath !== $termsPath) {
++            $acceptedVersion = (string)($user['terms_accepted_version'] ?? '');
++
++            if ($acceptedVersion !== $termsVersion) {
++                $returnTo = $currentPath ?: '/dj/dashboard.php';
++                header('Location: /dj/terms.php?return=' . urlencode($returnTo));
++                exit;
++            }
++        }
++    }
+ }
++
+```
+
+## app/models/User.php
+```diff
+--- a/app/models/User.php
++++ b/app/models/User.php
+@@ -338,6 +338,40 @@
+     $stmt->execute([$userId]);
+ }
+ 
++public function renewTrial(int $userId, int $days): void
++{
++    $days = max(1, (int)$days);
++
++    // Use UTC to keep it consistent with other timestamps
++    $sql = "
++        UPDATE users
++        SET
++            trial_ends_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL {$days} DAY),
++            subscription_status = 'trial'
++        WHERE id = :id
++    ";
++
++    $stmt = $this->db->prepare($sql);
++    $stmt->execute(['id' => $userId]);
++}
++
++public function acceptTerms(int $userId, string $version): void
++{
++    $stmt = $this->db->prepare("
++        UPDATE users
++        SET
++            terms_accepted_at = UTC_TIMESTAMP(),
++            terms_accepted_version = :version
++        WHERE id = :id
++    ");
++
++    $stmt->execute([
++        'version' => $version,
++        'id'      => $userId,
++    ]);
++}
++
++
+ 
+ /*---------------------
+ //ADMIN USERS
+@@ -348,17 +382,21 @@
+ {
+     $sql = "
+         SELECT
+-            id,
+-            uuid,
+-            email,
+-            country_code,
+-            city,
+-            trial_ends_at,
+-            subscription_status,
+-            created_at,
+-            session_updated_at
+-        FROM users
+-        ORDER BY created_at DESC
++            u.id,
++            u.uuid,
++            u.email,
++            u.country_code,
++            u.city,
++            u.subscription_status,
++            u.created_at,
++            u.session_updated_at,
++            s.plan AS subscription_plan,
++            s.status AS subscription_status_current,
++            s.renews_at AS subscription_renews_at
++        FROM users u
++        LEFT JOIN subscriptions s
++            ON s.user_id = u.id
++        ORDER BY u.created_at DESC
+     ";
+ 
+     $stmt = $this->db->prepare($sql);
+```
+
+## app/models/Subscription.php
+NEW FILE
+
+```php
+<?php
+// app/models/Subscription.php
+
+class Subscription extends BaseModel
+{
+    public function findLatestByUserId(int $userId): ?array
+    {
+        $stmt = $this->db->prepare("
+            SELECT *
+            FROM subscriptions
+            WHERE user_id = :uid
+            ORDER BY id DESC
+            LIMIT 1
+        ");
+
+        $stmt->execute(['uid' => $userId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    public function createFree(int $userId, int $days): void
+    {
+        $days = max(1, (int)$days);
+
+        $stmt = $this->db->prepare("
+            INSERT INTO subscriptions (user_id, plan, status, renews_at, created_at)
+            VALUES (:uid, 'free', 'active', DATE_ADD(UTC_TIMESTAMP(), INTERVAL {$days} DAY), UTC_TIMESTAMP())
+        ");
+
+        $stmt->execute(['uid' => $userId]);
+    }
+
+    public function renewFree(int $subscriptionId, int $days): void
+    {
+        $days = max(1, (int)$days);
+
+        $stmt = $this->db->prepare("
+            UPDATE subscriptions
+            SET
+                plan = 'free',
+                status = 'active',
+                renews_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL {$days} DAY)
+            WHERE id = :id
+        ");
+
+        $stmt->execute(['id' => $subscriptionId]);
+    }
+
+    public function ensureFreeActive(int $userId, int $days): void
+    {
+        $row = $this->findLatestByUserId($userId);
+
+        if (!$row) {
+            $this->createFree($userId, $days);
+            return;
+        }
+
+        $renewsAt = $row['renews_at'] ?? null;
+        $expired = empty($renewsAt) || (strtotime($renewsAt . ' UTC') < time());
+        $status = strtolower((string)($row['status'] ?? ''));
+
+        if ($expired || $status !== 'active' || ($row['plan'] ?? '') !== 'free') {
+            $this->renewFree((int)$row['id'], $days);
+        }
+    }
+}
+
+```
+
+## app/controllers/AuthController.php
+```diff
+--- a/app/controllers/AuthController.php
++++ b/app/controllers/AuthController.php
+@@ -49,6 +49,10 @@
+         $city ?: null,
+         $trialEndsAt
+     );
++
++    // Create free subscription record (initial free access)
++    $subscriptionModel = new Subscription();
++    $subscriptionModel->createFree($userId, $trialDays);
+ 
+     // Generate email verification token
+     $rawToken = $this->userModel->createEmailVerificationToken($userId);
+```
+
+## app/config/subscriptions.php
+```diff
+--- a/app/config/subscriptions.php
++++ b/app/config/subscriptions.php
+@@ -0,0 +1,15 @@
++<?php
++// app/config/subscriptions.php
++
++return [
++    // Initial trial length on registration
++    'trial_days' => 30,
++
++    // Auto-renew trial when expired (free access until subscriptions launch)
++    'auto_renew_trial' => true,
++    'auto_renew_days'  => 30,
++
++    // Require Terms acceptance before accessing the DJ area
++    'require_terms' => true,
++    'terms_version' => '2026-02-08',
++];
+```
+

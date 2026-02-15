@@ -1,0 +1,9 @@
+RewriteEngine On
+
+# Do not rewrite real files or directories
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Public DJ profile by slug
+RewriteRule ^([a-z0-9-]+)/?$ public_profile.php?slug=$1 [L,QSA]

@@ -1,0 +1,13 @@
+MANIFEST: expected extraction paths relative to public_html
+app/helpers/notifications.php
+app/bootstrap.php
+app/models/BugReport.php
+app/models/Feedback.php
+dj/layout.php
+dj/notification_read.php
+dj/bug_new.php
+dj/bug_view.php
+admin/bug_view.php
+admin/broadcasts.php
+admin/dashboard.php
+feedback.php

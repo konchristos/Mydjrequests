@@ -1,0 +1,175 @@
+
+/* =========================
+   ADMIN PAGE OVERRIDES
+========================= */
+/* ===== Admin layout overrides ===== */
+
+body.admin-page .content {
+    max-width: none;
+    width: 100%;
+    padding: 20px 30px;
+}
+
+/* ===== Admin table ===== */
+
+.admin-table {
+    width: 80%;
+    border-collapse: collapse;
+}
+
+.admin-table th,
+.admin-table td {
+    padding: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    text-align: left;
+}
+
+.admin-table th {
+    font-weight: 600;
+    opacity: 0.8;
+}
+
+/* ===== Status colours ===== */
+
+.admin-status-trial {
+    color: #ffcc00;
+    font-weight: 600;
+}
+
+.admin-status-active {
+    color: #4caf50;
+    font-weight: 600;
+}
+
+.admin-status-cancelled {
+    color: #f44336;
+    font-weight: 600;
+}
+
+/* ===== Trial highlights ===== */
+
+.admin-trial-expired {
+    background: rgba(244, 67, 54, 0.12);
+}
+
+.admin-trial-soon {
+    background: rgba(255, 152, 0, 0.12);
+}
+
+/* ===== Admin self row ===== */
+
+.admin-me {
+    background: rgba(77, 163, 255, 0.08);
+}
+
+/* ===== Filters ===== */
+
+.admin-filters input,
+.admin-filters select {
+    background: #111;
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+}
+
+
+/* =========================
+   ADMIN DASHBOARD TILES
+========================= */
+
+
+.admin-card {
+    position: relative;
+    background: linear-gradient(180deg, #111 0%, #0b0b0f 100%);
+    border: 1px solid #1f1f29;
+    border-radius: 14px;
+    padding: 22px;
+    text-decoration: none;
+    color: #fff;
+    transition: all 0.2s ease;
+}
+
+.admin-card::after {
+    content: "→";
+    position: absolute;
+    right: 18px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    transition: 0.2s;
+}
+
+.admin-card:hover::after {
+    opacity: 0.8;
+}
+
+.admin-card:hover {
+    border-color: #ff2fd2;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+    transform: translateY(-3px);
+}
+
+.admin-card h3 {
+    margin: 0 0 8px;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.admin-card p {
+    margin: 0;
+    font-size: 14px;
+    color: #b5b5b5;
+}
+
+/* =========================
+   ADMIN DASHBOARD
+========================= */
+
+
+body.admin-page .admin-wrap {
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+body.admin-page .content .admin-dashboard {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 340px));
+    gap: 16px;
+    justify-content: start;
+}
+
+
+
+
+
+/* =========================
+   ADMIN REPORT WIDTH
+========================= */
+
+body.admin-page .admin-report {
+    width: 100%;
+}
+
+body.admin-page .admin-report .admin-table {
+    width: 100%;
+}
+
+body.admin-page .admin-report {
+    max-width: 1800px;
+    margin: 0 auto;
+}
+
+
+.admin-table th[data-sort]:hover {
+    color: #ff2fd2;
+}
+
+
+
+
+
+
+
+.admin-bug-resolved {
+    background: rgba(76, 175, 80, 0.12);
+}

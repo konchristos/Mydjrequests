@@ -1,0 +1,93 @@
+/* GLOBAL DARK THEME */
+
+body {
+    margin: 0;
+    font-family: 'Inter', sans-serif;
+    background: #0d0d0f;
+    color: #fff;
+}
+
+a {
+    color: #ff2fd2;
+    text-decoration: none;
+}
+a:hover {
+    color: #ff4ae0;
+}
+
+.container {
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 20px;
+}
+
+.card {
+    background: #1a1a1f;
+    border: 1px solid #292933;
+    border-radius: 8px;
+    padding: 25px;
+    margin-bottom: 25px;
+}
+
+h1, h2, h3 {
+    color: #ff2fd2;
+}
+
+input, textarea, select {
+    width: 100%;
+    padding: 12px;
+    margin-top: 6px;
+    margin-bottom: 16px;
+    border-radius: 6px;
+    border: 1px solid #292933;
+    background: #0f0f14;
+    color: #fff;
+    font-size: 16px;
+}
+
+button, .btn-primary {
+    padding: 12px 20px;
+    background: #ff2fd2;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+}
+button:hover, .btn-primary:hover {
+    background: #ff4ae0;
+}
+
+header {
+    padding: 20px 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid #292933;
+}
+
+.logo {
+    font-size: 24px;
+    font-weight: 700;
+    color: #ff2fd2;
+}
+
+nav a {
+    margin-left: 25px;
+    color: #eee;
+    text-decoration: none;
+}
+nav a:hover {
+    color: white;
+}
+
+/* DJ Dashboard list */
+.list-item {
+    padding: 15px;
+    background: #1a1a1f;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px solid #292933;
+}
