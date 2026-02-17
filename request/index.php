@@ -93,17 +93,9 @@ $noticeBody  = $notice['body'] ?? null;
 
 if ($noticeBody) {
     $djName = $dj['dj_name'] ?: $dj['name'] ?: '';
-
-    if ($djName) {
-        $noticeBody = str_replace('{{DJ_NAME}}', $djName, $noticeBody);
-    } else {
-        // Graceful fallback if DJ name not set
-        $noticeBody = str_replace(
-            'Welcome! {{DJ_NAME}} invites you to submit song requests for the event.',
-            'Welcome! You can submit song requests for the event.',
-            $noticeBody
-        );
-    }
+    $eventName = trim((string)($event['title'] ?? ''));
+    $noticeBody = str_replace('{{DJ_NAME}}', $djName, $noticeBody);
+    $noticeBody = str_replace('{{EVENT_NAME}}', $eventName, $noticeBody);
 }
 
 

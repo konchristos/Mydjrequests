@@ -77,7 +77,6 @@ try {
       SELECT id, message AS body, created_at, 'broadcast' AS sender
       FROM event_broadcast_messages
       WHERE event_id = :event_id
-        AND deleted_at IS NULL
       ORDER BY created_at DESC
       LIMIT 200
     "
@@ -89,6 +88,36 @@ try {
 }
 
 $rows = array_merge($guestRows, $djRows, $broadcastRows);
+
+$djName = '';
+try {
+    $djStmt = $db->prepare("
+      SELECT dj_name, name
+      FROM users
+      WHERE id = :id
+      LIMIT 1
+    ");
+    $djStmt->execute([':id' => (int)$_SESSION['dj_id']]);
+    $dj = $djStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    $djName = (string)($dj['dj_name'] ?? '');
+    if ($djName === '') {
+        $djName = (string)($dj['name'] ?? '');
+    }
+} catch (Throwable $e) {
+    $djName = '';
+}
+$eventName = trim((string)($event['title'] ?? ''));
+foreach ($rows as &$row) {
+    if (($row['sender'] ?? '') !== 'broadcast') {
+        continue;
+    }
+    $body = (string)($row['body'] ?? '');
+    $body = str_replace('{{DJ_NAME}}', $djName, $body);
+    $body = str_replace('{{EVENT_NAME}}', $eventName, $body);
+    $row['body'] = $body;
+}
+unset($row);
+
 usort($rows, static function (array $a, array $b): int {
     $cmp = strcmp((string)($a['created_at'] ?? ''), (string)($b['created_at'] ?? ''));
     if ($cmp !== 0) return $cmp;

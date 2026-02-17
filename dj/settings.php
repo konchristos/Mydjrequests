@@ -64,6 +64,7 @@ function appSettingValue(PDO $db, string $key, string $default = '0'): string
 
 $error = '';
 $success = '';
+$defaultBroadcastTemplate = "🔊 You’re Live at {{EVENT_NAME}} with {{DJ_NAME}}\n\nUse this page to shape the vibe.\n• Home – Event info. Add your name so the DJ can give you a shout-out.\n• My Requests – Send in your songs and manage your requests.\n• All Requests – Check what the crowd is requesting.\n• Message – Chat directly with the DJ and receive live updates.\n• Contact – Connect and follow the DJ.\n\nDrop your requests and let’s make it a night to remember.";
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token()) {
@@ -75,12 +76,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hasAppleMusic = isset($_POST['has_apple_music']) ? 1 : 0;
         $hasBeatport = isset($_POST['has_beatport']) ? 1 : 0;
         $defaultTipsBoost = isset($_POST['default_tips_boost_enabled']) ? 1 : 0;
+        $defaultEventBroadcastEnabled = isset($_POST['default_event_broadcast_enabled']) ? 1 : 0;
+        $defaultEventBroadcastMessage = trim((string)($_POST['default_event_broadcast_message'] ?? ''));
 
         $allowed = ['rekordbox', 'serato', 'traktor', 'virtualdj', 'djay', 'other'];
         if (!in_array($software, $allowed, true)) {
             $error = 'Please select your DJ software platform.';
         } elseif ($software === 'other' && $softwareOther === '') {
             $error = 'Please specify your DJ software when selecting Other.';
+        } elseif ($defaultEventBroadcastEnabled === 1 && $defaultEventBroadcastMessage === '') {
+            $error = 'Add a personalized event broadcast message or turn the toggle off.';
+        } elseif (strlen($defaultEventBroadcastMessage) > 2000) {
+            $error = 'Default event broadcast message must be 2000 characters or fewer.';
         } else {
             if ($software !== 'other') {
                 $softwareOther = '';
@@ -110,9 +117,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $db->prepare("
                 INSERT INTO user_settings (user_id, default_tips_boost_enabled)
                 VALUES (?, ?)
-                ON DUPLICATE KEY UPDATE default_tips_boost_enabled = VALUES(default_tips_boost_enabled)
+                ON DUPLICATE KEY UPDATE
+                    default_tips_boost_enabled = VALUES(default_tips_boost_enabled)
             ");
             $stmt->execute([$djId, $defaultTipsBoost]);
+
+            $stmt = $db->prepare("
+                UPDATE users
+                SET default_broadcast_message = :message
+                WHERE id = :user_id
+                LIMIT 1
+            ");
+            $stmt->execute([
+                ':message' => ($defaultEventBroadcastEnabled === 1 && $defaultEventBroadcastMessage !== '') ? $defaultEventBroadcastMessage : null,
+                ':user_id' => $djId
+            ]);
 
             $success = 'Settings saved.';
         }
@@ -135,6 +154,18 @@ $profile = $profileStmt->fetch(PDO::FETCH_ASSOC) ?: [
 ];
 
 $defaultTipsBoostEnabled = userSettingValue($db, $djId, 'default_tips_boost_enabled', '0') === '1';
+$broadcastStmt = $db->prepare("
+    SELECT default_broadcast_message
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+");
+$broadcastStmt->execute([$djId]);
+$defaultEventBroadcastMessage = (string)($broadcastStmt->fetchColumn() ?: '');
+$defaultEventBroadcastEnabled = ($defaultEventBroadcastMessage !== '');
+if ($defaultEventBroadcastMessage === '') {
+    $defaultEventBroadcastMessage = $defaultBroadcastTemplate;
+}
 
 $prodEnabled = appSettingValue(
     $db,
@@ -258,6 +289,31 @@ require __DIR__ . '/layout.php';
                 </label>
                 <div class="settings-help">You can still override this per event.</div>
             </div>
+
+            <div class="settings-row">
+                <label>
+                    <input class="settings-check" type="checkbox" name="default_event_broadcast_enabled" value="1" <?php echo $defaultEventBroadcastEnabled ? 'checked' : ''; ?>>
+                    Enable personalized broadcast message by default on new events
+                </label>
+                <div class="settings-help">Turn off to stop auto-posting this message for new events.</div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label" for="default_event_broadcast_message">
+                    Personalized Event Broadcast Message
+                </label>
+                <textarea
+                    class="settings-input"
+                    id="default_event_broadcast_message"
+                    name="default_event_broadcast_message"
+                    rows="5"
+                    maxlength="2000"
+                    placeholder="Welcome to {{EVENT_NAME}} with {{DJ_NAME}}..."
+                ><?php echo e($defaultEventBroadcastMessage); ?></textarea>
+                <div class="settings-help">Variables supported: <code>{{DJ_NAME}}</code>, <code>{{EVENT_NAME}}</code>.</div>
+            </div>
+
+            <button type="submit" class="settings-btn">Save Event Defaults</button>
         </div>
 
         <button type="submit" class="settings-btn">Save Settings</button>

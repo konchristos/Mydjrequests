@@ -24,15 +24,6 @@ if (!$event) {
 
 $eventId = (int)$event['id'];
 
-if ($guestToken === '') {
-    echo json_encode([
-        'ok' => true,
-        'guest_status' => 'active',
-        'rows' => []
-    ]);
-    exit;
-}
-
 $db = db();
 
 $guestStatus = 'active';
@@ -57,49 +48,53 @@ try {
 }
 
 $guestRows = [];
-try {
-    $messagesStmt = $db->prepare("
-        SELECT
-          id,
-          message AS body,
-          created_at,
-          'guest' AS sender
-        FROM messages
-        WHERE event_id = :event_id
-          AND guest_token = :guest_token
-        ORDER BY created_at DESC
-        LIMIT 200
-    ");
-    $messagesStmt->execute([
-        ':event_id' => $eventId,
-        ':guest_token' => $guestToken
-    ]);
-    $guestRows = $messagesStmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (Throwable $e) {
-    $guestRows = [];
+if ($guestToken !== '') {
+    try {
+        $messagesStmt = $db->prepare("
+            SELECT
+              id,
+              message AS body,
+              created_at,
+              'guest' AS sender
+            FROM messages
+            WHERE event_id = :event_id
+              AND guest_token = :guest_token
+            ORDER BY created_at DESC
+            LIMIT 200
+        ");
+        $messagesStmt->execute([
+            ':event_id' => $eventId,
+            ':guest_token' => $guestToken
+        ]);
+        $guestRows = $messagesStmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        $guestRows = [];
+    }
 }
 
 $djRows = [];
-try {
-    $repliesStmt = $db->prepare("
-        SELECT
-          id,
-          message AS body,
-          created_at,
-          'dj' AS sender
-        FROM message_replies
-        WHERE event_id = :event_id
-          AND guest_token = :guest_token
-        ORDER BY created_at DESC
-        LIMIT 200
-    ");
-    $repliesStmt->execute([
-        ':event_id' => $eventId,
-        ':guest_token' => $guestToken
-    ]);
-    $djRows = $repliesStmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (Throwable $e) {
-    $djRows = [];
+if ($guestToken !== '') {
+    try {
+        $repliesStmt = $db->prepare("
+            SELECT
+              id,
+              message AS body,
+              created_at,
+              'dj' AS sender
+            FROM message_replies
+            WHERE event_id = :event_id
+              AND guest_token = :guest_token
+            ORDER BY created_at DESC
+            LIMIT 200
+        ");
+        $repliesStmt->execute([
+            ':event_id' => $eventId,
+            ':guest_token' => $guestToken
+        ]);
+        $djRows = $repliesStmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        $djRows = [];
+    }
 }
 
 $broadcastRows = [];
@@ -112,7 +107,6 @@ try {
           'broadcast' AS sender
         FROM event_broadcast_messages
         WHERE event_id = :event_id
-          AND deleted_at IS NULL
         ORDER BY created_at DESC
         LIMIT 200
     "
@@ -124,7 +118,90 @@ try {
     $broadcastRows = [];
 }
 
+// One-time backfill: seed initial broadcast from DJ default when none exists.
+if (empty($broadcastRows)) {
+    try {
+        $defaultStmt = $db->prepare("
+            SELECT default_broadcast_message
+            FROM users
+            WHERE id = :user_id
+            LIMIT 1
+        ");
+        $defaultStmt->execute([':user_id' => (int)$event['user_id']]);
+        $seedBody = trim((string)($defaultStmt->fetchColumn() ?: ''));
+
+        if ($seedBody !== '') {
+            $seedInsert = $db->prepare("
+                INSERT INTO event_broadcast_messages (
+                    event_id,
+                    dj_id,
+                    message,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    :event_id,
+                    :dj_id,
+                    :message,
+                    NOW(),
+                    NOW()
+                )
+            ");
+            $seedInsert->execute([
+                ':event_id' => $eventId,
+                ':dj_id' => (int)$event['user_id'],
+                ':message' => $seedBody
+            ]);
+
+            $broadcastStmt = $db->prepare("
+                SELECT
+                  id,
+                  message AS body,
+                  created_at,
+                  'broadcast' AS sender
+                FROM event_broadcast_messages
+                WHERE event_id = :event_id
+                ORDER BY created_at DESC
+                LIMIT 200
+            ");
+            $broadcastStmt->execute([':event_id' => $eventId]);
+            $broadcastRows = $broadcastStmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+    } catch (Throwable $e) {
+        // Keep endpoint resilient if broadcasts table/schema is unavailable.
+    }
+}
+
 $rows = array_merge($guestRows, $djRows, $broadcastRows);
+
+$djName = '';
+try {
+    $djStmt = $db->prepare("
+        SELECT dj_name, name
+        FROM users
+        WHERE id = :id
+        LIMIT 1
+    ");
+    $djStmt->execute([':id' => (int)$event['user_id']]);
+    $djRow = $djStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    $djName = (string)($djRow['dj_name'] ?? '');
+    if ($djName === '') {
+        $djName = (string)($djRow['name'] ?? '');
+    }
+} catch (Throwable $e) {
+    $djName = '';
+}
+$eventName = trim((string)($event['title'] ?? ''));
+foreach ($rows as &$row) {
+    if (($row['sender'] ?? '') !== 'broadcast') {
+        continue;
+    }
+    $body = (string)($row['body'] ?? '');
+    $body = str_replace('{{DJ_NAME}}', $djName, $body);
+    $body = str_replace('{{EVENT_NAME}}', $eventName, $body);
+    $row['body'] = $body;
+}
+unset($row);
+
 usort($rows, static function (array $a, array $b): int {
     $cmp = strcmp((string)($a['created_at'] ?? ''), (string)($b['created_at'] ?? ''));
     if ($cmp !== 0) {

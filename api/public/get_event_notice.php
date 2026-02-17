@@ -32,17 +32,15 @@ if (!$notice) {
     exit;
 }
 
-// Replace {{DJ_NAME}}
+// Replace variables
 $userModel = new User();
 $dj = $userModel->findById((int)$event['user_id']);
-$djName = $dj['dj_name'] ?: $dj['name'] ?: null;
+$djName = $dj['dj_name'] ?: $dj['name'] ?: '';
+$eventName = trim((string)($event['title'] ?? ''));
 
 $body = $notice['body'];
-if ($djName) {
-    $body = str_replace('{{DJ_NAME}}', $djName, $body);
-} else {
-    $body = str_replace('{{DJ_NAME}} ', '', $body);
-}
+$body = str_replace('{{DJ_NAME}}', $djName, $body);
+$body = str_replace('{{EVENT_NAME}}', $eventName, $body);
 
 echo json_encode([
     'ok'     => true,

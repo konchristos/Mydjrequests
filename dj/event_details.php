@@ -76,16 +76,10 @@ $guestNotice = resolveEventNotice(
 
 $guestNoticeBody = null;
 if ($guestNotice && !empty($guestNotice['body'])) {
-    // Replace {{DJ_NAME}} safely
-    if ($djDisplay && $djDisplay !== 'Your DJ') {
-        $guestNoticeBody = str_replace('{{DJ_NAME}}', $djDisplay, $guestNotice['body']);
-    } else {
-        $guestNoticeBody = str_replace(
-            'Welcome! {{DJ_NAME}} invites you to submit song requests for the event.',
-            'Welcome! You can submit song requests for the event.',
-            $guestNotice['body']
-        );
-    }
+    $eventName = trim((string)($event['title'] ?? ''));
+    $djNameForNotice = ($djDisplay && $djDisplay !== 'Your DJ') ? $djDisplay : '';
+    $guestNoticeBody = str_replace('{{DJ_NAME}}', $djNameForNotice, $guestNotice['body']);
+    $guestNoticeBody = str_replace('{{EVENT_NAME}}', $eventName, $guestNoticeBody);
 }
 
 //---------------------------------------
