@@ -135,7 +135,7 @@ document.addEventListener("DOMContentLoaded", () => {
  async function sendMood(mood) {
     try {
         const patronName =
-            localStorage.getItem("mdjr_guest_name") || "";
+            (document.getElementById("guest_name")?.value || localStorage.getItem("mdjr_guest_name") || "").trim();
 
         const res = await fetch('/api/mood_save.php', {
             method: 'POST',

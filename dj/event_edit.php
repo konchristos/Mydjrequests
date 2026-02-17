@@ -106,7 +106,7 @@ require __DIR__ . '/layout.php';
         <div class="input-group">
             <span class="icon">📍</span>
             <input type="text" name="location" id="location"
-                   value="<?php echo e($event['location']); ?>">
+                   value="<?php echo e((string)($event['location'] ?? '')); ?>">
             <label for="location">Location</label>
         </div>
 

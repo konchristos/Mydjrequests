@@ -64,7 +64,7 @@ function appSettingValue(PDO $db, string $key, string $default = '0'): string
 
 $error = '';
 $success = '';
-$defaultBroadcastTemplate = "🔊 You’re Live at {{EVENT_NAME}} with {{DJ_NAME}}\n\nUse this page to shape the vibe.\n• Home – Event info. Add your name so the DJ can give you a shout-out.\n• My Requests – Send in your songs and manage your requests.\n• All Requests – Check what the crowd is requesting.\n• Message – Chat directly with the DJ and receive live updates.\n• Contact – Connect and follow the DJ.\n\nDrop your requests and let’s make it a night to remember.";
+$defaultBroadcastTemplate = "🔊 You’re Live at {{EVENT_NAME}} with {{DJ_NAME}}\n\nUse this page to shape the vibe.\n\n• Home – Event info. Enter your name so the DJ knows who you are when you interact.\n• My Requests – Send in your songs and manage your requests.\n• All Requests – See what the crowd is requesting in real time.\n• Message – Chat directly with the DJ and receive live updates.\n• Contact – Connect and follow the DJ.\n\nDrop your requests and let’s make it a night to remember.";
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token()) {

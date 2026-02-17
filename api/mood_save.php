@@ -124,6 +124,43 @@ try {
         $stmt->execute([$eventId, $guestToken, $patronName, $mood]);
     }
 
+    // If guest provided a non-empty name, keep name in sync across this event+token.
+    if ($patronName !== null && trim((string)$patronName) !== '') {
+        $syncName = trim((string)$patronName);
+
+        $stmt = $db->prepare("
+            UPDATE messages
+            SET patron_name = ?
+            WHERE event_id = ?
+              AND guest_token = ?
+        ");
+        $stmt->execute([$syncName, $eventId, $guestToken]);
+
+        $stmt = $db->prepare("
+            UPDATE song_requests
+            SET requester_name = ?
+            WHERE event_id = ?
+              AND guest_token = ?
+        ");
+        $stmt->execute([$syncName, $eventId, $guestToken]);
+
+        $stmt = $db->prepare("
+            UPDATE song_votes
+            SET patron_name = ?
+            WHERE event_id = ?
+              AND guest_token = ?
+        ");
+        $stmt->execute([$syncName, $eventId, $guestToken]);
+
+        $stmt = $db->prepare("
+            UPDATE event_moods
+            SET patron_name = ?
+            WHERE event_id = ?
+              AND guest_token = ?
+        ");
+        $stmt->execute([$syncName, $eventId, $guestToken]);
+    }
+
     // --------------------------------------------------
     // Success response
     // --------------------------------------------------

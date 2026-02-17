@@ -119,11 +119,141 @@ foreach ($voteStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
         ];
     }
 
-    if ($patrons[$token]['patron_name'] === '' && !empty($row['patron_name'])) {
+    if (!empty($row['patron_name'])) {
         $patrons[$token]['patron_name'] = (string)$row['patron_name'];
     }
 
     $patrons[$token]['vote_count'] = (int)$row['vote_count'];
+}
+
+$messageStmt = $db->prepare('
+    SELECT
+        guest_token,
+        MAX(NULLIF(TRIM(patron_name), "")) AS patron_name
+    FROM messages
+    WHERE event_id = ?
+      AND guest_token IS NOT NULL
+      AND guest_token <> ""
+    GROUP BY guest_token
+');
+$messageStmt->execute([$eventId]);
+foreach ($messageStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $token = (string)$row['guest_token'];
+
+    if (!isset($patrons[$token])) {
+        $patrons[$token] = [
+            'guest_token' => $token,
+            'patron_name' => (string)($row['patron_name'] ?? ''),
+            'request_count' => 0,
+            'vote_count' => 0,
+        ];
+        continue;
+    }
+
+    if (!empty($row['patron_name'])) {
+        $patrons[$token]['patron_name'] = (string)$row['patron_name'];
+    }
+}
+
+$moodStmt = $db->prepare('
+    SELECT
+        guest_token,
+        MAX(NULLIF(TRIM(patron_name), "")) AS patron_name
+    FROM event_moods
+    WHERE event_id = ?
+      AND guest_token IS NOT NULL
+      AND guest_token <> ""
+    GROUP BY guest_token
+');
+$moodStmt->execute([$eventId]);
+foreach ($moodStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $token = (string)$row['guest_token'];
+
+    if (!isset($patrons[$token])) {
+        $patrons[$token] = [
+            'guest_token' => $token,
+            'patron_name' => (string)($row['patron_name'] ?? ''),
+            'request_count' => 0,
+            'vote_count' => 0,
+        ];
+        continue;
+    }
+
+    if (!empty($row['patron_name'])) {
+        $patrons[$token]['patron_name'] = (string)$row['patron_name'];
+    }
+}
+
+// Resolve the latest non-empty name per guest across all sources.
+$latestNamesByToken = [];
+try {
+    $nameTimelineStmt = $db->prepare('
+        SELECT guest_token, patron_name, seen_at FROM (
+            SELECT
+                guest_token,
+                NULLIF(TRIM(requester_name), "") AS patron_name,
+                created_at AS seen_at
+            FROM song_requests
+            WHERE event_id = ?
+              AND guest_token IS NOT NULL
+              AND guest_token <> ""
+
+            UNION ALL
+
+            SELECT
+                guest_token,
+                NULLIF(TRIM(patron_name), "") AS patron_name,
+                created_at AS seen_at
+            FROM song_votes
+            WHERE event_id = ?
+              AND guest_token IS NOT NULL
+              AND guest_token <> ""
+
+            UNION ALL
+
+            SELECT
+                guest_token,
+                NULLIF(TRIM(patron_name), "") AS patron_name,
+                created_at AS seen_at
+            FROM messages
+            WHERE event_id = ?
+              AND guest_token IS NOT NULL
+              AND guest_token <> ""
+
+            UNION ALL
+
+            SELECT
+                guest_token,
+                NULLIF(TRIM(patron_name), "") AS patron_name,
+                COALESCE(updated_at, created_at) AS seen_at
+            FROM event_moods
+            WHERE event_id = ?
+              AND guest_token IS NOT NULL
+              AND guest_token <> ""
+        ) t
+        WHERE patron_name IS NOT NULL
+    ');
+    $nameTimelineStmt->execute([$eventId, $eventId, $eventId, $eventId]);
+
+    foreach ($nameTimelineStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $token = (string)($row['guest_token'] ?? '');
+        $name = trim((string)($row['patron_name'] ?? ''));
+        $seenAtRaw = (string)($row['seen_at'] ?? '');
+        $seenAt = $seenAtRaw !== '' ? (int)(strtotime($seenAtRaw) ?: 0) : 0;
+
+        if ($token === '' || $name === '') {
+            continue;
+        }
+
+        if (!isset($latestNamesByToken[$token]) || $seenAt >= (int)$latestNamesByToken[$token]['seen_at']) {
+            $latestNamesByToken[$token] = [
+                'name' => $name,
+                'seen_at' => $seenAt,
+            ];
+        }
+    }
+} catch (Throwable $e) {
+    $latestNamesByToken = [];
 }
 
 $activePatronsAll = 0;
@@ -132,6 +262,11 @@ $totalRequests = 0;
 $totalVotes = 0;
 
 foreach ($patrons as &$patron) {
+    $token = (string)($patron['guest_token'] ?? '');
+    if ($token !== '' && isset($latestNamesByToken[$token])) {
+        $patron['patron_name'] = (string)$latestNamesByToken[$token]['name'];
+    }
+
     $patron['patron_name'] = $patron['patron_name'] !== '' ? $patron['patron_name'] : 'Guest';
     $patron['total_actions'] = $patron['request_count'] + $patron['vote_count'];
 
@@ -179,7 +314,9 @@ foreach ($patrons as $patron) {
 if (!empty($connectedGuests)) {
     foreach ($connectedGuests as &$cg) {
         $token = (string)($cg['guest_token'] ?? '');
-        if ($token !== '' && isset($patrons[$token]) && !empty($patrons[$token]['patron_name'])) {
+        if ($token !== '' && isset($latestNamesByToken[$token])) {
+            $cg['patron_name'] = (string)$latestNamesByToken[$token]['name'];
+        } elseif ($token !== '' && isset($patrons[$token]) && !empty($patrons[$token]['patron_name'])) {
             $cg['patron_name'] = (string)$patrons[$token]['patron_name'];
         } elseif (empty($cg['patron_name'])) {
             $cg['patron_name'] = 'Guest';

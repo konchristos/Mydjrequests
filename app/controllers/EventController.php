@@ -58,39 +58,6 @@ class EventController extends BaseController
                 return;
             }
 
-            $checkStmt = $db->prepare("
-                SELECT id
-                FROM event_notices
-                WHERE event_id = ?
-                  AND notice_type = 'pre_event'
-                LIMIT 1
-            ");
-            $checkStmt->execute([$eventId]);
-            $existingId = (int)($checkStmt->fetchColumn() ?: 0);
-
-            if ($existingId > 0) {
-                $updateStmt = $db->prepare("
-                    UPDATE event_notices
-                    SET body = :body,
-                        updated_at = NOW()
-                    WHERE id = :id
-                    LIMIT 1
-                ");
-                $updateStmt->execute([
-                    ':body' => $body,
-                    ':id' => $existingId
-                ]);
-            } else {
-                $insertStmt = $db->prepare("
-                    INSERT INTO event_notices (event_id, notice_type, title, body, created_at, updated_at)
-                    VALUES (:event_id, 'pre_event', '', :body, NOW(), NOW())
-                ");
-                $insertStmt->execute([
-                    ':event_id' => $eventId,
-                    ':body' => $body
-                ]);
-            }
-
             $existingBroadcastStmt = $db->prepare("
                 SELECT id
                 FROM event_broadcast_messages
@@ -101,7 +68,19 @@ class EventController extends BaseController
             $existingBroadcastStmt->execute([':event_id' => $eventId]);
             $existingBroadcastId = (int)($existingBroadcastStmt->fetchColumn() ?: 0);
 
-            if ($existingBroadcastId <= 0) {
+            if ($existingBroadcastId > 0) {
+                $updateBroadcastStmt = $db->prepare("
+                    UPDATE event_broadcast_messages
+                    SET message = :message,
+                        updated_at = NOW()
+                    WHERE id = :id
+                    LIMIT 1
+                ");
+                $updateBroadcastStmt->execute([
+                    ':message' => $body,
+                    ':id' => $existingBroadcastId
+                ]);
+            } else {
                 $broadcastStmt = $db->prepare("
                     INSERT INTO event_broadcast_messages (
                         event_id,
