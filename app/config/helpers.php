@@ -54,6 +54,16 @@ function e(string $value): string
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
+function mdjr_default_broadcast_token(): string
+{
+    return '__MDJR_DEFAULT_BROADCAST__';
+}
+
+function mdjr_default_broadcast_template(): string
+{
+    return "🔊 You’re Live at {{EVENT_NAME}} with {{DJ_NAME}}\n\nUse this page to shape the vibe.\n\n• Home – Event info. Enter your name so the DJ knows who you are when you interact.\n• My Requests – Send in your songs and manage your requests.\n• All Requests – See what the crowd is requesting in real time.\n• Message – Chat directly with the DJ and receive live updates.\n• Contact – Connect and follow the DJ.\n\nDrop your requests and let’s make it a night to remember.";
+}
+
 
 /**
  * Standard redirect (no key injection)
@@ -165,4 +175,3 @@ function require_dj_login(): void
         }
     }
 }
-

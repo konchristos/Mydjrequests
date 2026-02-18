@@ -138,22 +138,26 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
     
     
     /* PROFILE DROPDOWN */
-.profile-dropdown {
+.profile-dropdown,
+.reports-dropdown {
     position: relative;
     display: inline-block;
 }
 
-.profile-dropdown-toggle {
+.profile-dropdown-toggle,
+.reports-dropdown-toggle {
     cursor: pointer;
     color: #cfcfcf;
     font-size: 15px;
 }
 
-.profile-dropdown-toggle:hover {
+.profile-dropdown-toggle:hover,
+.reports-dropdown-toggle:hover {
     color: #ff2fd2;
 }
 
-.profile-dropdown-menu {
+.profile-dropdown-menu,
+.reports-dropdown-menu {
     display: none;
     position: absolute;
     top: 32px;
@@ -168,7 +172,8 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
 
 }
 
-.profile-dropdown-menu a {
+.profile-dropdown-menu a,
+.reports-dropdown-menu a {
     display: block;
     padding: 10px 14px;
     color: #cfcfcf;
@@ -176,12 +181,14 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
     border-bottom: 1px solid #1f1f29;
 }
 
-.profile-dropdown-menu a:hover {
+.profile-dropdown-menu a:hover,
+.reports-dropdown-menu a:hover {
     background: #1f1f29;
     color: #ff2fd2;
 }
 
-.profile-dropdown-menu a:last-child {
+.profile-dropdown-menu a:last-child,
+.reports-dropdown-menu a:last-child {
     border-bottom: none;
 }
    
@@ -229,20 +236,29 @@ function toggleMenu() {
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-    const toggle = document.querySelector(".profile-dropdown-toggle");
-    const menu = document.querySelector(".profile-dropdown-menu");
+    const toggles = document.querySelectorAll(".profile-dropdown-toggle, .reports-dropdown-toggle");
 
-    if (toggle) {
-        toggle.addEventListener("click", () => {
-            menu.style.display = (menu.style.display === "block") ? "none" : "block";
+    toggles.forEach((toggle) => {
+        const menu = toggle.nextElementSibling;
+        if (!menu) return;
+        toggle.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const willOpen = menu.style.display !== "block";
+            document.querySelectorAll(".profile-dropdown-menu, .reports-dropdown-menu").forEach((m) => {
+                m.style.display = "none";
+            });
+            menu.style.display = willOpen ? "block" : "none";
         });
-    }
+    });
 
-    // Click outside to close
     document.addEventListener("click", (e) => {
-        if (!menu.contains(e.target) && !toggle.contains(e.target)) {
-            menu.style.display = "none";
-        }
+        document.querySelectorAll(".profile-dropdown-menu, .reports-dropdown-menu").forEach((menu) => {
+            const toggle = menu.previousElementSibling;
+            if (!toggle) return;
+            if (!menu.contains(e.target) && !toggle.contains(e.target)) {
+                menu.style.display = "none";
+            }
+        });
     });
 });
 </script>
@@ -322,6 +338,18 @@ if (!empty($_SESSION['dj_id'])) {
     <a href="<?php echo e(url('dj/how_to.php')); ?>">How To</a>
     <a href="<?php echo e(url('dj/terms.php')); ?>">Terms</a>
 
+    <div class="reports-dropdown">
+        <span class="reports-dropdown-toggle">Reports ▾</span>
+        <div class="reports-dropdown-menu">
+            <a href="<?php echo e(url('dj/reports.php?view=performance')); ?>">Event Performance Summary</a>
+            <a href="<?php echo e(url('dj/reports.php?view=top_songs')); ?>">Top Requested Songs</a>
+            <a href="<?php echo e(url('dj/reports.php?view=revenue')); ?>">Tips/Boost Revenue Summary</a>
+            <a href="<?php echo e(url('dj/reports.php?view=top_activity')); ?>">Top Activity Report</a>
+            <a href="<?php echo e(url('dj/reports.php?view=message_transcript')); ?>">Message Transcript</a>
+            <a href="<?php echo e(url('dj/broadcasts.php')); ?>">MyDJRequests Messages</a>
+        </div>
+    </div>
+
     <div class="notif-wrap">
         <span class="notif-bell" title="Notifications">
             <i class="fa-solid fa-bell"></i>
@@ -367,8 +395,6 @@ if (!empty($_SESSION['dj_id'])) {
     <a href="<?php echo e(url('account/')); ?>">Account</a>
     <a href="<?php echo e(url('dj/settings.php')); ?>">Settings</a>
     <a href="<?php echo e(url('dj/dj_profile_edit.php')); ?>">Public Profile</a>
-    <a href="<?php echo e(url('dj/message_statuses.php')); ?>">Message Statuses</a>
-    <a href="<?php echo e(url('dj/broadcasts.php')); ?>">Broadcast Messages</a>
     <a href="<?php echo e(url('dj/bugs.php')); ?>">Bug Tracker</a>
     <a href="<?php echo e(url('dj/feedback.php')); ?>">My Feedback</a>
     <hr>
@@ -385,6 +411,8 @@ if (!empty($_SESSION['dj_id'])) {
     <a href="<?php echo e(url('dj/dashboard.php')); ?>">Dashboard</a>
     <a href="<?php echo e(url('dj/events.php')); ?>">My Events</a>
     <a href="<?php echo e(url('dj/how_to.php')); ?>">How To</a>
+    <a href="<?php echo e(url('dj/reports.php?view=performance')); ?>">Reports</a>
+    <a href="<?php echo e(url('dj/broadcasts.php')); ?>">MyDJRequests Messages</a>
     <a href="<?php echo e(url('dj/bugs.php')); ?>">Bug Tracker</a>
     <a href="<?php echo e(url('dj/feedback.php')); ?>">My Feedback</a>
     

@@ -64,7 +64,8 @@ function appSettingValue(PDO $db, string $key, string $default = '0'): string
 
 $error = '';
 $success = '';
-$defaultBroadcastTemplate = "🔊 You’re Live at {{EVENT_NAME}} with {{DJ_NAME}}\n\nUse this page to shape the vibe.\n\n• Home – Event info. Enter your name so the DJ knows who you are when you interact.\n• My Requests – Send in your songs and manage your requests.\n• All Requests – See what the crowd is requesting in real time.\n• Message – Chat directly with the DJ and receive live updates.\n• Contact – Connect and follow the DJ.\n\nDrop your requests and let’s make it a night to remember.";
+$defaultBroadcastTemplate = mdjr_default_broadcast_template();
+$defaultBroadcastToken = mdjr_default_broadcast_token();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token()) {
@@ -77,6 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hasBeatport = isset($_POST['has_beatport']) ? 1 : 0;
         $defaultTipsBoost = isset($_POST['default_tips_boost_enabled']) ? 1 : 0;
         $defaultEventBroadcastEnabled = isset($_POST['default_event_broadcast_enabled']) ? 1 : 0;
+        $defaultEventBroadcastMode = trim((string)($_POST['default_event_broadcast_mode'] ?? 'default'));
         $defaultEventBroadcastMessage = trim((string)($_POST['default_event_broadcast_message'] ?? ''));
 
         $allowed = ['rekordbox', 'serato', 'traktor', 'virtualdj', 'djay', 'other'];
@@ -84,9 +86,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Please select your DJ software platform.';
         } elseif ($software === 'other' && $softwareOther === '') {
             $error = 'Please specify your DJ software when selecting Other.';
-        } elseif ($defaultEventBroadcastEnabled === 1 && $defaultEventBroadcastMessage === '') {
+        } elseif (!in_array($defaultEventBroadcastMode, ['default', 'custom'], true)) {
+            $error = 'Invalid broadcast message mode selected.';
+        } elseif ($defaultEventBroadcastEnabled === 1 && $defaultEventBroadcastMode === 'custom' && $defaultEventBroadcastMessage === '') {
             $error = 'Add a personalized event broadcast message or turn the toggle off.';
-        } elseif (strlen($defaultEventBroadcastMessage) > 2000) {
+        } elseif ($defaultEventBroadcastMode === 'custom' && strlen($defaultEventBroadcastMessage) > 2000) {
             $error = 'Default event broadcast message must be 2000 characters or fewer.';
         } else {
             if ($software !== 'other') {
@@ -128,8 +132,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 WHERE id = :user_id
                 LIMIT 1
             ");
+            $messageToSave = null;
+            if ($defaultEventBroadcastEnabled === 1) {
+                if ($defaultEventBroadcastMode === 'default') {
+                    $messageToSave = $defaultBroadcastToken;
+                } else {
+                    $messageToSave = ($defaultEventBroadcastMessage !== '' ? $defaultEventBroadcastMessage : null);
+                }
+            }
             $stmt->execute([
-                ':message' => ($defaultEventBroadcastEnabled === 1 && $defaultEventBroadcastMessage !== '') ? $defaultEventBroadcastMessage : null,
+                ':message' => $messageToSave,
                 ':user_id' => $djId
             ]);
 
@@ -161,10 +173,19 @@ $broadcastStmt = $db->prepare("
     LIMIT 1
 ");
 $broadcastStmt->execute([$djId]);
-$defaultEventBroadcastMessage = (string)($broadcastStmt->fetchColumn() ?: '');
-$defaultEventBroadcastEnabled = ($defaultEventBroadcastMessage !== '');
-if ($defaultEventBroadcastMessage === '') {
+$defaultEventBroadcastRaw = (string)($broadcastStmt->fetchColumn() ?: '');
+$defaultEventBroadcastEnabled = ($defaultEventBroadcastRaw !== '');
+$defaultEventBroadcastMode = 'default';
+$defaultEventBroadcastMessage = '';
+if ($defaultEventBroadcastRaw === '') {
     $defaultEventBroadcastMessage = $defaultBroadcastTemplate;
+} elseif ($defaultEventBroadcastRaw === $defaultBroadcastToken || $defaultEventBroadcastRaw === $defaultBroadcastTemplate) {
+    // Treat previously saved raw-default body as "default mode" for migration.
+    $defaultEventBroadcastMode = 'default';
+    $defaultEventBroadcastMessage = $defaultBroadcastTemplate;
+} else {
+    $defaultEventBroadcastMode = 'custom';
+    $defaultEventBroadcastMessage = $defaultEventBroadcastRaw;
 }
 
 $prodEnabled = appSettingValue(
@@ -172,6 +193,38 @@ $prodEnabled = appSettingValue(
     'patron_payments_enabled_prod',
     appSettingValue($db, 'patron_payments_enabled', '0')
 ) === '1';
+
+$messageStatusTemplates = [
+    'pre_event'  => ['title' => '', 'body' => ''],
+    'live'       => ['title' => '', 'body' => ''],
+    'post_event' => ['title' => '', 'body' => ''],
+];
+try {
+    $statusStmt = $db->prepare("
+        SELECT notice_type, title, body
+        FROM platform_notice_templates
+        WHERE notice_type IN ('pre_event','live','post_event')
+    ");
+    $statusStmt->execute();
+    foreach ($statusStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $type = (string)($row['notice_type'] ?? '');
+        if (!isset($messageStatusTemplates[$type])) {
+            continue;
+        }
+        $messageStatusTemplates[$type] = [
+            'title' => (string)($row['title'] ?? ''),
+            'body' => (string)($row['body'] ?? ''),
+        ];
+    }
+} catch (Throwable $e) {
+    // Keep graceful empty defaults if template read fails.
+}
+
+$messageStatusLabels = [
+    'pre_event'  => ['Upcoming', 'msg-status-label-upcoming'],
+    'live'       => ['Live', 'msg-status-label-live'],
+    'post_event' => ['Ended', 'msg-status-label-ended'],
+];
 
 $pageTitle = 'Settings';
 require __DIR__ . '/layout.php';
@@ -185,6 +238,7 @@ require __DIR__ . '/layout.php';
 .settings-label { display:block; margin-bottom:6px; color:#cfd0da; font-weight:600; }
 .settings-input, .settings-select {
     width:100%;
+    box-sizing: border-box;
     border:1px solid #2a2a3a;
     border-radius:8px;
     padding:10px 12px;
@@ -196,6 +250,34 @@ require __DIR__ . '/layout.php';
 .settings-btn { background:#ff2fd2; color:#fff; border:none; padding:10px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
 .settings-ok { color:#7be87f; margin-bottom:10px; }
 .settings-err { color:#ff8080; margin-bottom:10px; }
+.settings-divider {
+    border: 0;
+    border-top: 1px solid #2a2a3a;
+    margin: 18px 0;
+}
+.settings-section-label {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9fa1b5;
+}
+.event-defaults-grid {
+    display: grid;
+    gap: 12px;
+}
+.event-defaults-subcard {
+    background: #13131a;
+    border: 1px solid #252531;
+    border-radius: 12px;
+    padding: 14px;
+}
+.event-defaults-subcard h4 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    color: #d6d7e2;
+}
 .status-pill {
     display:inline-block;
     padding:4px 10px;
@@ -206,6 +288,41 @@ require __DIR__ . '/layout.php';
 }
 .status-on { background:rgba(59,214,107,0.2); color:#8affb1; border:1px solid rgba(59,214,107,0.45); }
 .status-off { background:rgba(255,75,75,0.2); color:#ff9b9b; border:1px solid rgba(255,75,75,0.45); }
+.msg-status-grid {
+    display: grid;
+    gap: 12px;
+}
+.msg-status-item {
+    background: #13131a;
+    border: 1px solid #252531;
+    border-radius: 12px;
+    padding: 14px;
+}
+.msg-status-label {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+}
+.msg-status-label-upcoming { background: rgba(0,153,255,0.15); color: #6cc6ff; }
+.msg-status-label-live { background: rgba(95,219,110,0.18); color: #5fdb6e; }
+.msg-status-label-ended { background: rgba(255,87,87,0.15); color: #ff8b8b; }
+.msg-status-field { margin: 8px 0; }
+.msg-status-field strong { display:block; margin-bottom:6px; color:#9aa0aa; font-size:12px; }
+.msg-status-box {
+    background: #0f0f14;
+    border: 1px solid #2b2b36;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: #e8e8f2;
+    font-size: 14px;
+    white-space: pre-wrap;
+}
+.settings-after-save-gap {
+    margin-top: 18px;
+}
 </style>
 
 <div class="settings-wrap">
@@ -282,42 +399,100 @@ require __DIR__ . '/layout.php';
         <div class="settings-card">
             <h3>Event Defaults</h3>
 
-            <div class="settings-row">
-                <label>
-                    <input class="settings-check" type="checkbox" name="default_tips_boost_enabled" value="1" <?php echo $defaultTipsBoostEnabled ? 'checked' : ''; ?>>
-                    Enable tips/boosts by default when creating new events
-                </label>
-                <div class="settings-help">You can still override this per event.</div>
+            <div class="event-defaults-grid">
+                <div class="event-defaults-subcard">
+                    <h4>Tips Defaults</h4>
+                    <div class="settings-row">
+                        <label>
+                            <input class="settings-check" type="checkbox" name="default_tips_boost_enabled" value="1" <?php echo $defaultTipsBoostEnabled ? 'checked' : ''; ?>>
+                            Enable tips/boosts by default when creating new events
+                        </label>
+                        <div class="settings-help">You can still override this per event.</div>
+                    </div>
+                </div>
+
+                <div class="event-defaults-subcard">
+                    <h4>Broadcast Defaults</h4>
+                    <div class="settings-row">
+                        <label>
+                            <input class="settings-check" type="checkbox" name="default_event_broadcast_enabled" value="1" <?php echo $defaultEventBroadcastEnabled ? 'checked' : ''; ?>>
+                            Enable personalized broadcast message by default on new events
+                        </label>
+                        <div class="settings-help">Turn off to stop auto-posting this message for new events.</div>
+                    </div>
+
+                    <div class="settings-row">
+                        <label class="settings-label">Broadcast Message Mode</label>
+                        <label>
+                            <input class="settings-check" type="radio" name="default_event_broadcast_mode" value="default" <?php echo $defaultEventBroadcastMode === 'default' ? 'checked' : ''; ?>>
+                            Use MyDJRequests default message (locked)
+                        </label>
+                        <label style="display:block; margin-top:8px;">
+                            <input class="settings-check" type="radio" name="default_event_broadcast_mode" value="custom" <?php echo $defaultEventBroadcastMode === 'custom' ? 'checked' : ''; ?>>
+                            Use my custom message
+                        </label>
+                    </div>
+
+                    <div class="settings-row" id="defaultBroadcastPreviewRow">
+                        <label class="settings-label" for="default_event_broadcast_message_preview">
+                            MyDJRequests Default Message
+                        </label>
+                        <textarea
+                            class="settings-input"
+                            id="default_event_broadcast_message_preview"
+                            rows="8"
+                            readonly
+                        ><?php echo e($defaultBroadcastTemplate); ?></textarea>
+                    </div>
+
+                    <div class="settings-row" id="customBroadcastRow">
+                        <label class="settings-label" for="default_event_broadcast_message">
+                            Custom Event Broadcast Message
+                        </label>
+                        <textarea
+                            class="settings-input"
+                            id="default_event_broadcast_message"
+                            name="default_event_broadcast_message"
+                            rows="8"
+                            maxlength="2000"
+                            placeholder="Welcome to {{EVENT_NAME}} with {{DJ_NAME}}..."
+                        ><?php echo e($defaultEventBroadcastMode === 'custom' ? $defaultEventBroadcastMessage : ''); ?></textarea>
+                        <div class="settings-help">Variables supported: <code>{{DJ_NAME}}</code>, <code>{{EVENT_NAME}}</code>.</div>
+                    </div>
+                </div>
             </div>
 
-            <div class="settings-row">
-                <label>
-                    <input class="settings-check" type="checkbox" name="default_event_broadcast_enabled" value="1" <?php echo $defaultEventBroadcastEnabled ? 'checked' : ''; ?>>
-                    Enable personalized broadcast message by default on new events
-                </label>
-                <div class="settings-help">Turn off to stop auto-posting this message for new events.</div>
-            </div>
-
-            <div class="settings-row">
-                <label class="settings-label" for="default_event_broadcast_message">
-                    Personalized Event Broadcast Message
-                </label>
-                <textarea
-                    class="settings-input"
-                    id="default_event_broadcast_message"
-                    name="default_event_broadcast_message"
-                    rows="5"
-                    maxlength="2000"
-                    placeholder="Welcome to {{EVENT_NAME}} with {{DJ_NAME}}..."
-                ><?php echo e($defaultEventBroadcastMessage); ?></textarea>
-                <div class="settings-help">Variables supported: <code>{{DJ_NAME}}</code>, <code>{{EVENT_NAME}}</code>.</div>
-            </div>
-
-            <button type="submit" class="settings-btn">Save Event Defaults</button>
         </div>
 
         <button type="submit" class="settings-btn">Save Settings</button>
     </form>
+
+    <div class="settings-card settings-after-save-gap" id="message-statuses">
+        <h3>Message Statuses</h3>
+        <div class="settings-help" style="margin-top:0;">
+            Read-only platform defaults shown to patrons based on event state.
+        </div>
+        <div class="msg-status-grid" style="margin-top:12px;">
+            <?php foreach ($messageStatusLabels as $type => $meta): ?>
+                <?php
+                    $title = $messageStatusTemplates[$type]['title'] ?? '';
+                    $body = $messageStatusTemplates[$type]['body'] ?? '';
+                ?>
+                <div class="msg-status-item">
+                    <div class="msg-status-label <?php echo e($meta[1]); ?>"><?php echo e($meta[0]); ?></div>
+                    <div class="msg-status-field">
+                        <strong>Title</strong>
+                        <div class="msg-status-box"><?php echo e($title !== '' ? $title : 'No default title set'); ?></div>
+                    </div>
+                    <div class="msg-status-field">
+                        <strong>Message</strong>
+                        <div class="msg-status-box"><?php echo e($body !== '' ? $body : 'No default message set'); ?></div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+        <div class="settings-help">Variables supported: <code>{{DJ_NAME}}</code>, <code>{{EVENT_NAME}}</code>.</div>
+    </div>
 </div>
 
 <script>
@@ -325,6 +500,12 @@ require __DIR__ . '/layout.php';
     var software = document.getElementById('dj_software');
     var otherRow = document.getElementById('djSoftwareOtherRow');
     var otherInput = document.getElementById('dj_software_other');
+    var broadcastEnabled = document.querySelector('input[name="default_event_broadcast_enabled"]');
+    var modeDefault = document.querySelector('input[name="default_event_broadcast_mode"][value="default"]');
+    var modeCustom = document.querySelector('input[name="default_event_broadcast_mode"][value="custom"]');
+    var defaultPreviewRow = document.getElementById('defaultBroadcastPreviewRow');
+    var customRow = document.getElementById('customBroadcastRow');
+    var customInput = document.getElementById('default_event_broadcast_message');
     if (!software || !otherRow || !otherInput) return;
 
     function syncOtherField() {
@@ -340,5 +521,32 @@ require __DIR__ . '/layout.php';
 
     software.addEventListener('change', syncOtherField);
     syncOtherField();
+
+    function syncBroadcastMode() {
+        var enabled = !!(broadcastEnabled && broadcastEnabled.checked);
+        var customMode = !!(modeCustom && modeCustom.checked);
+
+        if (defaultPreviewRow) {
+            defaultPreviewRow.style.display = (enabled && !customMode) ? '' : 'none';
+        }
+        if (customRow) {
+            customRow.style.display = (enabled && customMode) ? '' : 'none';
+        }
+        if (customInput) {
+            customInput.disabled = !(enabled && customMode);
+            customInput.required = !!(enabled && customMode);
+        }
+    }
+
+    if (broadcastEnabled) {
+        broadcastEnabled.addEventListener('change', syncBroadcastMode);
+    }
+    if (modeDefault) {
+        modeDefault.addEventListener('change', syncBroadcastMode);
+    }
+    if (modeCustom) {
+        modeCustom.addEventListener('change', syncBroadcastMode);
+    }
+    syncBroadcastMode();
 })();
 </script>

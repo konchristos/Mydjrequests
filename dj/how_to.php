@@ -130,7 +130,7 @@ require __DIR__ . '/layout.php';
         <h2>Message Statuses (Upcoming, Live, Ended)</h2>
         <p>
             Guests see a status banner based on your event state. You can view the default
-            messages in <strong>Profile ▾ → Message Statuses</strong>.
+            messages in <strong>Profile ▾ → Settings → Message Statuses</strong>.
         </p>
         <p class="howto-note">These defaults are fixed during Alpha and apply to all events.</p>
     </div>

@@ -53,6 +53,9 @@ class EventController extends BaseController
             ");
             $stmt->execute([$userId]);
             $body = trim((string)($stmt->fetchColumn() ?: ''));
+            if ($body === mdjr_default_broadcast_token()) {
+                $body = mdjr_default_broadcast_template();
+            }
 
             if ($body === '') {
                 return;

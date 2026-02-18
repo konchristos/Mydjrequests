@@ -129,6 +129,9 @@ if (empty($broadcastRows)) {
         ");
         $defaultStmt->execute([':user_id' => (int)$event['user_id']]);
         $seedBody = trim((string)($defaultStmt->fetchColumn() ?: ''));
+        if ($seedBody === mdjr_default_broadcast_token()) {
+            $seedBody = mdjr_default_broadcast_template();
+        }
 
         if ($seedBody !== '') {
             $seedInsert = $db->prepare("
