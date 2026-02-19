@@ -46,22 +46,36 @@ if (!$guestToken) {
 $db = db();
 
 $sql = "
-        SELECT
-        song_title,
-        artist,
-        spotify_track_id,
-        spotify_album_art_url,
-        created_at,
-        status
-    FROM song_requests
-    WHERE event_id = ?
-      AND guest_token = ?
-    ORDER BY created_at DESC
-    
+    SELECT
+        COALESCE(
+            NULLIF(sr.spotify_track_id, ''),
+            CONCAT(LOWER(sr.song_title), '::', LOWER(sr.artist))
+        ) AS track_key,
+        sr.song_title,
+        sr.artist,
+        sr.spotify_track_id,
+        sr.spotify_album_art_url,
+        sr.created_at,
+        sr.status,
+        EXISTS(
+            SELECT 1
+            FROM event_track_boosts sb
+            WHERE sb.event_id = sr.event_id
+              AND sb.guest_token = ?
+              AND sb.track_key = COALESCE(
+                    NULLIF(sr.spotify_track_id, ''),
+                    CONCAT(LOWER(sr.song_title), '::', LOWER(sr.artist))
+                  )
+              AND sb.status = 'succeeded'
+        ) AS has_boosted
+    FROM song_requests sr
+    WHERE sr.event_id = ?
+      AND sr.guest_token = ?
+    ORDER BY sr.created_at DESC
 ";
 
 $stmt = $db->prepare($sql);
-$stmt->execute([$eventId, $guestToken]);
+$stmt->execute([$guestToken, $eventId, $guestToken]);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // --------------------------------------------------

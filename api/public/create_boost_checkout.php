@@ -32,6 +32,7 @@ $db = db();
 $stmt = $db->prepare("
     SELECT
         e.id AS event_id,
+        e.event_state,
         e.user_id AS dj_user_id,
         u.stripe_connect_account_id
     FROM events e
@@ -44,6 +45,13 @@ $row = $stmt->fetch(PDO::FETCH_ASSOC);
 if (!$row || empty($row['stripe_connect_account_id'])) {
     http_response_code(400);
     echo json_encode(['error' => 'DJ_NOT_READY_FOR_BOOSTS']);
+    exit;
+}
+
+$eventState = strtolower((string)($row['event_state'] ?? ''));
+if ($eventState !== 'live') {
+    http_response_code(403);
+    echo json_encode(['error' => 'EVENT_NOT_LIVE']);
     exit;
 }
 

@@ -41,7 +41,7 @@ if (!$event) {
 // Event must be live
 $eventState = strtolower((string)($event['event_state'] ?? ''));
 
-if (!in_array($eventState, ['live', 'in_progress'], true)) {
+if ($eventState !== 'live') {
     http_response_code(403);
     echo json_encode([
         'error' => 'EVENT_NOT_LIVE',

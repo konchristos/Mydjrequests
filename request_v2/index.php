@@ -73,9 +73,9 @@ $eventTipsBoostEnabled = $eventOverrideRaw === null || $eventOverrideRaw === ''
     ? $djDefaultTipsBoostEnabled
     : ((int)$eventOverrideRaw === 1);
 
-$ENABLE_PATRON_PAYMENTS = $ENABLE_PATRON_PAYMENTS && $eventTipsBoostEnabled;
-
-$eventState = $event['event_state'] ?? 'upcoming';
+$eventState = strtolower((string)($event['event_state'] ?? 'upcoming'));
+$isEventLiveForPayments = ($eventState === 'live');
+$ENABLE_PATRON_PAYMENTS = $ENABLE_PATRON_PAYMENTS && $eventTipsBoostEnabled && $isEventLiveForPayments;
 
 // Load DJ (for name replacement)
 $userModel = new User();
@@ -1602,6 +1602,7 @@ const EVENT_UUID = "<?= e($uuid); ?>";
 const EVENT_TITLE = <?= json_encode($event['title']); ?>;
 const STRIPE_PUBLISHABLE_KEY = "<?= e(STRIPE_PUBLISHABLE_KEY); ?>";
 const ENABLE_PATRON_PAYMENTS = <?= $ENABLE_PATRON_PAYMENTS ? 'true' : 'false'; ?>;
+const CAN_REQUEST_SONGS = <?= in_array($eventState, ['upcoming', 'live'], true) ? 'true' : 'false'; ?>;
 let currentActiveTab = "section-home";
 const MESSAGE_SEEN_KEY = "mdjr_message_seen_<?= e($uuid); ?>";
 const messageUnreadBadgeEl = document.getElementById("messageUnreadBadge");
@@ -1727,6 +1728,23 @@ const songStatus = document.getElementById("songStatus");
 const songInput  = document.getElementById("song_title");
 const artistInput = document.getElementById("artist");
 const sugBox = document.getElementById("songSuggestions");
+const songSubmitBtn = songForm ? songForm.querySelector('button[type="submit"]') : null;
+const songRequestModeSelect = document.getElementById("request_mode");
+const clearSongBtn = document.getElementById("clear_song_title");
+const clearArtistBtn = document.getElementById("clear_artist");
+
+function syncSongRequestAvailability() {
+    const disabled = !CAN_REQUEST_SONGS;
+    if (songInput) songInput.disabled = disabled;
+    if (artistInput) artistInput.disabled = disabled;
+    if (songSubmitBtn) songSubmitBtn.disabled = disabled;
+    if (songRequestModeSelect) songRequestModeSelect.disabled = disabled;
+    if (clearSongBtn) clearSongBtn.disabled = disabled;
+    if (clearArtistBtn) clearArtistBtn.disabled = disabled;
+    if (disabled && songStatus) {
+        songStatus.textContent = "Song requests are closed because this event has ended.";
+    }
+}
 
 /* =========================
    SCROLL FIX – INPUT FOCUS
@@ -1769,6 +1787,10 @@ function clearSpotify() {
 
 songForm.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (!CAN_REQUEST_SONGS) {
+        songStatus.textContent = "Song requests are closed because this event has ended.";
+        return;
+    }
     songStatus.textContent = "Sending…";
 
     syncGuestName();
@@ -1788,6 +1810,8 @@ songForm.addEventListener("submit", async (e) => {
         songStatus.textContent = data.message || "Something went wrong.";
     }
 });
+
+syncSongRequestAvailability();
 
 
 
@@ -2308,6 +2332,8 @@ function renderMyRequests() {
     rows.forEach(row => {
         const el = document.createElement("div");
         el.className = "all-request-item is-mine";
+        const trackKey = row.track_key || "";
+        const boosted = row.has_boosted == 1;
 
         const cover = row.spotify_album_art_url
             ? `<img src="${row.spotify_album_art_url}" class="all-request-cover" loading="lazy">`
@@ -2326,6 +2352,20 @@ function renderMyRequests() {
                 <div class="my-request-time">
                     Requested ${timeAgo(row.created_at)}
                 </div>
+                ${ENABLE_PATRON_PAYMENTS && trackKey ? `
+                <div class="track-actions">
+                    <button
+                        type="button"
+                        class="track-btn highlight-btn ${boosted ? 'boosted' : ''}"
+                        data-trackkey="${trackKey}"
+                        data-song="${(row.song_title || '').replace(/"/g, '&quot;')}"
+                        data-artist="${(row.artist || '').replace(/"/g, '&quot;')}"
+                        data-album-art="${row.spotify_album_art_url || ''}"
+                        ${boosted ? 'disabled' : ''}
+                    >
+                        ${boosted ? '⚡ BOOSTED' : '🚀 BOOST'}
+                    </button>
+                </div>` : ``}
             </div>
         `;
 
