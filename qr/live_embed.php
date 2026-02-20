@@ -3,12 +3,14 @@ require_once __DIR__ . '/../app/bootstrap_public.php';
 
 $djUuid = $_GET['dj'] ?? '';
 $djName = 'UNKNOWN DJ';
+$overlayAnimated = false;
+$obsQrScalePct = 100;
 
 if ($djUuid) {
     $db = db();
 
     $stmt = $db->prepare("
-        SELECT dj_name, name
+        SELECT id, dj_name, name
         FROM users
         WHERE uuid = ?
         LIMIT 1
@@ -18,6 +20,12 @@ if ($djUuid) {
 
     if ($dj) {
         $djName = $dj['dj_name'] ?: $dj['name'];
+        $djId = (int)($dj['id'] ?? 0);
+        if ($djId > 0 && mdjr_user_has_premium($db, $djId)) {
+            $settings = mdjr_get_user_qr_settings($db, $djId) ?: [];
+            $overlayAnimated = !empty($settings['animated_overlay']);
+            $obsQrScalePct = max(70, min(115, (int)($settings['obs_qr_scale_pct'] ?? 100)));
+        }
     }
 }
 
@@ -38,6 +46,7 @@ html, body {
 .qr-tile {
     width: 300px;
     height: 420px;
+    position: relative;
     background: #0c0c11;
     border-radius: 16px;
     border: 2px solid #ff2fd2;
@@ -79,6 +88,9 @@ html, body {
     background: #fff;
     padding: 8px;
     border-radius: 10px;
+    width: <?php echo (int)$obsQrScalePct; ?>%;
+    margin: 0 auto;
+    box-sizing: border-box;
 }
 
 .qr img {
@@ -117,6 +129,26 @@ html, body {
     text-shadow:
         0 0 8px rgba(255,47,210,0.9),
         0 0 18px rgba(255,47,210,0.4);
+}
+
+.qr-tile.animated::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+        115deg,
+        rgba(255,255,255,0) 30%,
+        rgba(255,255,255,0.08) 48%,
+        rgba(255,255,255,0) 66%
+    );
+    transform: translateX(-120%);
+    animation: shimmerSweep 5.5s linear infinite;
+}
+
+@keyframes shimmerSweep {
+    from { transform: translateX(-120%); }
+    to { transform: translateX(120%); }
 }
 </style>
 
@@ -187,7 +219,7 @@ html, body {
 </head>
 <body>
     
-<div class="qr-tile">
+<div class="qr-tile<?php echo $overlayAnimated ? ' animated' : ''; ?>">
     <div class="brand">MyDJRequests.com</div>
 
     <div class="qr">

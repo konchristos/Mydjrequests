@@ -31,6 +31,12 @@ $fillMode = strtolower(trim((string)($_POST['fill_mode'] ?? 'solid')));
 $gradientStart = strtoupper(trim((string)($_POST['gradient_start'] ?? '#000000')));
 $gradientEnd = strtoupper(trim((string)($_POST['gradient_end'] ?? '#FF2FD2')));
 $gradientAngle = (int)($_POST['gradient_angle'] ?? 45);
+$obsImageSize = (int)($_POST['obs_image_size'] ?? 600);
+$posterImageSize = (int)($_POST['poster_image_size'] ?? 900);
+$mobileImageSize = (int)($_POST['mobile_image_size'] ?? 480);
+$animatedOverlay = ((string)($_POST['animated_overlay'] ?? '0') === '1');
+$obsQrScalePct = (int)($_POST['obs_qr_scale_pct'] ?? 100);
+$posterQrScalePct = (int)($_POST['poster_qr_scale_pct'] ?? 48);
 $removeLogo = ((string)($_POST['remove_logo'] ?? '0') === '1');
 $resetDefaults = ((string)($_POST['reset_defaults'] ?? '0') === '1');
 
@@ -64,6 +70,11 @@ if (!preg_match('/^#[0-9A-F]{6}$/', $gradientEnd)) {
     $gradientEnd = '#FF2FD2';
 }
 $gradientAngle = max(0, min(360, $gradientAngle));
+$obsImageSize = max(320, min(1400, $obsImageSize));
+$posterImageSize = max(600, min(1800, $posterImageSize));
+$mobileImageSize = max(220, min(900, $mobileImageSize));
+$obsQrScalePct = max(70, min(115, $obsQrScalePct));
+$posterQrScalePct = max(30, min(75, $posterQrScalePct));
 
 try {
     mdjr_ensure_premium_tables($db);
@@ -84,6 +95,12 @@ try {
         $gradientStart = '#000000';
         $gradientEnd = '#FF2FD2';
         $gradientAngle = 45;
+        $obsImageSize = 600;
+        $posterImageSize = 900;
+        $mobileImageSize = 480;
+        $animatedOverlay = false;
+        $obsQrScalePct = 100;
+        $posterQrScalePct = 48;
         $logoPath = '';
         $removeLogo = true;
     }
@@ -142,6 +159,12 @@ try {
         'gradient_start' => $gradientStart,
         'gradient_end' => $gradientEnd,
         'gradient_angle' => $gradientAngle,
+        'obs_image_size' => $obsImageSize,
+        'poster_image_size' => $posterImageSize,
+        'mobile_image_size' => $mobileImageSize,
+        'animated_overlay' => $animatedOverlay ? 1 : 0,
+        'obs_qr_scale_pct' => $obsQrScalePct,
+        'poster_qr_scale_pct' => $posterQrScalePct,
     ]);
 
     $updated = mdjr_get_user_qr_settings($db, $djId) ?: [];
@@ -164,6 +187,12 @@ try {
             'gradient_start' => (string)($updated['gradient_start'] ?? $gradientStart),
             'gradient_end' => (string)($updated['gradient_end'] ?? $gradientEnd),
             'gradient_angle' => (int)($updated['gradient_angle'] ?? $gradientAngle),
+            'obs_image_size' => (int)($updated['obs_image_size'] ?? $obsImageSize),
+            'poster_image_size' => (int)($updated['poster_image_size'] ?? $posterImageSize),
+            'mobile_image_size' => (int)($updated['mobile_image_size'] ?? $mobileImageSize),
+            'animated_overlay' => !empty($updated['animated_overlay']) ? 1 : ($animatedOverlay ? 1 : 0),
+            'obs_qr_scale_pct' => (int)($updated['obs_qr_scale_pct'] ?? $obsQrScalePct),
+            'poster_qr_scale_pct' => (int)($updated['poster_qr_scale_pct'] ?? $posterQrScalePct),
         ],
     ]);
 } catch (Throwable $e) {

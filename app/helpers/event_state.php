@@ -77,6 +77,9 @@ function resolveEventNotice(PDO $pdo, int $eventId, int $djId, string $eventStat
         ':notice_type' => $noticeType
     ]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($row && $noticeType === 'live') {
+        $row['body'] = mdjr_default_platform_live_message();
+    }
 
     if ($row && trim((string)$row['body']) !== '') {
         return [

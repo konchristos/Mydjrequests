@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/app/bootstrap_public.php';
+$db = db();
 
 /* -------------------------------------------------
    Helpers
@@ -58,7 +59,7 @@ $djName = strtoupper($dj['dj_name'] ?: $dj['name'] ?: 'DJ');
 
 $isPremium = mdjr_user_has_premium($db, (int)$event['user_id']);
 $qrUrl  = $isPremium
-    ? url('qr/premium_generate.php?uuid=' . urlencode($uuid) . '&size=480')
+    ? url('qr/premium_generate.php?uuid=' . urlencode($uuid) . '&output=mobile')
     : url('qr_generate.php?uuid=' . urlencode($uuid));
 $qrData = @file_get_contents($qrUrl);
 if (!$qrData) {

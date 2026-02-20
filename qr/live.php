@@ -66,7 +66,7 @@ if (!$event) {
  */
 $qrUrl = url(
     ($isPremium
-        ? ('qr/premium_generate.php?uuid=' . urlencode($event['uuid']))
+        ? ('qr/premium_generate.php?uuid=' . urlencode($event['uuid']) . '&output=obs')
         : ('qr_generate.php?uuid=' . urlencode($event['uuid']) . '&dj=' . urlencode($djDisplay)))
     . '&_=' . time()
 );

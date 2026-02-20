@@ -59,8 +59,9 @@ if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
 // Fetch large QR
 // -------------------------
 $isPremium = mdjr_user_has_premium(db(), (int)$event['user_id']);
+$qrSettings = $isPremium ? (mdjr_get_user_qr_settings(db(), (int)$event['user_id']) ?: []) : [];
 $qrUrl = $isPremium
-    ? url('qr/premium_generate.php?uuid=' . rawurlencode($uuid) . '&size=800')
+    ? url('qr/premium_generate.php?uuid=' . rawurlencode($uuid) . '&output=poster')
     : ("https://api.qrserver.com/v1/create-qr-code/?size=800x800&data=" . rawurlencode("https://mydjrequests.com/r/" . rawurlencode($uuid)));
 $qrRaw = @file_get_contents($qrUrl);
 if (!$qrRaw) exit;
@@ -86,7 +87,9 @@ imagefill($poster, 0, 0, $white);
 // -------------------------
 // Resize QR
 // -------------------------
-$qrSize    = 1200;
+$posterScalePct = $isPremium ? max(30, min(75, (int)($qrSettings['poster_qr_scale_pct'] ?? 48))) : 48;
+$qrSize    = (int)round($width * ($posterScalePct / 100));
+$qrSize    = max(800, min(1700, $qrSize));
 $qrResized = imagecreatetruecolor($qrSize, $qrSize);
 
 $bgWhite = imagecolorallocate($qrResized, 255, 255, 255);
@@ -123,6 +126,69 @@ function draw_centered($img, $size, $y, $color, $font, $text) {
     imagettftext($img, $size, 0, $x, $y, $color, $font, $text);
 }
 
+function mdjr_wrap_ttf_lines(string $text, string $font, int $fontSize, int $maxWidth, int $maxLines = 3): array
+{
+    $text = trim(preg_replace('/\s+/', ' ', $text) ?? '');
+    if ($text === '') {
+        return [];
+    }
+
+    $words = explode(' ', $text);
+    $lines = [];
+    $current = '';
+
+    foreach ($words as $word) {
+        $candidate = $current === '' ? $word : ($current . ' ' . $word);
+        $bbox = imagettfbbox($fontSize, 0, $font, $candidate);
+        $width = abs($bbox[2] - $bbox[0]);
+
+        if ($width <= $maxWidth || $current === '') {
+            $current = $candidate;
+            continue;
+        }
+
+        $lines[] = $current;
+        $current = $word;
+        if (count($lines) >= ($maxLines - 1)) {
+            break;
+        }
+    }
+
+    if ($current !== '' && count($lines) < $maxLines) {
+        $lines[] = $current;
+    } elseif ($current !== '' && count($lines) >= $maxLines) {
+        $last = $lines[$maxLines - 1] ?? '';
+        $last = rtrim($last, '.');
+        if (substr($last, -3) !== '...') {
+            $lines[$maxLines - 1] = rtrim($last) . '...';
+        }
+    }
+
+    return $lines;
+}
+
+function draw_centered_wrapped($img, int $fontSize, int $y, $color, $font, string $text, int $maxWidth, int $lineGap, int $maxLines = 3): int
+{
+    if (!$font) {
+        $simple = substr($text, 0, 70);
+        draw_centered($img, 5, $y, $color, null, $simple);
+        return $y + 34;
+    }
+
+    $lines = mdjr_wrap_ttf_lines($text, $font, $fontSize, $maxWidth, $maxLines);
+    if (empty($lines)) {
+        return $y;
+    }
+
+    $lineY = $y;
+    foreach ($lines as $line) {
+        draw_centered($img, $fontSize, $lineY, $color, $font, $line);
+        $lineY += $lineGap;
+    }
+
+    return $lineY;
+}
+
 // -------------------------
 // Header (site name)
 // -------------------------
@@ -139,23 +205,28 @@ imagecopy($poster, $qrResized, $qrX, $qrY, 0, 0, $qrSize, $qrSize);
 // -------------------------
 // "SCAN ME"
 // -------------------------
-draw_centered($poster, 70, $qrY + $qrSize + 150, $pink,  $font, "SCAN ME");
+draw_centered($poster, 140, $qrY + $qrSize + 210, $pink,  $font, "SCAN ME");
 
 // -------------------------
-// Event Title, Location, *Formatted* Date
-//   (Option A: these come BEFORE the DJ name)
+// Info stack (wrapped title + clearer order)
 // -------------------------
-$baseY = $qrY + $qrSize + 300;  // just below "SCAN ME"
+$contentY = $qrY + $qrSize + 380;
+$maxTextWidth = (int)round($width * 0.88);
 
-draw_centered($poster, 60, $baseY,         $black, $font, $title);
-draw_centered($poster, 55, $baseY + 120,   $black, $font, $location);
-draw_centered($poster, 55, $baseY + 240,   $black, $font, $formattedDate);
+// 1) Event title (wrapped to prevent overflow)
+$contentY = draw_centered_wrapped($poster, 60, $contentY, $black, $font, $title, $maxTextWidth, 74, 3);
 
-// -------------------------
-// DJ NAME (last line at the bottom of the stack)
-// -------------------------
-$djY = $baseY + 240 + 150;  // a bit below the date
-draw_centered($poster, 90, $djY, $black, $font, strtoupper($dj));
+// 2) DJ name (strong but below title)
+$contentY += 70;
+draw_centered($poster, 84, $contentY, $black, $font, strtoupper($dj));
+
+// 3) Location
+$contentY += 98;
+$contentY = draw_centered_wrapped($poster, 52, $contentY, $black, $font, $location, $maxTextWidth, 62, 2);
+
+// 4) Date
+$contentY += 20;
+draw_centered($poster, 52, $contentY, $black, $font, $formattedDate);
 
 // -------------------------
 // Output PNG

@@ -413,10 +413,33 @@ if ($slug === '') {
 }
 
 $targetUrl = url('e/' . rawurlencode($slug) . '?src=qr');
+$isPreview = ((string)($_GET['preview'] ?? '') === '1');
+if ($isPreview) {
+    $previewUrl = trim((string)($_GET['preview_url'] ?? ''));
+    if ($previewUrl !== '') {
+        $parts = parse_url($previewUrl);
+        if (is_array($parts)) {
+            $scheme = strtolower((string)($parts['scheme'] ?? ''));
+            $host = strtolower((string)($parts['host'] ?? ''));
+            if (in_array($scheme, ['http', 'https'], true) && $host !== '') {
+                $targetUrl = $previewUrl;
+            }
+        }
+    }
+}
 $requestedSize = (int)($_GET['size'] ?? 0);
+$outputMode = strtolower(trim((string)($_GET['output'] ?? '')));
+$outputSize = 0;
+if ($outputMode === 'obs') {
+    $outputSize = (int)($settings['obs_image_size'] ?? 600);
+} elseif ($outputMode === 'poster') {
+    $outputSize = (int)($settings['poster_image_size'] ?? 900);
+} elseif ($outputMode === 'mobile') {
+    $outputSize = (int)($settings['mobile_image_size'] ?? 480);
+}
 $size = $requestedSize > 0
-    ? max(220, min(1200, $requestedSize))
-    : max(220, min(1200, (int)($settings['image_size'] ?? 480)));
+    ? max(220, min(1800, $requestedSize))
+    : max(220, min(1800, $outputSize > 0 ? $outputSize : (int)($settings['image_size'] ?? 480)));
 
 $fgHex = strtoupper((string)($settings['foreground_color'] ?? '#000000'));
 $bgHex = strtoupper((string)($settings['background_color'] ?? '#FFFFFF'));

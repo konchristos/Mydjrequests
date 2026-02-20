@@ -181,6 +181,12 @@ function mdjr_ensure_premium_tables(PDO $db): void
             gradient_start CHAR(7) NOT NULL DEFAULT '#000000',
             gradient_end CHAR(7) NOT NULL DEFAULT '#FF2FD2',
             gradient_angle SMALLINT NOT NULL DEFAULT 45,
+            obs_image_size INT UNSIGNED NOT NULL DEFAULT 600,
+            poster_image_size INT UNSIGNED NOT NULL DEFAULT 900,
+            mobile_image_size INT UNSIGNED NOT NULL DEFAULT 480,
+            animated_overlay TINYINT(1) NOT NULL DEFAULT 0,
+            obs_qr_scale_pct TINYINT UNSIGNED NOT NULL DEFAULT 100,
+            poster_qr_scale_pct TINYINT UNSIGNED NOT NULL DEFAULT 48,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uq_premium_user_qr_settings_user (user_id)
@@ -196,6 +202,12 @@ function mdjr_ensure_premium_tables(PDO $db): void
         'gradient_start' => "ALTER TABLE premium_user_qr_settings ADD COLUMN gradient_start CHAR(7) NOT NULL DEFAULT '#000000'",
         'gradient_end' => "ALTER TABLE premium_user_qr_settings ADD COLUMN gradient_end CHAR(7) NOT NULL DEFAULT '#FF2FD2'",
         'gradient_angle' => "ALTER TABLE premium_user_qr_settings ADD COLUMN gradient_angle SMALLINT NOT NULL DEFAULT 45",
+        'obs_image_size' => "ALTER TABLE premium_user_qr_settings ADD COLUMN obs_image_size INT UNSIGNED NOT NULL DEFAULT 600",
+        'poster_image_size' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_image_size INT UNSIGNED NOT NULL DEFAULT 900",
+        'mobile_image_size' => "ALTER TABLE premium_user_qr_settings ADD COLUMN mobile_image_size INT UNSIGNED NOT NULL DEFAULT 480",
+        'animated_overlay' => "ALTER TABLE premium_user_qr_settings ADD COLUMN animated_overlay TINYINT(1) NOT NULL DEFAULT 0",
+        'obs_qr_scale_pct' => "ALTER TABLE premium_user_qr_settings ADD COLUMN obs_qr_scale_pct TINYINT UNSIGNED NOT NULL DEFAULT 100",
+        'poster_qr_scale_pct' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_qr_scale_pct TINYINT UNSIGNED NOT NULL DEFAULT 48",
     ];
     foreach ($columns as $col => $sql) {
         try {
@@ -431,18 +443,28 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
     $gradientStart = (string)($data['gradient_start'] ?? '#000000');
     $gradientEnd = (string)($data['gradient_end'] ?? '#FF2FD2');
     $gradientAngle = (int)($data['gradient_angle'] ?? 45);
+    $obsImageSize = (int)($data['obs_image_size'] ?? 600);
+    $posterImageSize = (int)($data['poster_image_size'] ?? 900);
+    $mobileImageSize = (int)($data['mobile_image_size'] ?? 480);
+    $animatedOverlay = !empty($data['animated_overlay']) ? 1 : 0;
+    $obsQrScalePct = (int)($data['obs_qr_scale_pct'] ?? 100);
+    $posterQrScalePct = (int)($data['poster_qr_scale_pct'] ?? 48);
 
     $stmt = $db->prepare('
         INSERT INTO premium_user_qr_settings (
             user_id, foreground_color, background_color,
             frame_text, logo_path, logo_scale_pct, image_size, error_correction,
             dot_style, eye_outer_style, eye_inner_style,
-            fill_mode, gradient_start, gradient_end, gradient_angle
+            fill_mode, gradient_start, gradient_end, gradient_angle,
+            obs_image_size, poster_image_size, mobile_image_size, animated_overlay,
+            obs_qr_scale_pct, poster_qr_scale_pct
         ) VALUES (
             :user_id, :foreground_color, :background_color,
             :frame_text, :logo_path, :logo_scale_pct, :image_size, :error_correction,
             :dot_style, :eye_outer_style, :eye_inner_style,
-            :fill_mode, :gradient_start, :gradient_end, :gradient_angle
+            :fill_mode, :gradient_start, :gradient_end, :gradient_angle,
+            :obs_image_size, :poster_image_size, :mobile_image_size, :animated_overlay,
+            :obs_qr_scale_pct, :poster_qr_scale_pct
         )
         ON DUPLICATE KEY UPDATE
             foreground_color = VALUES(foreground_color),
@@ -459,6 +481,12 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
             gradient_start = VALUES(gradient_start),
             gradient_end = VALUES(gradient_end),
             gradient_angle = VALUES(gradient_angle),
+            obs_image_size = VALUES(obs_image_size),
+            poster_image_size = VALUES(poster_image_size),
+            mobile_image_size = VALUES(mobile_image_size),
+            animated_overlay = VALUES(animated_overlay),
+            obs_qr_scale_pct = VALUES(obs_qr_scale_pct),
+            poster_qr_scale_pct = VALUES(poster_qr_scale_pct),
             updated_at = CURRENT_TIMESTAMP
     ');
 
@@ -478,6 +506,12 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
         'gradient_start' => $gradientStart,
         'gradient_end' => $gradientEnd,
         'gradient_angle' => $gradientAngle,
+        'obs_image_size' => $obsImageSize,
+        'poster_image_size' => $posterImageSize,
+        'mobile_image_size' => $mobileImageSize,
+        'animated_overlay' => $animatedOverlay,
+        'obs_qr_scale_pct' => $obsQrScalePct,
+        'poster_qr_scale_pct' => $posterQrScalePct,
     ]);
 }
 
