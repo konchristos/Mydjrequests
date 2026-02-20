@@ -24,6 +24,13 @@ $bg = strtoupper(trim((string)($_POST['background_color'] ?? '#FFFFFF')));
 $frameText = trim((string)($_POST['frame_text'] ?? ''));
 $logoScalePct = (int)($_POST['logo_scale_pct'] ?? 18);
 $imageSize = (int)($_POST['image_size'] ?? 480);
+$dotStyle = strtolower(trim((string)($_POST['dot_style'] ?? 'square')));
+$eyeOuterStyle = strtolower(trim((string)($_POST['eye_outer_style'] ?? 'square')));
+$eyeInnerStyle = strtolower(trim((string)($_POST['eye_inner_style'] ?? 'square')));
+$fillMode = strtolower(trim((string)($_POST['fill_mode'] ?? 'solid')));
+$gradientStart = strtoupper(trim((string)($_POST['gradient_start'] ?? '#000000')));
+$gradientEnd = strtoupper(trim((string)($_POST['gradient_end'] ?? '#FF2FD2')));
+$gradientAngle = (int)($_POST['gradient_angle'] ?? 45);
 $removeLogo = ((string)($_POST['remove_logo'] ?? '0') === '1');
 $resetDefaults = ((string)($_POST['reset_defaults'] ?? '0') === '1');
 
@@ -37,6 +44,26 @@ if (!preg_match('/^#[0-9A-F]{6}$/', $bg)) {
 $logoScalePct = max(8, min(20, $logoScalePct));
 $imageSize = max(220, min(1200, $imageSize));
 $frameText = substr($frameText, 0, 80);
+$allowedStyles = ['square', 'rounded', 'circle', 'extra-rounded'];
+if (!in_array($dotStyle, $allowedStyles, true)) {
+    $dotStyle = 'square';
+}
+if (!in_array($eyeOuterStyle, $allowedStyles, true)) {
+    $eyeOuterStyle = 'square';
+}
+if (!in_array($eyeInnerStyle, $allowedStyles, true)) {
+    $eyeInnerStyle = 'square';
+}
+if (!in_array($fillMode, ['solid', 'linear', 'radial'], true)) {
+    $fillMode = 'solid';
+}
+if (!preg_match('/^#[0-9A-F]{6}$/', $gradientStart)) {
+    $gradientStart = '#000000';
+}
+if (!preg_match('/^#[0-9A-F]{6}$/', $gradientEnd)) {
+    $gradientEnd = '#FF2FD2';
+}
+$gradientAngle = max(0, min(360, $gradientAngle));
 
 try {
     mdjr_ensure_premium_tables($db);
@@ -50,6 +77,13 @@ try {
         $frameText = '';
         $logoScalePct = 18;
         $imageSize = 480;
+        $dotStyle = 'square';
+        $eyeOuterStyle = 'square';
+        $eyeInnerStyle = 'square';
+        $fillMode = 'solid';
+        $gradientStart = '#000000';
+        $gradientEnd = '#FF2FD2';
+        $gradientAngle = 45;
         $logoPath = '';
         $removeLogo = true;
     }
@@ -101,6 +135,13 @@ try {
         'logo_scale_pct' => $logoScalePct,
         'image_size' => $imageSize,
         'error_correction' => 'H',
+        'dot_style' => $dotStyle,
+        'eye_outer_style' => $eyeOuterStyle,
+        'eye_inner_style' => $eyeInnerStyle,
+        'fill_mode' => $fillMode,
+        'gradient_start' => $gradientStart,
+        'gradient_end' => $gradientEnd,
+        'gradient_angle' => $gradientAngle,
     ]);
 
     $updated = mdjr_get_user_qr_settings($db, $djId) ?: [];
@@ -116,6 +157,13 @@ try {
             'logo_scale_pct' => (int)($updated['logo_scale_pct'] ?? $logoScalePct),
             'image_size' => (int)($updated['image_size'] ?? $imageSize),
             'error_correction' => (string)($updated['error_correction'] ?? 'H'),
+            'dot_style' => (string)($updated['dot_style'] ?? $dotStyle),
+            'eye_outer_style' => (string)($updated['eye_outer_style'] ?? $eyeOuterStyle),
+            'eye_inner_style' => (string)($updated['eye_inner_style'] ?? $eyeInnerStyle),
+            'fill_mode' => (string)($updated['fill_mode'] ?? $fillMode),
+            'gradient_start' => (string)($updated['gradient_start'] ?? $gradientStart),
+            'gradient_end' => (string)($updated['gradient_end'] ?? $gradientEnd),
+            'gradient_angle' => (int)($updated['gradient_angle'] ?? $gradientAngle),
         ],
     ]);
 } catch (Throwable $e) {

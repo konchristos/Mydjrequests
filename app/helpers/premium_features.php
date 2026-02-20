@@ -174,11 +174,46 @@ function mdjr_ensure_premium_tables(PDO $db): void
             logo_scale_pct TINYINT UNSIGNED NOT NULL DEFAULT 18,
             image_size INT UNSIGNED NOT NULL DEFAULT 480,
             error_correction CHAR(1) NOT NULL DEFAULT 'H',
+            dot_style VARCHAR(20) NOT NULL DEFAULT 'square',
+            eye_outer_style VARCHAR(20) NOT NULL DEFAULT 'square',
+            eye_inner_style VARCHAR(20) NOT NULL DEFAULT 'square',
+            fill_mode VARCHAR(20) NOT NULL DEFAULT 'solid',
+            gradient_start CHAR(7) NOT NULL DEFAULT '#000000',
+            gradient_end CHAR(7) NOT NULL DEFAULT '#FF2FD2',
+            gradient_angle SMALLINT NOT NULL DEFAULT 45,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uq_premium_user_qr_settings_user (user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    // Backfill columns on already-existing installs.
+    $columns = [
+        'dot_style' => "ALTER TABLE premium_user_qr_settings ADD COLUMN dot_style VARCHAR(20) NOT NULL DEFAULT 'square'",
+        'eye_outer_style' => "ALTER TABLE premium_user_qr_settings ADD COLUMN eye_outer_style VARCHAR(20) NOT NULL DEFAULT 'square'",
+        'eye_inner_style' => "ALTER TABLE premium_user_qr_settings ADD COLUMN eye_inner_style VARCHAR(20) NOT NULL DEFAULT 'square'",
+        'fill_mode' => "ALTER TABLE premium_user_qr_settings ADD COLUMN fill_mode VARCHAR(20) NOT NULL DEFAULT 'solid'",
+        'gradient_start' => "ALTER TABLE premium_user_qr_settings ADD COLUMN gradient_start CHAR(7) NOT NULL DEFAULT '#000000'",
+        'gradient_end' => "ALTER TABLE premium_user_qr_settings ADD COLUMN gradient_end CHAR(7) NOT NULL DEFAULT '#FF2FD2'",
+        'gradient_angle' => "ALTER TABLE premium_user_qr_settings ADD COLUMN gradient_angle SMALLINT NOT NULL DEFAULT 45",
+    ];
+    foreach ($columns as $col => $sql) {
+        try {
+            $stmt = $db->prepare("
+                SELECT COUNT(*)
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'premium_user_qr_settings'
+                  AND COLUMN_NAME = :col
+            ");
+            $stmt->execute(['col' => $col]);
+            if ((int)$stmt->fetchColumn() === 0) {
+                $db->exec($sql);
+            }
+        } catch (Throwable $e) {
+            // Non-fatal.
+        }
+    }
 
     $db->exec("
         CREATE TABLE IF NOT EXISTS premium_event_link_hits (
@@ -389,13 +424,25 @@ function mdjr_get_user_qr_settings(PDO $db, int $userId): ?array
 
 function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
 {
+    $dotStyle = (string)($data['dot_style'] ?? 'square');
+    $eyeOuterStyle = (string)($data['eye_outer_style'] ?? 'square');
+    $eyeInnerStyle = (string)($data['eye_inner_style'] ?? 'square');
+    $fillMode = (string)($data['fill_mode'] ?? 'solid');
+    $gradientStart = (string)($data['gradient_start'] ?? '#000000');
+    $gradientEnd = (string)($data['gradient_end'] ?? '#FF2FD2');
+    $gradientAngle = (int)($data['gradient_angle'] ?? 45);
+
     $stmt = $db->prepare('
         INSERT INTO premium_user_qr_settings (
             user_id, foreground_color, background_color,
-            frame_text, logo_path, logo_scale_pct, image_size, error_correction
+            frame_text, logo_path, logo_scale_pct, image_size, error_correction,
+            dot_style, eye_outer_style, eye_inner_style,
+            fill_mode, gradient_start, gradient_end, gradient_angle
         ) VALUES (
             :user_id, :foreground_color, :background_color,
-            :frame_text, :logo_path, :logo_scale_pct, :image_size, :error_correction
+            :frame_text, :logo_path, :logo_scale_pct, :image_size, :error_correction,
+            :dot_style, :eye_outer_style, :eye_inner_style,
+            :fill_mode, :gradient_start, :gradient_end, :gradient_angle
         )
         ON DUPLICATE KEY UPDATE
             foreground_color = VALUES(foreground_color),
@@ -405,6 +452,13 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
             logo_scale_pct = VALUES(logo_scale_pct),
             image_size = VALUES(image_size),
             error_correction = VALUES(error_correction),
+            dot_style = VALUES(dot_style),
+            eye_outer_style = VALUES(eye_outer_style),
+            eye_inner_style = VALUES(eye_inner_style),
+            fill_mode = VALUES(fill_mode),
+            gradient_start = VALUES(gradient_start),
+            gradient_end = VALUES(gradient_end),
+            gradient_angle = VALUES(gradient_angle),
             updated_at = CURRENT_TIMESTAMP
     ');
 
@@ -417,6 +471,13 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
         'logo_scale_pct' => $data['logo_scale_pct'],
         'image_size' => $data['image_size'],
         'error_correction' => $data['error_correction'],
+        'dot_style' => $dotStyle,
+        'eye_outer_style' => $eyeOuterStyle,
+        'eye_inner_style' => $eyeInnerStyle,
+        'fill_mode' => $fillMode,
+        'gradient_start' => $gradientStart,
+        'gradient_end' => $gradientEnd,
+        'gradient_angle' => $gradientAngle,
     ]);
 }
 

@@ -555,7 +555,55 @@ require __DIR__ . '/layout.php';
                 This style applies to all event QR codes, downloads, and your live OBS QR overlay.
             </div>
             <form id="premiumGlobalQrForm" enctype="multipart/form-data" style="margin-top:12px;">
-                <div style="display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px;">
+                <div id="qrStyleTabs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+                    <button type="button" class="settings-btn qr-tab-btn" data-tab="style" style="padding:8px 12px;background:#ff2fd2;">Style</button>
+                    <button type="button" class="settings-btn qr-tab-btn" data-tab="color" style="padding:8px 12px;background:#2a2a3a;">Color</button>
+                    <button type="button" class="settings-btn qr-tab-btn" data-tab="brand" style="padding:8px 12px;background:#2a2a3a;">Brand</button>
+                </div>
+
+                <div class="qr-tab-pane" data-pane="style" style="display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px;">
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Dot Style</span>
+                        <select name="dot_style" class="settings-select">
+                            <?php $dotStyleVal = (string)($globalQrSettings['dot_style'] ?? 'square'); ?>
+                            <option value="square" <?php echo $dotStyleVal === 'square' ? 'selected' : ''; ?>>Square</option>
+                            <option value="rounded" <?php echo $dotStyleVal === 'rounded' ? 'selected' : ''; ?>>Rounded</option>
+                            <option value="circle" <?php echo $dotStyleVal === 'circle' ? 'selected' : ''; ?>>Circle</option>
+                            <option value="extra-rounded" <?php echo $dotStyleVal === 'extra-rounded' ? 'selected' : ''; ?>>Extra-rounded</option>
+                        </select>
+                    </label>
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Eye Outer Style</span>
+                        <select name="eye_outer_style" class="settings-select">
+                            <?php $eyeOuterVal = (string)($globalQrSettings['eye_outer_style'] ?? 'square'); ?>
+                            <option value="square" <?php echo $eyeOuterVal === 'square' ? 'selected' : ''; ?>>Square</option>
+                            <option value="rounded" <?php echo $eyeOuterVal === 'rounded' ? 'selected' : ''; ?>>Rounded</option>
+                            <option value="circle" <?php echo $eyeOuterVal === 'circle' ? 'selected' : ''; ?>>Circle</option>
+                            <option value="extra-rounded" <?php echo $eyeOuterVal === 'extra-rounded' ? 'selected' : ''; ?>>Extra-rounded</option>
+                        </select>
+                    </label>
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Eye Inner Style</span>
+                        <select name="eye_inner_style" class="settings-select">
+                            <?php $eyeInnerVal = (string)($globalQrSettings['eye_inner_style'] ?? 'square'); ?>
+                            <option value="square" <?php echo $eyeInnerVal === 'square' ? 'selected' : ''; ?>>Square</option>
+                            <option value="rounded" <?php echo $eyeInnerVal === 'rounded' ? 'selected' : ''; ?>>Rounded</option>
+                            <option value="circle" <?php echo $eyeInnerVal === 'circle' ? 'selected' : ''; ?>>Circle</option>
+                            <option value="extra-rounded" <?php echo $eyeInnerVal === 'extra-rounded' ? 'selected' : ''; ?>>Extra-rounded</option>
+                        </select>
+                    </label>
+                </div>
+
+                <div class="qr-tab-pane" data-pane="color" style="display:none;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px;">
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Fill Mode</span>
+                        <?php $fillModeVal = (string)($globalQrSettings['fill_mode'] ?? 'solid'); ?>
+                        <select name="fill_mode" id="qrFillMode" class="settings-select">
+                            <option value="solid" <?php echo $fillModeVal === 'solid' ? 'selected' : ''; ?>>Solid</option>
+                            <option value="linear" <?php echo $fillModeVal === 'linear' ? 'selected' : ''; ?>>Linear Gradient</option>
+                            <option value="radial" <?php echo $fillModeVal === 'radial' ? 'selected' : ''; ?>>Radial Gradient</option>
+                        </select>
+                    </label>
                     <label style="display:flex;flex-direction:column;gap:6px;">
                         <span style="font-size:12px;color:#aaa;">Foreground</span>
                         <input name="foreground_color" type="color" value="<?php echo e((string)($globalQrSettings['foreground_color'] ?? '#000000')); ?>" style="height:42px;">
@@ -564,6 +612,21 @@ require __DIR__ . '/layout.php';
                         <span style="font-size:12px;color:#aaa;">Background</span>
                         <input name="background_color" type="color" value="<?php echo e((string)($globalQrSettings['background_color'] ?? '#ffffff')); ?>" style="height:42px;">
                     </label>
+                    <label id="gradientStartWrap" style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Gradient Start</span>
+                        <input name="gradient_start" type="color" value="<?php echo e((string)($globalQrSettings['gradient_start'] ?? '#000000')); ?>" style="height:42px;">
+                    </label>
+                    <label id="gradientEndWrap" style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Gradient End</span>
+                        <input name="gradient_end" type="color" value="<?php echo e((string)($globalQrSettings['gradient_end'] ?? '#ff2fd2')); ?>" style="height:42px;">
+                    </label>
+                    <label id="gradientAngleWrap" style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Gradient Angle (Linear)</span>
+                        <input name="gradient_angle" type="number" min="0" max="360" value="<?php echo (int)($globalQrSettings['gradient_angle'] ?? 45); ?>" class="settings-input">
+                    </label>
+                </div>
+
+                <div class="qr-tab-pane" data-pane="brand" style="display:none;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px;">
                     <label style="display:flex;flex-direction:column;gap:6px;">
                         <span style="font-size:12px;color:#aaa;">Frame Text</span>
                         <input name="frame_text" type="text" maxlength="80" placeholder="SCAN TO REQUEST" value="<?php echo e((string)($globalQrSettings['frame_text'] ?? '')); ?>" class="settings-input">
@@ -580,12 +643,11 @@ require __DIR__ . '/layout.php';
                         <span style="font-size:12px;color:#aaa;">Center Logo (PNG/JPG/WEBP)</span>
                         <input name="logo" type="file" accept="image/png,image/jpeg,image/webp" class="settings-input">
                     </label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;color:#ddd;">
+                        <input type="checkbox" name="remove_logo" value="1">
+                        Remove existing logo
+                    </label>
                 </div>
-
-                <label style="display:flex;align-items:center;gap:8px;margin-top:12px;color:#ddd;">
-                    <input type="checkbox" name="remove_logo" value="1">
-                    Remove existing logo
-                </label>
 
                 <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
                     <button type="submit" id="saveGlobalQrBtn" class="settings-btn">Save Global QR Style</button>
@@ -823,7 +885,32 @@ require __DIR__ . '/layout.php';
     const saveBtn = document.getElementById('saveGlobalQrBtn');
     const resetBtn = document.getElementById('resetGlobalQrBtn');
     const previewImg = document.getElementById('globalQrPreview');
+    const fillModeEl = document.getElementById('qrFillMode');
+    const gradientStartWrap = document.getElementById('gradientStartWrap');
+    const gradientEndWrap = document.getElementById('gradientEndWrap');
+    const gradientAngleWrap = document.getElementById('gradientAngleWrap');
+    const tabButtons = Array.from(document.querySelectorAll('.qr-tab-btn'));
+    const tabPanes = Array.from(document.querySelectorAll('.qr-tab-pane'));
     if (!form || !statusEl || !saveBtn) return;
+
+    function setActiveTab(tabName) {
+        tabButtons.forEach((btn) => {
+            const isActive = btn.getAttribute('data-tab') === tabName;
+            btn.style.background = isActive ? '#ff2fd2' : '#2a2a3a';
+        });
+        tabPanes.forEach((pane) => {
+            pane.style.display = pane.getAttribute('data-pane') === tabName ? 'grid' : 'none';
+        });
+    }
+
+    function syncGradientVisibility() {
+        if (!fillModeEl) return;
+        const mode = fillModeEl.value || 'solid';
+        const showGradientFields = mode === 'linear' || mode === 'radial';
+        if (gradientStartWrap) gradientStartWrap.style.display = showGradientFields ? 'flex' : 'none';
+        if (gradientEndWrap) gradientEndWrap.style.display = showGradientFields ? 'flex' : 'none';
+        if (gradientAngleWrap) gradientAngleWrap.style.display = mode === 'linear' ? 'flex' : 'none';
+    }
 
     function updatePreview() {
         if (!previewImg) return;
@@ -831,22 +918,48 @@ require __DIR__ . '/layout.php';
         const bg = form.querySelector('input[name="background_color"]')?.value || '#ffffff';
         const frame = form.querySelector('input[name="frame_text"]')?.value || '';
         const logoScale = form.querySelector('input[name="logo_scale_pct"]')?.value || '18';
+        const dotStyle = form.querySelector('select[name="dot_style"]')?.value || 'square';
+        const eyeOuterStyle = form.querySelector('select[name="eye_outer_style"]')?.value || 'square';
+        const eyeInnerStyle = form.querySelector('select[name="eye_inner_style"]')?.value || 'square';
+        const fillMode = form.querySelector('select[name="fill_mode"]')?.value || 'solid';
+        const gradientStart = form.querySelector('input[name="gradient_start"]')?.value || '#000000';
+        const gradientEnd = form.querySelector('input[name="gradient_end"]')?.value || '#ff2fd2';
+        const gradientAngle = form.querySelector('input[name="gradient_angle"]')?.value || '45';
         const url = new URL(previewImg.src, window.location.origin);
         url.searchParams.set('fg', fg);
         url.searchParams.set('bg', bg);
         url.searchParams.set('frame', frame);
         url.searchParams.set('logo_scale', logoScale);
+        url.searchParams.set('dot', dotStyle);
+        url.searchParams.set('eyeo', eyeOuterStyle);
+        url.searchParams.set('eyei', eyeInnerStyle);
+        url.searchParams.set('fill', fillMode);
+        url.searchParams.set('gs', gradientStart);
+        url.searchParams.set('ge', gradientEnd);
+        url.searchParams.set('ga', gradientAngle);
         url.searchParams.set('_t', String(Date.now()));
         previewImg.src = url.toString();
     }
 
     let previewTimer = null;
-    form.querySelectorAll('input[name="foreground_color"], input[name="background_color"], input[name="frame_text"], input[name="logo_scale_pct"], input[name="image_size"]').forEach((el) => {
-        el.addEventListener('input', () => {
+    form.querySelectorAll('input[name="foreground_color"], input[name="background_color"], input[name="frame_text"], input[name="logo_scale_pct"], input[name="image_size"], input[name="gradient_start"], input[name="gradient_end"], input[name="gradient_angle"], select[name="dot_style"], select[name="eye_outer_style"], select[name="eye_inner_style"], select[name="fill_mode"]').forEach((el) => {
+        const handler = () => {
             clearTimeout(previewTimer);
             previewTimer = setTimeout(updatePreview, 180);
+        };
+        el.addEventListener('input', handler);
+        el.addEventListener('change', handler);
+    });
+
+    tabButtons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const tabName = btn.getAttribute('data-tab') || 'style';
+            setActiveTab(tabName);
         });
     });
+    setActiveTab('style');
+    syncGradientVisibility();
+    if (fillModeEl) fillModeEl.addEventListener('change', syncGradientVisibility);
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -892,10 +1005,19 @@ require __DIR__ . '/layout.php';
                 form.querySelector('input[name="frame_text"]').value = '';
                 form.querySelector('input[name="logo_scale_pct"]').value = '18';
                 form.querySelector('input[name="image_size"]').value = '480';
+                form.querySelector('select[name="dot_style"]').value = 'square';
+                form.querySelector('select[name="eye_outer_style"]').value = 'square';
+                form.querySelector('select[name="eye_inner_style"]').value = 'square';
+                form.querySelector('select[name="fill_mode"]').value = 'solid';
+                form.querySelector('input[name="gradient_start"]').value = '#000000';
+                form.querySelector('input[name="gradient_end"]').value = '#ff2fd2';
+                form.querySelector('input[name="gradient_angle"]').value = '45';
                 const removeLogo = form.querySelector('input[name="remove_logo"]');
                 if (removeLogo) removeLogo.checked = false;
                 const logoInput = form.querySelector('input[name="logo"]');
                 if (logoInput) logoInput.value = '';
+                syncGradientVisibility();
+                setActiveTab('style');
 
                 statusEl.textContent = 'Global QR style reset to default.';
                 updatePreview();
