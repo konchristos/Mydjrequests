@@ -3,6 +3,8 @@
  * qr_poster.php — high-resolution printable A4 poster
  */
 
+require_once __DIR__ . '/app/bootstrap_public.php';
+
 error_reporting(0);
 ini_set('display_errors', 0);
 if (ob_get_length()) ob_clean();
@@ -20,6 +22,27 @@ if ($uuid === '') {
     exit;
 }
 
+$eventModel = new Event();
+$event = $eventModel->findByUuid($uuid);
+if (!$event) {
+    exit;
+}
+
+$userModel = new User();
+$eventDj = $userModel->findById((int)$event['user_id']);
+if ($eventDj) {
+    $dj = trim((string)($eventDj['dj_name'] ?: $eventDj['name'] ?: $dj));
+}
+if (trim($title) === 'Event' && !empty($event['title'])) {
+    $title = (string)$event['title'];
+}
+if (trim($location) === 'Location' && !empty($event['location'])) {
+    $location = (string)$event['location'];
+}
+if (trim($date) === 'Date' && !empty($event['event_date'])) {
+    $date = (string)$event['event_date'];
+}
+
 // -------------------------
 // Format date nicely (e.g. 2025-12-14 → 14 December 2025)
 // -------------------------
@@ -33,14 +56,12 @@ if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
 }
 
 // -------------------------
-// Build URL for QR
-// -------------------------
-$targetUrl = "https://mydjrequests.com/r/" . rawurlencode($uuid);
-
-// -------------------------
 // Fetch large QR
 // -------------------------
-$qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=800x800&data=" . rawurlencode($targetUrl);
+$isPremium = mdjr_user_has_premium(db(), (int)$event['user_id']);
+$qrUrl = $isPremium
+    ? url('qr/premium_generate.php?uuid=' . rawurlencode($uuid) . '&size=800')
+    : ("https://api.qrserver.com/v1/create-qr-code/?size=800x800&data=" . rawurlencode("https://mydjrequests.com/r/" . rawurlencode($uuid)));
 $qrRaw = @file_get_contents($qrUrl);
 if (!$qrRaw) exit;
 

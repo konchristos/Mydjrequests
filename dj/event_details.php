@@ -107,9 +107,13 @@ function ensureEventTipsBoostColumn(PDO $db): void
 }
 
 ensureEventTipsBoostColumn($db);
+mdjr_ensure_premium_tables($db);
 
 // Reload event to include any newly added column.
 $event = $eventModel->findById((int)$event['id']) ?: $event;
+
+$djPlan = mdjr_get_user_plan($db, $djId);
+$isPremiumPlan = ($djPlan === 'premium');
 
 // Global platform gate from app_settings (production patron page).
 $platformTipsBoostEnabled = false;
@@ -1321,15 +1325,11 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </button>
     </div>
 
-    <div id="copyFeedback"
+<div id="copyFeedback"
          style="font-size:12px;color:#5fdb6e;margin-top:6px;display:none;">
         Copied!
     </div>
 </div>
-
-
-
-
 
 <!-- QR CODE SECTION -->
 <div class="section-card qr-section qr-tile">
@@ -1350,24 +1350,19 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     Guests scan this to request songs instantly.
 </p>
 
-
-
-<?php
-$obsQrUrl = url(
-    'qr/live_embed.php?dj=' . urlencode($dj['uuid']) . '&t=init'
-);
-?>
-
-
 <div class="qr-content">
 
     <!-- LEFT: QR -->
     <div>
         <?php
-            $qrUrl = url(
-                'qr_generate.php?uuid=' . urlencode($event['uuid']) .
-                '&dj=' . urlencode($djDisplay)
-            );
+            if ($isPremiumPlan) {
+                $qrUrl = url('qr/premium_generate.php?uuid=' . urlencode($event['uuid']));
+            } else {
+                $qrUrl = url(
+                    'qr_generate.php?uuid=' . urlencode($event['uuid']) .
+                    '&dj=' . urlencode($djDisplay)
+                );
+            }
         ?>
 
         <div class="qr-wrapper">
@@ -1386,88 +1381,7 @@ $obsQrUrl = url(
            
             
         </div>
-        
-        
-        
-         <div style="
-    margin-top:18px;
-    padding-top:14px;
-    border-top:1px dashed #333;
-    max-width:360px;
-">
 
-    <div style="
-        font-size:12px;
-        font-weight:700;
-        color:#aaa;
-        margin-bottom:6px;
-        text-transform:uppercase;
-        letter-spacing:.08em;
-    ">
-        OBS Browser Source URL
-    </div>
-
-    <div style="
-        display:flex;
-        align-items:center;
-        gap:8px;
-    ">
-        <code
-            id="obsQrUrl"
-            style="
-                flex:1;
-                background:#0c0c11;
-                border:1px solid #292933;
-                border-radius:6px;
-                padding:6px 8px;
-                font-size:12px;
-                color:#cfcfd8;
-                overflow:hidden;
-                white-space:nowrap;
-                text-overflow:ellipsis;
-            "
-            title="<?php echo e($obsQrUrl); ?>"
-        >
-            <?php echo e($obsQrUrl); ?>
-        </code>
-
-        <button
-            onclick="copyObsQrUrl()"
-            style="
-                background:#ff2fd2;
-                border:none;
-                padding:6px 10px;
-                border-radius:6px;
-                color:#000;
-                font-size:12px;
-                font-weight:800;
-                cursor:pointer;
-            "
-        >
-            Copy
-        </button>
-    </div>
-
-    <div
-        id="obsCopyFeedback"
-        style="
-            display:none;
-            margin-top:6px;
-            font-size:12px;
-            color:#5fdb6e;
-        "
-    >
-        Copied for OBS 🎥
-    </div>
-
-</div>
-        
-        
-        
-        
-        
-        
-        
     </div>
 
     <!-- RIGHT: ACTIONS -->
@@ -2094,23 +2008,6 @@ function copyPatronLink(url) {
     });
 }
 </script>
-
-
-<script>
-function copyObsQrUrl() {
-    const el = document.getElementById('obsQrUrl');
-    const fb = document.getElementById('obsCopyFeedback');
-    if (!el) return;
-
-    navigator.clipboard.writeText(el.textContent.trim()).then(() => {
-        if (fb) {
-            fb.style.display = 'block';
-            setTimeout(() => fb.style.display = 'none', 1500);
-        }
-    });
-}
-</script>
-
 
 <script>
 (function () {

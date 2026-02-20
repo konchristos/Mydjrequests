@@ -1,0 +1,127 @@
+<?php
+require_once __DIR__ . '/../../app/bootstrap.php';
+require_dj_login();
+
+header('Content-Type: application/json');
+
+$db = db();
+$djId = (int)($_SESSION['dj_id'] ?? 0);
+$eventId = (int)($_POST['event_id'] ?? 0);
+
+if ($djId <= 0 || $eventId <= 0) {
+    http_response_code(400);
+    echo json_encode(['ok' => false, 'error' => 'Missing parameters']);
+    exit;
+}
+
+$eventModel = new Event();
+$event = $eventModel->findById($eventId);
+if (!$event || (int)$event['user_id'] !== $djId) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Access denied']);
+    exit;
+}
+
+if (!mdjr_user_has_premium($db, $djId)) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Premium plan required']);
+    exit;
+}
+
+$fg = strtoupper(trim((string)($_POST['foreground_color'] ?? '#000000')));
+$bg = strtoupper(trim((string)($_POST['background_color'] ?? '#FFFFFF')));
+$frameText = trim((string)($_POST['frame_text'] ?? ''));
+$logoScalePct = (int)($_POST['logo_scale_pct'] ?? 18);
+$imageSize = (int)($_POST['image_size'] ?? 480);
+$removeLogo = ((string)($_POST['remove_logo'] ?? '0') === '1');
+
+if (!preg_match('/^#[0-9A-F]{6}$/', $fg)) {
+    $fg = '#000000';
+}
+if (!preg_match('/^#[0-9A-F]{6}$/', $bg)) {
+    $bg = '#FFFFFF';
+}
+
+$logoScalePct = max(8, min(20, $logoScalePct));
+$imageSize = max(220, min(1200, $imageSize));
+$frameText = substr($frameText, 0, 80);
+
+try {
+    mdjr_ensure_premium_tables($db);
+
+    $existing = mdjr_get_qr_settings($db, $eventId) ?: [];
+    $logoPath = (string)($existing['logo_path'] ?? '');
+
+    if ($removeLogo) {
+        $logoPath = '';
+    }
+
+    if (!empty($_FILES['logo']['name'])) {
+        $file = $_FILES['logo'];
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            throw new RuntimeException('Logo upload failed');
+        }
+        if (($file['size'] ?? 0) > (2 * 1024 * 1024)) {
+            throw new RuntimeException('Logo is too large (max 2MB)');
+        }
+
+        $allowed = [
+            'image/png' => 'png',
+            'image/jpeg' => 'jpg',
+            'image/webp' => 'webp',
+        ];
+
+        $mime = mdjr_detect_upload_mime((string)$file['tmp_name']);
+        if (!isset($allowed[$mime])) {
+            throw new RuntimeException('Invalid logo format (PNG/JPG/WEBP only)');
+        }
+
+        $dir = APP_ROOT . '/uploads/qr_logos/user_' . $djId;
+        if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+            throw new RuntimeException('Failed to prepare upload folder');
+        }
+
+        $name = 'event_' . $eventId . '_' . time() . '.' . $allowed[$mime];
+        $dest = $dir . '/' . $name;
+
+        if (!move_uploaded_file((string)$file['tmp_name'], $dest)) {
+            throw new RuntimeException('Failed to save logo');
+        }
+
+        $logoPath = '/uploads/qr_logos/user_' . $djId . '/' . $name;
+    }
+
+    mdjr_save_qr_settings($db, $eventId, $djId, [
+        'foreground_color' => $fg,
+        'background_color' => $bg,
+        'frame_text' => $frameText,
+        'logo_path' => $logoPath !== '' ? $logoPath : null,
+        'logo_scale_pct' => $logoScalePct,
+        'image_size' => $imageSize,
+        'error_correction' => 'H',
+    ]);
+
+    $updated = mdjr_get_qr_settings($db, $eventId) ?: [];
+    $qrPreview = url('qr/premium_generate.php?uuid=' . rawurlencode((string)$event['uuid']) . '&t=' . time());
+
+    echo json_encode([
+        'ok' => true,
+        'event_id' => $eventId,
+        'qr_preview' => $qrPreview,
+        'settings' => [
+            'foreground_color' => $updated['foreground_color'] ?? $fg,
+            'background_color' => $updated['background_color'] ?? $bg,
+            'frame_text' => $updated['frame_text'] ?? $frameText,
+            'logo_path' => $updated['logo_path'] ?? null,
+            'logo_scale_pct' => (int)($updated['logo_scale_pct'] ?? $logoScalePct),
+            'image_size' => (int)($updated['image_size'] ?? $imageSize),
+            'error_correction' => (string)($updated['error_correction'] ?? 'H'),
+        ],
+    ]);
+} catch (Throwable $e) {
+    http_response_code(500);
+    echo json_encode([
+        'ok' => false,
+        'error' => $e->getMessage() !== '' ? $e->getMessage() : 'Failed to save premium QR settings',
+    ]);
+}

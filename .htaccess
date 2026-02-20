@@ -14,6 +14,10 @@ RewriteRule ^r/([^/]+)/?$ request/index.php?event=$1 [L,QSA]
 # Allow /request/{uuid} → /request/index.php?event={uuid}
 RewriteCond %{REQUEST_URI} ^/request/
 RewriteRule ^request/([^/]+)/?$ request/index.php?event=$1 [L,QSA]
+
+# Premium dynamic event link: /e/{slug}
+RewriteCond %{REQUEST_URI} ^/e/
+RewriteRule ^e/([A-Za-z0-9\-]+)/?$ e/index.php?slug=$1 [L,QSA]
 </IfModule>
 
 # php -- BEGIN cPanel-generated handler, do not edit

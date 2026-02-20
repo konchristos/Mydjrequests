@@ -10,6 +10,42 @@ if ($djId <= 0) {
     redirect('dj/login.php');
 }
 
+$userStmt = $db->prepare("
+    SELECT uuid, dj_name, name
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+");
+$userStmt->execute([$djId]);
+$userRow = $userStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+$djUuid = (string)($userRow['uuid'] ?? '');
+$djDisplay = trim((string)($userRow['dj_name'] ?? '')) !== ''
+    ? (string)$userRow['dj_name']
+    : (string)($userRow['name'] ?? '');
+$dynamicObsUrl = $djUuid !== '' ? url('qr/live_embed.php?dj=' . urlencode($djUuid) . '&t=init') : '';
+$isAdminUser = is_admin();
+$basePlan = mdjr_get_user_plan_base($db, $djId);
+$activeSimulation = mdjr_get_admin_plan_simulation($db, $djId);
+$effectivePlan = mdjr_get_user_plan($db, $djId);
+$isPremiumPlan = ($effectivePlan === 'premium');
+$dynamicLivePatronUrl = $djUuid !== '' ? url('qr/live_patron.php?dj=' . urlencode($djUuid)) : '';
+mdjr_ensure_premium_tables($db);
+$globalQrSettings = mdjr_get_user_qr_settings($db, $djId) ?: null;
+$previewEventUuid = '';
+try {
+    $previewStmt = $db->prepare("
+        SELECT uuid
+        FROM events
+        WHERE user_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+    ");
+    $previewStmt->execute([$djId]);
+    $previewEventUuid = (string)($previewStmt->fetchColumn() ?: '');
+} catch (Throwable $e) {
+    $previewEventUuid = '';
+}
+
 // Ensure user preference table exists.
 $db->exec("
     CREATE TABLE IF NOT EXISTS user_settings (
@@ -70,6 +106,21 @@ $defaultBroadcastToken = mdjr_default_broadcast_token();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token()) {
         $error = 'Invalid session. Please refresh and try again.';
+    } elseif ($isAdminUser && isset($_POST['admin_plan_simulation'])) {
+        $sim = strtolower(trim((string)($_POST['admin_plan_simulation'] ?? 'auto')));
+        if (!in_array($sim, ['auto', 'pro', 'premium'], true)) {
+            $error = 'Invalid plan simulation option.';
+        } else {
+            if ($sim === 'auto') {
+                mdjr_set_admin_plan_simulation($db, $djId, null, (int)$djId);
+            } else {
+                mdjr_set_admin_plan_simulation($db, $djId, $sim, (int)$djId);
+            }
+            $activeSimulation = mdjr_get_admin_plan_simulation($db, $djId);
+            $effectivePlan = mdjr_get_user_plan($db, $djId);
+            $isPremiumPlan = ($effectivePlan === 'premium');
+            $success = 'Admin plan simulation updated.';
+        }
     } else {
         $software = trim((string)($_POST['dj_software'] ?? ''));
         $softwareOther = trim((string)($_POST['dj_software_other'] ?? ''));
@@ -323,6 +374,41 @@ require __DIR__ . '/layout.php';
 .settings-after-save-gap {
     margin-top: 18px;
 }
+.settings-copy-row {
+    display:flex;
+    align-items:center;
+    gap:10px;
+}
+.settings-copy-row .settings-input {
+    flex:1;
+    width:auto;
+}
+.settings-copy-feedback {
+    display:none;
+    font-size:12px;
+    color:#5fdb6e;
+    margin-top:6px;
+}
+.premium-badge {
+    display:inline-block;
+    margin-left:8px;
+    padding:2px 8px;
+    border-radius:999px;
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.04em;
+    text-transform:uppercase;
+    background:rgba(255,47,210,0.18);
+    border:1px solid rgba(255,47,210,0.55);
+    color:#ff7de8;
+    vertical-align:middle;
+}
+.premium-lock-tip {
+    margin-left:6px;
+    font-size:13px;
+    color:#ffb3ef;
+    cursor:help;
+}
 </style>
 
 <div class="settings-wrap">
@@ -333,6 +419,30 @@ require __DIR__ . '/layout.php';
 
     <?php if ($error !== ''): ?><div class="settings-err"><?php echo e($error); ?></div><?php endif; ?>
     <?php if ($success !== ''): ?><div class="settings-ok"><?php echo e($success); ?></div><?php endif; ?>
+
+    <?php if ($isAdminUser): ?>
+    <div class="settings-card">
+        <h3>Admin Plan Simulation</h3>
+        <div class="settings-help" style="margin-top:0;">
+            Simulate <strong>Pro</strong> or <strong>Premium</strong> for your current account to preview feature locks and badges.
+        </div>
+        <form method="POST" style="margin-top:10px;">
+            <?php echo csrf_field(); ?>
+            <div class="settings-copy-row">
+                <select class="settings-select" name="admin_plan_simulation" style="max-width:240px;">
+                    <option value="auto" <?php echo $activeSimulation === null ? 'selected' : ''; ?>>Auto (real plan)</option>
+                    <option value="pro" <?php echo $activeSimulation === 'pro' ? 'selected' : ''; ?>>Force Pro</option>
+                    <option value="premium" <?php echo $activeSimulation === 'premium' ? 'selected' : ''; ?>>Force Premium</option>
+                </select>
+                <button type="submit" class="settings-btn">Apply</button>
+            </div>
+        </form>
+        <div class="settings-help">
+            Real plan: <strong><?php echo e(strtoupper($basePlan)); ?></strong> ·
+            Effective plan: <strong><?php echo e(strtoupper($effectivePlan)); ?></strong>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <div class="settings-card">
         <h3>Platform Status</h3>
@@ -347,6 +457,161 @@ require __DIR__ . '/layout.php';
         <div class="settings-help">
             Your default tip/boost preference is saved below, but live visibility is controlled by this global platform setting.
         </div>
+    </div>
+
+    <div class="settings-card" id="dynamic-qr-link">
+        <h3>
+            Dynamic Event Links (Set &amp; Forget)
+            <span class="premium-badge">Premium</span>
+            <?php if (!$isPremiumPlan): ?>
+                <span class="premium-lock-tip" title="Locked for Pro. Requires Premium subscription.">🔒</span>
+            <?php endif; ?>
+        </h3>
+        <div class="settings-help" style="margin-top:0;">
+            These are global, reusable live links that always route to your current LIVE event.
+        </div>
+
+        <?php if ($djUuid !== ''): ?>
+            <div class="settings-row">
+                <label class="settings-label" for="dynamic_obs_url">
+                    Live QR Overlay URL (OBS Browser Source)
+                    <span class="premium-badge">Premium</span>
+                    <?php if (!$isPremiumPlan): ?>
+                        <span class="premium-lock-tip" title="Locked for Pro. Requires Premium subscription.">🔒</span>
+                    <?php endif; ?>
+                </label>
+                <?php if ($isPremiumPlan): ?>
+                    <div class="settings-copy-row">
+                        <input
+                            class="settings-input"
+                            id="dynamic_obs_url"
+                            type="text"
+                            readonly
+                            value="<?php echo e($dynamicObsUrl); ?>"
+                        >
+                        <button type="button" class="settings-btn copy-btn" data-target="dynamic_obs_url" data-feedback="dynamicObsFeedback">Copy</button>
+                    </div>
+                    <div id="dynamicObsFeedback" class="settings-copy-feedback">Copied for OBS.</div>
+                    <div class="settings-help">
+                        Use this in OBS Browser Source to display a dynamic QR that follows your current LIVE event.
+                    </div>
+                <?php else: ?>
+                    <div class="settings-help">
+                        Available on <strong>Premium</strong>. Unlock dynamic OBS overlays that auto-follow your LIVE event.
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label" for="dynamic_live_patron_url">
+                    Live Patron Page URL
+                    <span class="premium-badge">Premium</span>
+                    <?php if (!$isPremiumPlan): ?>
+                        <span class="premium-lock-tip" title="Locked for Pro. Requires Premium subscription.">🔒</span>
+                    <?php endif; ?>
+                </label>
+                <?php if ($isPremiumPlan): ?>
+                    <div class="settings-copy-row">
+                        <input
+                            class="settings-input"
+                            id="dynamic_live_patron_url"
+                            type="text"
+                            readonly
+                            value="<?php echo e($dynamicLivePatronUrl); ?>"
+                        >
+                        <button type="button" class="settings-btn copy-btn" data-target="dynamic_live_patron_url" data-feedback="dynamicLivePatronFeedback">Copy</button>
+                    </div>
+                    <div id="dynamicLivePatronFeedback" class="settings-copy-feedback">Copied live patron URL.</div>
+                    <div class="settings-help">
+                        Share one persistent URL that always routes guests to your currently LIVE event request page.
+                    </div>
+                <?php else: ?>
+                    <div class="settings-help">
+                        Available on <strong>Premium</strong>. Upgrade to share one persistent link that always routes to your current LIVE event.
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <div class="settings-help">
+                DJ: <strong><?php echo e($djDisplay !== '' ? $djDisplay : ('User #' . $djId)); ?></strong>
+            </div>
+        <?php else: ?>
+            <div class="settings-err" style="margin:10px 0 0;">
+                Could not resolve your DJ UUID, so dynamic QR links are unavailable.
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="settings-card" id="premium-qr-style">
+        <h3>
+            Global QR Style
+            <span class="premium-badge">Premium</span>
+            <?php if (!$isPremiumPlan): ?>
+                <span class="premium-lock-tip" title="Locked for Pro. Requires Premium subscription.">🔒</span>
+            <?php endif; ?>
+        </h3>
+        <?php if ($isPremiumPlan): ?>
+            <div class="settings-help" style="margin-top:0;">
+                This style applies to all event QR codes, downloads, and your live OBS QR overlay.
+            </div>
+            <form id="premiumGlobalQrForm" enctype="multipart/form-data" style="margin-top:12px;">
+                <div style="display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px;">
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Foreground</span>
+                        <input name="foreground_color" type="color" value="<?php echo e((string)($globalQrSettings['foreground_color'] ?? '#000000')); ?>" style="height:42px;">
+                    </label>
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Background</span>
+                        <input name="background_color" type="color" value="<?php echo e((string)($globalQrSettings['background_color'] ?? '#ffffff')); ?>" style="height:42px;">
+                    </label>
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Frame Text</span>
+                        <input name="frame_text" type="text" maxlength="80" placeholder="SCAN TO REQUEST" value="<?php echo e((string)($globalQrSettings['frame_text'] ?? '')); ?>" class="settings-input">
+                    </label>
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Logo Size (%)</span>
+                        <input name="logo_scale_pct" type="number" min="8" max="20" value="<?php echo (int)($globalQrSettings['logo_scale_pct'] ?? 18); ?>" class="settings-input">
+                    </label>
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Image Size</span>
+                        <input name="image_size" type="number" min="220" max="1200" value="<?php echo (int)($globalQrSettings['image_size'] ?? 480); ?>" class="settings-input">
+                    </label>
+                    <label style="display:flex;flex-direction:column;gap:6px;">
+                        <span style="font-size:12px;color:#aaa;">Center Logo (PNG/JPG/WEBP)</span>
+                        <input name="logo" type="file" accept="image/png,image/jpeg,image/webp" class="settings-input">
+                    </label>
+                </div>
+
+                <label style="display:flex;align-items:center;gap:8px;margin-top:12px;color:#ddd;">
+                    <input type="checkbox" name="remove_logo" value="1">
+                    Remove existing logo
+                </label>
+
+                <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
+                    <button type="submit" id="saveGlobalQrBtn" class="settings-btn">Save Global QR Style</button>
+                    <button type="button" id="resetGlobalQrBtn" class="settings-btn" style="background:#2a2a3a;">Reset to Default</button>
+                    <span id="globalQrStatus" style="font-size:12px;color:#8f95a3;"></span>
+                </div>
+            </form>
+            <div style="margin-top:14px;">
+                <div class="settings-label" style="margin-bottom:8px;">Live Preview</div>
+                <?php if ($previewEventUuid !== ''): ?>
+                    <img
+                        id="globalQrPreview"
+                        src="<?php echo e(url('qr/premium_generate.php?uuid=' . urlencode($previewEventUuid) . '&size=360&preview=1')); ?>"
+                        alt="QR preview"
+                        style="width:220px;height:220px;border-radius:12px;border:1px solid #2a2a3a;background:#0f0f14;display:block;"
+                    >
+                    <div class="settings-help">Preview updates as you edit colors/text/size. Logo updates appear after save.</div>
+                <?php else: ?>
+                    <div class="settings-help">Create at least one event to enable QR preview.</div>
+                <?php endif; ?>
+            </div>
+        <?php else: ?>
+            <div class="settings-help" style="margin-top:0;">
+                Available on <strong>Premium</strong>. Set one global branded QR style that applies across all events and live overlay outputs.
+            </div>
+        <?php endif; ?>
     </div>
 
     <form method="POST">
@@ -548,5 +813,126 @@ require __DIR__ . '/layout.php';
         modeCustom.addEventListener('change', syncBroadcastMode);
     }
     syncBroadcastMode();
+})();
+</script>
+
+<script>
+(function () {
+    const form = document.getElementById('premiumGlobalQrForm');
+    const statusEl = document.getElementById('globalQrStatus');
+    const saveBtn = document.getElementById('saveGlobalQrBtn');
+    const resetBtn = document.getElementById('resetGlobalQrBtn');
+    const previewImg = document.getElementById('globalQrPreview');
+    if (!form || !statusEl || !saveBtn) return;
+
+    function updatePreview() {
+        if (!previewImg) return;
+        const fg = form.querySelector('input[name="foreground_color"]')?.value || '#000000';
+        const bg = form.querySelector('input[name="background_color"]')?.value || '#ffffff';
+        const frame = form.querySelector('input[name="frame_text"]')?.value || '';
+        const logoScale = form.querySelector('input[name="logo_scale_pct"]')?.value || '18';
+        const url = new URL(previewImg.src, window.location.origin);
+        url.searchParams.set('fg', fg);
+        url.searchParams.set('bg', bg);
+        url.searchParams.set('frame', frame);
+        url.searchParams.set('logo_scale', logoScale);
+        url.searchParams.set('_t', String(Date.now()));
+        previewImg.src = url.toString();
+    }
+
+    let previewTimer = null;
+    form.querySelectorAll('input[name="foreground_color"], input[name="background_color"], input[name="frame_text"], input[name="logo_scale_pct"], input[name="image_size"]').forEach((el) => {
+        el.addEventListener('input', () => {
+            clearTimeout(previewTimer);
+            previewTimer = setTimeout(updatePreview, 180);
+        });
+    });
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        saveBtn.disabled = true;
+        statusEl.textContent = 'Saving global style...';
+
+        try {
+            const fd = new FormData(form);
+            const res = await fetch('/dj/api/premium_qr_global_settings_save.php', {
+                method: 'POST',
+                body: fd
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.error || 'Failed to save global QR style');
+
+            statusEl.textContent = 'Global QR style saved.';
+            updatePreview();
+            setTimeout(() => { statusEl.textContent = ''; }, 1800);
+        } catch (err) {
+            statusEl.textContent = err.message || 'Save failed.';
+        } finally {
+            saveBtn.disabled = false;
+        }
+    });
+
+    if (resetBtn) {
+        resetBtn.addEventListener('click', async () => {
+            if (!confirm('Reset global QR style to default and remove logo?')) return;
+            resetBtn.disabled = true;
+            statusEl.textContent = 'Resetting...';
+            try {
+                const fd = new FormData();
+                fd.append('reset_defaults', '1');
+                const res = await fetch('/dj/api/premium_qr_global_settings_save.php', {
+                    method: 'POST',
+                    body: fd
+                });
+                const data = await res.json();
+                if (!data.ok) throw new Error(data.error || 'Reset failed');
+
+                form.querySelector('input[name="foreground_color"]').value = '#000000';
+                form.querySelector('input[name="background_color"]').value = '#ffffff';
+                form.querySelector('input[name="frame_text"]').value = '';
+                form.querySelector('input[name="logo_scale_pct"]').value = '18';
+                form.querySelector('input[name="image_size"]').value = '480';
+                const removeLogo = form.querySelector('input[name="remove_logo"]');
+                if (removeLogo) removeLogo.checked = false;
+                const logoInput = form.querySelector('input[name="logo"]');
+                if (logoInput) logoInput.value = '';
+
+                statusEl.textContent = 'Global QR style reset to default.';
+                updatePreview();
+                setTimeout(() => { statusEl.textContent = ''; }, 1800);
+            } catch (err) {
+                statusEl.textContent = err.message || 'Reset failed.';
+            } finally {
+                resetBtn.disabled = false;
+            }
+        });
+    }
+})();
+</script>
+
+<script>
+(function () {
+    function copyFromInput(inputId, feedbackId) {
+        var input = document.getElementById(inputId);
+        var feedback = document.getElementById(feedbackId);
+        if (!input) return;
+
+        navigator.clipboard.writeText(input.value || '').then(function () {
+            if (!feedback) return;
+            feedback.style.display = 'block';
+            setTimeout(function () {
+                feedback.style.display = 'none';
+            }, 1500);
+        });
+    }
+
+    document.querySelectorAll('.copy-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var target = btn.getAttribute('data-target');
+            var feedback = btn.getAttribute('data-feedback');
+            if (!target || !feedback) return;
+            copyFromInput(target, feedback);
+        });
+    });
 })();
 </script>

@@ -136,6 +136,7 @@ require_once APP_ROOT . '/app/helpers/trusted_device.php';
 require_once APP_ROOT . '/app/helpers/admin.php';
 require_once APP_ROOT . '/app/helpers/event_state.php';
 require_once APP_ROOT . '/app/helpers/notifications.php';
+require_once APP_ROOT . '/app/helpers/premium_features.php';
 
 
 // ---------------------------------------------------------
@@ -191,4 +192,3 @@ if (!$isCli && !empty($_SESSION['dj_id']) && !empty($_SESSION['session_id'])) {
         exit;
     }
 }
-

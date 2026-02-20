@@ -36,6 +36,7 @@ if (!$dj) {
 
 $djId      = (int)$dj['id'];
 $djDisplay = $dj['dj_name'] ?: $dj['name'] ?: 'DJ';
+$isPremium = mdjr_user_has_premium($db, $djId);
 
 /**
  * STEP 2: Find LIVE event for this DJ
@@ -46,7 +47,9 @@ $stmt = $db->prepare("
     FROM events
     WHERE user_id = ?
       AND event_state = 'live'
-    ORDER BY updated_at DESC
+    ORDER BY
+      COALESCE(state_changed_at, created_at) DESC,
+      id DESC
     LIMIT 1
 
 ");
@@ -62,9 +65,10 @@ if (!$event) {
  * STEP 3: Proxy existing QR generator
  */
 $qrUrl = url(
-    'qr_generate.php?uuid=' . urlencode($event['uuid']) .
-    '&dj=' . urlencode($djDisplay) .
-    '&_=' . time()
+    ($isPremium
+        ? ('qr/premium_generate.php?uuid=' . urlencode($event['uuid']))
+        : ('qr_generate.php?uuid=' . urlencode($event['uuid']) . '&dj=' . urlencode($djDisplay)))
+    . '&_=' . time()
 );
 
 // Fetch and stream the image

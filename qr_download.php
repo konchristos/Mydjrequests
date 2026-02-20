@@ -56,7 +56,10 @@ $djName = strtoupper($dj['dj_name'] ?: $dj['name'] ?: 'DJ');
    Load QR image
 ------------------------------------------------- */
 
-$qrUrl  = url('qr_generate.php?uuid=' . urlencode($uuid));
+$isPremium = mdjr_user_has_premium($db, (int)$event['user_id']);
+$qrUrl  = $isPremium
+    ? url('qr/premium_generate.php?uuid=' . urlencode($uuid) . '&size=480')
+    : url('qr_generate.php?uuid=' . urlencode($uuid));
 $qrData = @file_get_contents($qrUrl);
 if (!$qrData) {
     http_response_code(500);

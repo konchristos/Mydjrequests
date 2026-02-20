@@ -27,6 +27,9 @@ $stmt = $db->prepare("
     FROM events
     WHERE user_id = ?
       AND event_state = 'live'
+    ORDER BY
+      COALESCE(state_changed_at, created_at) DESC,
+      id DESC
     LIMIT 1
 ");
 $stmt->execute([(int)$user['id']]);
