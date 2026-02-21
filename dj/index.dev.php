@@ -82,6 +82,8 @@ $eventTipsBoostEnabled = ($eventOverrideRaw === null || $eventOverrideRaw === ''
     : ((int)$eventOverrideRaw === 1);
 
 $tipsBoostVisible = $platformTipsBoostEnabled && $eventTipsBoostEnabled;
+
+$pollsPremiumEnabled = mdjr_get_user_plan($db, (int)($event['user_id'] ?? 0)) === 'premium';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -196,33 +198,29 @@ $tipsBoostVisible = $platformTipsBoostEnabled && $eventTipsBoostEnabled;
 <!-- TOP WIDGETS ROW -->
 <div class="dj-top-widgets">
 
-  <div id="djSupportTile" class="dj-support-tile">
-    <div class="dj-tile-inner">
-      <div class="support-label">💜 Support</div>
-      <div id="djSupportAmount" class="support-amount">$0.00</div>
-      <div class="support-sub">Tips & boosts</div>
+  <div class="dj-left-stack">
+    <button id="djTopPatronsTile" class="insight-tile" type="button">
+      <div class="insight-label">🏆 Top Patron</div>
+      <div id="djTopPatronName" class="insight-value small">—</div>
+      <div id="djTopPatronMeta" class="insight-sub">No activity yet</div>
+    </button>
+
+    <div id="djSupportTile" class="dj-support-tile">
+      <div class="dj-tile-inner">
+        <div class="support-label">💜 Support</div>
+        <div id="djSupportAmount" class="support-amount">$0.00</div>
+        <div class="support-sub">Tips & boosts</div>
+      </div>
     </div>
   </div>
 
   <div id="djMood" class="dj-mood clickable"></div>
 
   <div class="dj-insights-grid">
-    <button id="djBroadcastQuickTile" class="insight-tile" type="button">
-      <div class="insight-label">📢 Broadcast</div>
-      <div class="insight-value">Message</div>
-      <div class="insight-sub">Send to patrons</div>
-    </button>
-
     <button id="djConnectedTile" class="insight-tile" type="button">
       <div class="insight-label">👥 Connected</div>
       <div id="djConnectedCount" class="insight-value">0</div>
       <div class="insight-sub">Patrons joined</div>
-    </button>
-
-    <button id="djTopPatronsTile" class="insight-tile" type="button">
-      <div class="insight-label">🏆 Top Patron</div>
-      <div id="djTopPatronName" class="insight-value small">—</div>
-      <div id="djTopPatronMeta" class="insight-sub">No activity yet</div>
     </button>
 
     <div class="insight-tile">
@@ -258,27 +256,64 @@ $tipsBoostVisible = $platformTipsBoostEnabled && $eventTipsBoostEnabled;
 
       <div class="message-stats" id="messageStats"></div>
     </div>
-    
-          <div class="message-tabs">
-  <button class="message-tab active" data-status="all">All</button>
-  <button class="message-tab" data-status="active">Active</button>
-  <button class="message-tab" data-status="muted">Muted</button>
-  <button class="message-tab" data-status="blocked">Blocked</button>
-</div>
+
+    <div class="message-primary-tabs">
+      <button class="message-primary-tab active" data-view="chats">Chats</button>
+      <button class="message-primary-tab" data-view="broadcasts">Broadcasts</button>
+      <button class="message-primary-tab" data-view="polls">Polls</button>
+    </div>
+
+    <div class="message-tabs" id="messageStatusTabs">
+      <button class="message-tab active" data-status="all">All</button>
+      <button class="message-tab" data-status="active">Active</button>
+      <button class="message-tab" data-status="muted">Muted</button>
+      <button class="message-tab" data-status="blocked">Blocked</button>
+    </div>
 
   </div> <!-- ✅ CLOSE messages-header -->
 
-  <!-- Message list -->
-  <div id="messageList"></div>
-  <div id="djMessageThread" class="dj-message-thread hidden"></div>
+  <!-- Chats view -->
+  <div id="chatView">
+    <div id="messageList"></div>
+    <div id="djMessageThread" class="dj-message-thread hidden"></div>
 
-  <div id="messageReplyBox" class="message-reply-box hidden">
-    <div id="replyGuestLabel" class="reply-guest-label">Reply target: none selected</div>
-    <textarea id="djReplyText" rows="2" placeholder="Type a private reply..."></textarea>
-    <div class="reply-actions">
-      <button id="djReplyCancel" type="button" class="reply-btn secondary">Cancel Reply</button>
-      <button id="djReplySend" type="button" class="reply-btn primary">Send Reply</button>
+    <div id="messageReplyBox" class="message-reply-box hidden">
+      <div class="reply-header">
+        <div id="replyGuestLabel" class="reply-guest-label">Reply target: none selected</div>
+        <button id="replyCloseBtn" type="button" class="reply-close-btn" aria-label="Close reply">✕</button>
+      </div>
+      <textarea id="djReplyText" rows="2" placeholder="Type a private reply..."></textarea>
+      <div class="reply-actions">
+        <button id="djReplyCancel" type="button" class="reply-btn secondary">Cancel Reply</button>
+        <button id="djReplySend" type="button" class="reply-btn primary">Send Reply</button>
+      </div>
     </div>
+  </div>
+
+  <!-- Broadcasts view -->
+  <div id="broadcastsView" class="message-view hidden">
+    <div class="message-view-actions">
+      <button id="sendBroadcastFromTabBtn" type="button" class="reply-btn primary">Send Broadcast</button>
+    </div>
+    <div id="broadcastsList" class="message-view-list"></div>
+  </div>
+
+  <!-- Polls view -->
+  <div id="pollsView" class="message-view hidden">
+    <div class="message-view-actions">
+      <?php if ($pollsPremiumEnabled): ?>
+        <button id="createPollBtn" type="button" class="reply-btn primary">Create Poll</button>
+      <?php else: ?>
+        <button id="createPollBtn" type="button" class="reply-btn primary" disabled title="Premium feature. Upgrade to unlock Poll creation.">Create Poll <span class="premium-badge">PRO</span></button>
+      <?php endif; ?>
+    </div>
+    <?php if (!$pollsPremiumEnabled): ?>
+      <div class="premium-lock-note" role="note">
+        <span class="premium-badge">PRO</span>
+        <span>Polls are a Premium feature. Upgrade your plan to unlock poll creation and results.</span>
+      </div>
+    <?php endif; ?>
+    <div id="pollsList" class="message-view-list<?= $pollsPremiumEnabled ? '' : ' hidden' ?>"></div>
   </div>
 
 </aside>
@@ -294,6 +329,7 @@ window.DJ_CONFIG = {
   eventDate: "<?= htmlspecialchars($event['event_date'] ?? '') ?>",
   eventState: "<?= htmlspecialchars($event['event_state']) ?>",
   tipsBoostVisible: <?= $tipsBoostVisible ? 'true' : 'false' ?>,
+  pollsPremiumEnabled: <?= $pollsPremiumEnabled ? 'true' : 'false' ?>,
   pollInterval: 10000
 };
 </script>
@@ -388,6 +424,43 @@ window.DJ_CONFIG = {
       </div>
       <div id="broadcastStatus" class="broadcast-status"></div>
     </form>
+  </div>
+</div>
+
+<div id="createPollModal" class="support-modal hidden">
+  <div class="support-modal-content insights-modal-content">
+    <div class="mood-modal-header">
+      <h3>🗳️ Create Poll</h3>
+      <button id="closeCreatePollModal" type="button">✕</button>
+    </div>
+
+    <form id="createPollForm" class="broadcast-form">
+      <label for="pollQuestion" style="font-size:12px;color:#b9bfd0;">Question</label>
+      <textarea id="pollQuestion" name="question" rows="3" maxlength="500" placeholder="Ask your crowd a question..." required></textarea>
+
+      <div id="pollOptionsWrap" class="poll-options-wrap">
+        <label style="font-size:12px;color:#b9bfd0;">Answers</label>
+        <input type="text" class="poll-option-input" name="poll_options[]" maxlength="255" placeholder="Option 1" required>
+        <input type="text" class="poll-option-input" name="poll_options[]" maxlength="255" placeholder="Option 2" required>
+      </div>
+
+      <div class="broadcast-form-actions">
+        <button type="button" class="reply-btn secondary" id="pollAddOptionBtn">Add Response</button>
+        <button type="button" class="reply-btn secondary" id="pollCancelBtn">Cancel</button>
+        <button type="submit" class="reply-btn primary" id="pollCreateBtn">Create Poll</button>
+      </div>
+      <div id="pollCreateStatus" class="broadcast-status"></div>
+    </form>
+  </div>
+</div>
+
+<div id="pollDetailsModal" class="support-modal hidden">
+  <div class="support-modal-content insights-modal-content">
+    <div class="mood-modal-header">
+      <h3>🗳️ Poll Votes</h3>
+      <button id="closePollDetailsModal" type="button">✕</button>
+    </div>
+    <div id="pollDetailsBody" style="padding:14px; overflow-y:auto; max-height:70vh;"></div>
   </div>
 </div>
 

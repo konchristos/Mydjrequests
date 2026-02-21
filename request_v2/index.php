@@ -285,6 +285,60 @@ input, textarea {
     color: #ffd8f5;
 }
 
+.thread-row.poll {
+    justify-content: flex-start;
+}
+
+.thread-row.poll .thread-bubble {
+    width: 100%;
+    max-width: 100%;
+    background: rgba(47, 216, 255, 0.10);
+    border: 1px solid rgba(47, 216, 255, 0.35);
+    padding: 0 10px 8px;
+}
+
+.poll-title {
+    display: block;
+    margin: 0 -10px 8px;
+    padding: 10px 10px;
+    border-radius: 14px 14px 10px 10px;
+    background: linear-gradient(135deg, rgba(47,216,255,0.24), rgba(255,47,210,0.18));
+    border-bottom: 1px solid rgba(255,255,255,0.14);
+    color: #f3f8ff;
+    font-weight: 800;
+    font-size: 14px;
+    line-height: 1.3;
+}
+
+.poll-option-btn {
+    width: 100%;
+    text-align: left;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.16);
+    color: #f7f9ff;
+    border-radius: 10px;
+    padding: 8px 10px;
+    margin-top: 6px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.poll-option-btn.selected {
+    border-color: rgba(47, 216, 255, 0.8);
+    background: rgba(47, 216, 255, 0.2);
+    color: #dffbff;
+}
+
+.poll-option-meta {
+    float: right;
+    opacity: 0.75;
+}
+
+.poll-option-static {
+    cursor: default;
+    opacity: 0.8;
+}
+
 .thread-badge {
     display: inline-block;
     font-size: 10px;
@@ -1854,7 +1908,7 @@ function formatThreadTime(ts) {
 }
 
 function isIncomingMessage(row) {
-    return row && (row.sender === "dj" || row.sender === "broadcast");
+    return row && (row.sender === "dj" || row.sender === "broadcast" || row.sender === "poll");
 }
 
 function getMessageRank(row) {
@@ -1989,6 +2043,23 @@ function renderMessageThread(rows) {
     }
 
     messageThreadEl.innerHTML = rows.map(row => {
+        if (row.sender === "poll") {
+            const poll = row.poll || {};
+            const options = Array.isArray(poll.options)
+                ? poll.options
+                : (Array.isArray(row.options) ? row.options : []);
+            const pollId = Number(poll.id || row.id || 0);
+            const selected = Number(poll.selected_option_id || row.selected_option_id || 0);
+            const closed = String(poll.status || row.status || "") === "closed";
+            const optionsHtml = options.map(opt => {
+                const optionId = Number(opt.id || 0);
+                const isSelected = selected === optionId;
+                return `<button type="button" class="poll-option-btn ${isSelected ? 'selected' : ''}" data-poll-id="${pollId}" data-option-id="${optionId}" ${closed ? 'disabled' : ''}>${isSelected ? '✅ ' : ''}${escapeHtml(opt.option_text || "")}<span class="poll-option-meta">${Number(opt.vote_count || 0)} votes</span></button>`;
+            }).join("");
+
+            return `<div class="thread-row poll"><div class="thread-bubble"><div class="poll-title">${escapeHtml(poll.question || row.body || "")}</div>${optionsHtml || '<div class="poll-option-btn poll-option-static">No responses configured</div>'}<span class="thread-time">${formatThreadTime(row.created_at)}</span></div></div>`;
+        }
+
         let sender = 'guest';
         if (row.sender === 'dj') sender = 'dj';
         if (row.sender === 'broadcast') sender = 'broadcast';
@@ -2001,6 +2072,20 @@ function renderMessageThread(rows) {
     }).join("");
 
     messageThreadEl.scrollTop = messageThreadEl.scrollHeight;
+}
+
+async function submitPollVote(pollId, optionId) {
+    const fd = new FormData();
+    fd.append("event_uuid", "<?= e($uuid); ?>");
+    fd.append("poll_id", String(pollId));
+    fd.append("option_id", String(optionId));
+    fd.append("patron_name", localStorage.getItem("mdjr_guest_name") || "");
+
+    const res = await fetch("/api/public/vote_poll.php", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!data.ok) {
+        throw new Error(data.error || "Vote failed");
+    }
 }
 
 async function loadMessageThread() {
@@ -2056,6 +2141,22 @@ messageForm.addEventListener("submit", async (e) => {
         await loadMessageThread();
     } else {
         msgStatus.textContent = data.message || "Something went wrong.";
+    }
+});
+
+messageThreadEl?.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".poll-option-btn");
+    if (!btn) return;
+
+    const pollId = Number(btn.dataset.pollId || 0);
+    const optionId = Number(btn.dataset.optionId || 0);
+    if (!pollId || !optionId) return;
+
+    try {
+        await submitPollVote(pollId, optionId);
+        await loadMessageThread();
+    } catch (err) {
+        console.warn("Poll vote failed", err);
     }
 });
 

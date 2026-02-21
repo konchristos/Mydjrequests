@@ -8,6 +8,7 @@ const EVENT_ID  = DJ_CONFIG.eventId || null;
 const EVENT_UUID = DJ_CONFIG.eventUuid || null;
 const POLL_MS   = DJ_CONFIG.pollInterval || 10000
 const TIPS_BOOST_VISIBLE = !!DJ_CONFIG.tipsBoostVisible;
+const POLLS_PREMIUM_ENABLED = !!DJ_CONFIG.pollsPremiumEnabled;
 
 if (!EVENT_ID) {
   console.error("❌ EVENT_ID missing — DJ page cannot function");
@@ -45,6 +46,9 @@ let messageCache = [];
 let activeGuestToken = null;
 let filterByGuest = false;
 let messageStatusFilter = "all"; // all | active | muted | blocked
+let messagePrimaryView = "chats"; // chats | broadcasts | polls
+let broadcastCache = [];
+let pollCache = [];
 let replyGuestToken = null;
 const guestStatusOverrides = new Map(); // guest_token -> active|muted|blocked
 let messageFetchSeq = 0;
@@ -83,6 +87,34 @@ function switchMessageTab(status) {
       tab.dataset.status === status
     );
   });
+}
+
+function switchMessagePrimaryView(view) {
+  messagePrimaryView = view;
+
+  document.querySelectorAll(".message-primary-tab").forEach(tab => {
+    tab.classList.toggle("active", tab.dataset.view === view);
+  });
+
+  const chatView = document.getElementById("chatView");
+  const broadcastsView = document.getElementById("broadcastsView");
+  const pollsView = document.getElementById("pollsView");
+  const statusTabs = document.getElementById("messageStatusTabs");
+
+  if (chatView) chatView.classList.toggle("hidden", view !== "chats");
+  if (broadcastsView) broadcastsView.classList.toggle("hidden", view !== "broadcasts");
+  if (pollsView) pollsView.classList.toggle("hidden", view !== "polls");
+  if (statusTabs) statusTabs.classList.toggle("hidden", view !== "chats");
+
+  if (view === "broadcasts") {
+    loadBroadcasts();
+  } else if (view === "polls") {
+    if (POLLS_PREMIUM_ENABLED) {
+      loadPolls();
+    }
+  } else {
+    renderMessages();
+  }
 }
 
 function getGuestStatus(msg) {
@@ -451,6 +483,7 @@ case "unblock":
   ============================== */
   document.querySelectorAll(".message-tab").forEach(tab => {
     tab.addEventListener("click", () => {
+      if (messagePrimaryView !== "chats") return;
       document
         .querySelectorAll(".message-tab")
         .forEach(t => t.classList.remove("active"));
@@ -463,6 +496,75 @@ case "unblock":
     });
   });
 
+  document.querySelectorAll(".message-primary-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      switchMessagePrimaryView(tab.dataset.view || "chats");
+    });
+  });
+
+  const sendBroadcastFromTabBtn = document.getElementById("sendBroadcastFromTabBtn");
+  if (sendBroadcastFromTabBtn) {
+    sendBroadcastFromTabBtn.addEventListener("click", () => {
+      document.getElementById("broadcastModal")?.classList.remove("hidden");
+    });
+  }
+
+  const createPollBtn = document.getElementById("createPollBtn");
+  if (createPollBtn) {
+    createPollBtn.addEventListener("click", () => {
+      if (createPollBtn.disabled) {
+        showToast("Poll creation is a Premium feature.", "info");
+        return;
+      }
+      document.getElementById("createPollModal")?.classList.remove("hidden");
+    });
+  }
+
+  const pollCancelBtn = document.getElementById("pollCancelBtn");
+  if (pollCancelBtn) {
+    pollCancelBtn.addEventListener("click", () => {
+      document.getElementById("createPollModal")?.classList.add("hidden");
+      const statusEl = document.getElementById("pollCreateStatus");
+      if (statusEl) statusEl.textContent = "";
+    });
+  }
+
+  const pollAddOptionBtn = document.getElementById("pollAddOptionBtn");
+  if (pollAddOptionBtn) {
+    pollAddOptionBtn.addEventListener("click", () => {
+      const wrap = document.getElementById("pollOptionsWrap");
+      if (!wrap) return;
+      const existing = wrap.querySelectorAll(".poll-option-input").length;
+      if (existing >= 12) return;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "poll-option-input";
+      input.name = "poll_options[]";
+      input.maxLength = 255;
+      input.placeholder = `Option ${existing + 1}`;
+      wrap.appendChild(input);
+    });
+  }
+
+  const createPollForm = document.getElementById("createPollForm");
+  if (createPollForm) {
+    createPollForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      await createPoll();
+    });
+  }
+
+  const pollsListEl = document.getElementById("pollsList");
+  if (pollsListEl) {
+    pollsListEl.addEventListener("click", (e) => {
+      const card = e.target.closest(".poll-item-clickable");
+      if (!card) return;
+      const pollId = Number(card.dataset.pollId || 0);
+      if (!pollId) return;
+      openPollVoterDetails(pollId);
+    });
+  }
+
   const sendReplyBtn = document.getElementById("djReplySend");
   if (sendReplyBtn) {
     sendReplyBtn.addEventListener("click", sendDjReply);
@@ -470,18 +572,12 @@ case "unblock":
 
   const clearReplyBtn = document.getElementById("djReplyCancel");
   if (clearReplyBtn) {
-    clearReplyBtn.addEventListener("click", () => {
-      const input = document.getElementById("djReplyText");
-      if (input) input.value = "";
-      replyGuestToken = null;
-      activeGuestToken = null;
-      filterByGuest = false;
-      setReplyBoxOpen(false);
-      setDjThreadOpen(false);
-      updateReplyTargetLabel();
-      showToast("Reply target cleared", "info");
-      renderMessages();
-    });
+    clearReplyBtn.addEventListener("click", closeReplyThread);
+  }
+
+  const replyCloseBtn = document.getElementById("replyCloseBtn");
+  if (replyCloseBtn) {
+    replyCloseBtn.addEventListener("click", closeReplyThread);
   }
 
   const replyInput = document.getElementById("djReplyText");
@@ -497,6 +593,7 @@ case "unblock":
   updateReplyTargetLabel();
   setReplyBoxOpen(false);
   setDjThreadOpen(false);
+  switchMessagePrimaryView("chats");
 
 });
 
@@ -1201,6 +1298,19 @@ function setDjThreadOpen(open) {
   djMessageThreadEl.classList.toggle("hidden", !open);
 }
 
+function closeReplyThread() {
+  const input = document.getElementById("djReplyText");
+  if (input) input.value = "";
+  replyGuestToken = null;
+  activeGuestToken = null;
+  filterByGuest = false;
+  setReplyBoxOpen(false);
+  setDjThreadOpen(false);
+  updateReplyTargetLabel();
+  showToast("Reply target cleared", "info");
+  renderMessages();
+}
+
 function renderDjThread(rows) {
   if (!djMessageThreadEl) return;
 
@@ -1210,6 +1320,19 @@ function renderDjThread(rows) {
   }
 
   djMessageThreadEl.innerHTML = rows.map(row => {
+    if (row.sender === "poll") {
+      const poll = row.poll || {};
+      const options = Array.isArray(poll.options)
+        ? poll.options
+        : (Array.isArray(row.options) ? row.options : []);
+      const selected = Number(poll.selected_option_id || 0);
+      const optionsHtml = options.map(opt => {
+        const isSelected = Number(opt.id) === selected;
+        return `<div class="poll-response-tile${isSelected ? " selected" : ""}"><span>${isSelected ? "✅ " : ""}${escapeHtml(opt.option_text || "")}</span><span class="count">${Number(opt.vote_count || 0)} votes</span></div>`;
+      }).join("");
+      return `<div class="dj-thread-row poll"><div class="dj-thread-bubble poll-card"><div class="poll-question-banner">${escapeHtml(poll.question || row.body || "")}</div><div class="poll-response-list">${optionsHtml}</div><span class="dj-thread-time">${formatThreadTime(row.created_at)}</span></div></div>`;
+    }
+
     let sender = 'guest';
     if (row.sender === 'dj') sender = 'dj';
     if (row.sender === 'broadcast') sender = 'broadcast';
@@ -1321,7 +1444,11 @@ async function sendEventBroadcast() {
 
     if (statusEl) statusEl.textContent = 'Broadcast sent to event patrons.';
     input.value = '';
+    document.getElementById('broadcastModal')?.classList.add('hidden');
+    if (statusEl) statusEl.textContent = '';
     showToast('Broadcast sent', 'success');
+    await loadBroadcasts();
+    await loadDjMessages();
 
     if (replyGuestToken) {
       await loadDjMessageThreadForGuest(replyGuestToken);
@@ -1331,6 +1458,188 @@ async function sendEventBroadcast() {
     showToast(err.message || 'Failed to send broadcast', 'error');
   } finally {
     if (sendBtn) sendBtn.disabled = false;
+  }
+}
+
+function renderBroadcasts() {
+  const listEl = document.getElementById("broadcastsList");
+  if (!listEl) return;
+
+  if (!broadcastCache.length) {
+    listEl.innerHTML = `<div class="dj-thread-empty">No broadcasts yet for this event.</div>`;
+    return;
+  }
+
+  listEl.innerHTML = broadcastCache.map(item => `<div class="dj-thread-row broadcast"><div class="dj-thread-bubble"><span class="dj-thread-badge">Broadcast</span>${escapeHtml(item.message || "")}<span class="dj-thread-time">${formatThreadTime(item.created_at)}</span></div></div>`).join("");
+}
+
+async function loadBroadcasts() {
+  try {
+    const res = await fetch(`/api/dj/get_broadcasts.php?event_uuid=${encodeURIComponent(EVENT_UUID)}`);
+    const data = await res.json();
+    if (!data.ok) return;
+    broadcastCache = Array.isArray(data.rows) ? data.rows : [];
+    renderBroadcasts();
+  } catch (e) {
+    console.warn("Broadcast list load failed", e);
+  }
+}
+
+function renderPolls() {
+  const listEl = document.getElementById("pollsList");
+  if (!listEl) return;
+
+  if (!pollCache.length) {
+    listEl.innerHTML = `<div class="dj-thread-empty">No polls yet for this event.</div>`;
+    return;
+  }
+
+  listEl.innerHTML = pollCache.map(poll => {
+    const options = Array.isArray(poll.options) ? poll.options : [];
+    const optionsHtml = options.map(opt => `
+      <div class="poll-response-tile">
+        <span>${escapeHtml(opt.option_text || "")}</span>
+        <span class="count">${Number(opt.vote_count || 0)} votes</span>
+      </div>
+    `).join("");
+
+    return `
+      <div class="poll-item poll-card poll-item-clickable" data-poll-id="${Number(poll.id || 0)}">
+        <div class="poll-question-banner">${escapeHtml(poll.question || "")}</div>
+        <div class="meta">${formatThreadTime(poll.created_at)} · ${Number(poll.total_votes || 0)} total votes</div>
+        <div class="poll-response-list">${optionsHtml}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderPollVoterDetails(poll) {
+  const bodyEl = document.getElementById("pollDetailsBody");
+  if (!bodyEl) return;
+
+  const options = Array.isArray(poll?.options) ? poll.options : [];
+  const optionBlocks = options.map(opt => {
+    const voters = Array.isArray(opt.voters) ? opt.voters : [];
+    const votersHtml = voters.length
+      ? voters.map(v => `
+          <div class="poll-voter-row">
+            <span class="poll-voter-name">${escapeHtml(v.patron_name || "Guest")}</span>
+            <span class="poll-voter-time">${formatThreadTime(v.voted_at || "")}</span>
+          </div>
+        `).join("")
+      : `<div class="poll-voter-empty">No votes yet</div>`;
+
+    return `
+      <div class="poll-voter-option">
+        <div class="poll-voter-option-head">
+          <span>${escapeHtml(opt.option_text || "")}</span>
+          <span>${Number(opt.vote_count || 0)} votes</span>
+        </div>
+        <div class="poll-voter-list">${votersHtml}</div>
+      </div>
+    `;
+  }).join("");
+
+  bodyEl.innerHTML = `
+    <div class="poll-item poll-card">
+      <div class="poll-question-banner">${escapeHtml(poll?.question || "")}</div>
+      <div class="meta">${formatThreadTime(poll?.created_at || "")} · ${Number(poll?.total_votes || 0)} total votes</div>
+      <div class="poll-voter-options">${optionBlocks}</div>
+    </div>
+  `;
+}
+
+async function openPollVoterDetails(pollId) {
+  if (!pollId) return;
+  const modal = document.getElementById("pollDetailsModal");
+  const bodyEl = document.getElementById("pollDetailsBody");
+  if (!modal || !bodyEl) return;
+
+  modal.classList.remove("hidden");
+  bodyEl.innerHTML = `<div class="dj-thread-empty">Loading poll votes...</div>`;
+
+  try {
+    const res = await fetch(`/api/dj/get_poll_voters.php?event_uuid=${encodeURIComponent(EVENT_UUID)}&poll_id=${encodeURIComponent(String(pollId))}`);
+    const data = await res.json();
+    if (!data.ok) {
+      throw new Error(data.error || "Unable to load poll votes");
+    }
+    renderPollVoterDetails(data.poll || {});
+  } catch (e) {
+    bodyEl.innerHTML = `<div class="dj-thread-empty">${escapeHtml(e.message || "Unable to load poll votes")}</div>`;
+  }
+}
+
+async function loadPolls() {
+  try {
+    const res = await fetch(`/api/dj/get_polls.php?event_uuid=${encodeURIComponent(EVENT_UUID)}`);
+    const data = await res.json();
+    if (!data.ok) return;
+    pollCache = Array.isArray(data.rows) ? data.rows : [];
+    renderPolls();
+  } catch (e) {
+    console.warn("Poll list load failed", e);
+  }
+}
+
+async function createPoll() {
+  const questionEl = document.getElementById("pollQuestion");
+  const wrapEl = document.getElementById("pollOptionsWrap");
+  const statusEl = document.getElementById("pollCreateStatus");
+  const createBtn = document.getElementById("pollCreateBtn");
+  const createPollTabBtn = document.getElementById("createPollBtn");
+  if (!questionEl || !wrapEl) return;
+  if (createPollTabBtn?.disabled) {
+    showToast("Poll creation is a Premium feature.", "info");
+    return;
+  }
+
+  const question = questionEl.value.trim();
+  const optionInputs = Array.from(wrapEl.querySelectorAll(".poll-option-input"));
+  const options = optionInputs.map(i => i.value.trim()).filter(Boolean);
+
+  if (!question) {
+    if (statusEl) statusEl.textContent = "Question is required.";
+    return;
+  }
+  if (options.length < 2) {
+    if (statusEl) statusEl.textContent = "Please provide at least 2 answers.";
+    return;
+  }
+
+  if (createBtn) createBtn.disabled = true;
+  if (statusEl) statusEl.textContent = "Creating poll...";
+
+  try {
+    const body = new URLSearchParams({ event_uuid: EVENT_UUID, question });
+    options.forEach(opt => body.append("options[]", opt));
+
+    const res = await fetch("/api/dj/create_poll.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Failed to create poll");
+
+    if (statusEl) statusEl.textContent = "Poll created.";
+    showToast("Poll created", "success");
+    questionEl.value = "";
+    optionInputs.forEach((input, idx) => {
+      if (idx > 1) input.remove();
+      else input.value = "";
+    });
+    document.getElementById("createPollModal")?.classList.add("hidden");
+    if (statusEl) statusEl.textContent = "";
+    await loadPolls();
+    if (messagePrimaryView === "chats" && replyGuestToken) {
+      await loadDjMessageThreadForGuest(replyGuestToken);
+    }
+  } catch (e) {
+    if (statusEl) statusEl.textContent = e.message || "Failed to create poll.";
+    showToast(e.message || "Failed to create poll", "error");
+  } finally {
+    if (createBtn) createBtn.disabled = false;
   }
 }
 
@@ -1848,6 +2157,10 @@ async function loadDjInsights() {
 ========================================= */
 loadDjRequests();
 loadDjMessages();
+loadBroadcasts();
+if (POLLS_PREMIUM_ENABLED) {
+  loadPolls();
+}
 loadDjMood();
 if (TIPS_BOOST_VISIBLE) {
   loadDjSupport();
@@ -1861,6 +2174,10 @@ setInterval(loadDjRequests, POLL_MS);
 setInterval(loadDjMessages, POLL_MS);
 if (TIPS_BOOST_VISIBLE) {
   setInterval(loadDjSupport, POLL_MS);
+}
+setInterval(loadBroadcasts, POLL_MS);
+if (POLLS_PREMIUM_ENABLED) {
+  setInterval(loadPolls, POLL_MS);
 }
 setInterval(loadDjInsights, POLL_MS);
 setInterval(loadDjMood, 15000);
@@ -2055,12 +2372,6 @@ document.addEventListener('click', (e) => {
     return;
   }
 
-  /* 📢 BROADCAST TILE */
-  if (e.target.closest('#djBroadcastQuickTile')) {
-    document.getElementById('broadcastModal')?.classList.remove('hidden');
-    return;
-  }
-
   /* 📢 LEGACY BROADCAST TILE */
   if (e.target.closest('#djBroadcastTile')) {
     const modal = document.getElementById('broadcastModal');
@@ -2107,6 +2418,18 @@ document.addEventListener('click', (e) => {
     document.getElementById('broadcastModal')?.classList.add('hidden');
     const statusEl = document.getElementById('broadcastStatus');
     if (statusEl) statusEl.textContent = '';
+    return;
+  }
+
+  if (e.target.id === 'closeCreatePollModal') {
+    document.getElementById('createPollModal')?.classList.add('hidden');
+    const statusEl = document.getElementById('pollCreateStatus');
+    if (statusEl) statusEl.textContent = '';
+    return;
+  }
+
+  if (e.target.id === 'closePollDetailsModal') {
+    document.getElementById('pollDetailsModal')?.classList.add('hidden');
     return;
   }
 

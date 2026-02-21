@@ -26,6 +26,8 @@ $eventId = (int)$event['id'];
 
 $db = db();
 
+$pollsPremiumEnabled = mdjr_get_user_plan($db, (int)$event['user_id']) === 'premium';
+
 $guestStatus = 'active';
 try {
     $stmt = $db->prepare("
@@ -118,6 +120,86 @@ try {
     $broadcastRows = [];
 }
 
+$pollRows = [];
+if ($pollsPremiumEnabled) {
+try {
+    $pollStmt = $db->prepare("
+        SELECT id, question, status, created_at
+        FROM event_polls
+        WHERE event_id = :event_id
+        ORDER BY created_at DESC
+        LIMIT 200
+    ");
+    $pollStmt->execute([':event_id' => $eventId]);
+    $polls = $pollStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($polls as $poll) {
+        $pollId = (int)$poll['id'];
+
+        $optStmt = $db->prepare("
+            SELECT
+              o.id,
+              o.option_text,
+              o.sort_order,
+              COUNT(v.id) AS vote_count
+            FROM event_poll_options o
+            LEFT JOIN event_poll_votes v
+              ON v.option_id = o.id
+             AND v.poll_id = o.poll_id
+            WHERE o.poll_id = :poll_id
+            GROUP BY o.id, o.option_text, o.sort_order
+            ORDER BY o.sort_order ASC, o.id ASC
+        ");
+        $optStmt->execute([':poll_id' => $pollId]);
+        $options = $optStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $selectedOptionId = 0;
+        if ($guestToken !== '') {
+            $voteStmt = $db->prepare("
+                SELECT option_id
+                FROM event_poll_votes
+                WHERE poll_id = :poll_id
+                  AND guest_token = :guest_token
+                LIMIT 1
+            ");
+            $voteStmt->execute([
+                ':poll_id' => $pollId,
+                ':guest_token' => $guestToken,
+            ]);
+            $selectedOptionId = (int)($voteStmt->fetchColumn() ?: 0);
+        }
+
+        $normalizedOptions = [];
+        foreach ($options as $opt) {
+            $normalizedOptions[] = [
+                'id' => (int)$opt['id'],
+                'option_text' => (string)$opt['option_text'],
+                'sort_order' => (int)$opt['sort_order'],
+                'vote_count' => (int)$opt['vote_count'],
+            ];
+        }
+
+        $pollRows[] = [
+            'id' => $pollId,
+            'body' => (string)$poll['question'],
+            'created_at' => (string)$poll['created_at'],
+            'sender' => 'poll',
+            'selected_option_id' => $selectedOptionId,
+            'options' => $normalizedOptions,
+            'poll' => [
+                'id' => $pollId,
+                'question' => (string)$poll['question'],
+                'status' => (string)$poll['status'],
+                'selected_option_id' => $selectedOptionId,
+                'options' => $normalizedOptions,
+            ],
+        ];
+    }
+} catch (Throwable $e) {
+    $pollRows = [];
+}
+}
+
 // One-time backfill: seed initial broadcast from DJ default when none exists.
 if (empty($broadcastRows)) {
     try {
@@ -174,7 +256,7 @@ if (empty($broadcastRows)) {
     }
 }
 
-$rows = array_merge($guestRows, $djRows, $broadcastRows);
+$rows = array_merge($guestRows, $djRows, $broadcastRows, $pollRows);
 
 $djName = '';
 try {
