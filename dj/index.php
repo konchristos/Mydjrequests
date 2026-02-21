@@ -26,6 +26,7 @@ $hasTipsBoostOverride = djHasColumn($db, 'events', 'tips_boost_enabled');
 $eventSelect = "
   SELECT
     id,
+    user_id,
     uuid,
     title,
     event_date,

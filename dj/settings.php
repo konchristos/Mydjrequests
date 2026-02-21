@@ -319,9 +319,13 @@ require __DIR__ . '/layout.php';
 
 <style>
 .settings-wrap { max-width: 980px; margin: 0 auto; }
-.settings-card { background:#111116; border:1px solid #1f1f29; border-radius:12px; padding:20px; margin-bottom:16px; }
-.settings-card h3 { margin:0 0 14px; }
-.settings-row { margin: 12px 0; }
+.settings-card { background:#111116; border:1px solid #1f1f29; border-radius:12px; padding:24px; margin-bottom:20px; }
+.settings-card h3 { margin:0 0 16px; }
+.settings-row { margin: 16px 0; }
+.settings-card > .settings-row + .settings-row {
+    padding-top: 14px;
+    border-top: 1px solid #232331;
+}
 .settings-label { display:block; margin-bottom:6px; color:#cfd0da; font-weight:600; }
 .settings-input, .settings-select {
     width:100%;
@@ -358,12 +362,16 @@ require __DIR__ . '/layout.php';
     background: #13131a;
     border: 1px solid #252531;
     border-radius: 12px;
-    padding: 14px;
+    padding: 16px;
 }
 .event-defaults-subcard h4 {
     margin: 0 0 10px;
     font-size: 14px;
     color: #d6d7e2;
+}
+.event-defaults-subcard .settings-row + .settings-row {
+    padding-top: 14px;
+    border-top: 1px solid #232331;
 }
 .status-pill {
     display:inline-block;
@@ -445,6 +453,20 @@ require __DIR__ . '/layout.php';
     color:#ffb3ef;
     cursor:help;
 }
+.admin-badge {
+    display:inline-block;
+    margin-left:8px;
+    padding:2px 8px;
+    border-radius:999px;
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.04em;
+    text-transform:uppercase;
+    background:rgba(106,227,255,0.16);
+    border:1px solid rgba(106,227,255,0.45);
+    color:#9aeaff;
+    vertical-align:middle;
+}
 .settings-wrap {
     display:flex;
     flex-direction:column;
@@ -455,6 +477,15 @@ require __DIR__ . '/layout.php';
 .settings-order-dynamic { order: 40; }
 .settings-order-qr { order: 50; }
 .settings-order-messages { order: 60; }
+#premium-qr-style .qr-tab-pane {
+    gap: 14px !important;
+    margin-top: 4px;
+}
+#premium-qr-style .preview-tab-pane {
+    margin-top: 10px;
+    padding-top: 12px;
+    border-top: 1px solid #232331;
+}
 </style>
 
 <div class="settings-wrap">
@@ -468,7 +499,7 @@ require __DIR__ . '/layout.php';
 
     <?php if ($isAdminUser): ?>
     <div class="settings-card settings-order-admin">
-        <h3>Admin Plan Simulation</h3>
+        <h3>Admin Plan Simulation <span class="admin-badge">Admin</span></h3>
         <div class="settings-help" style="margin-top:0;">
             Simulate <strong>Pro</strong> or <strong>Premium</strong> for your current account to preview feature locks and badges.
         </div>
@@ -815,14 +846,16 @@ require __DIR__ . '/layout.php';
                 <button type="button" id="resetGlobalQrBtn" class="settings-btn" style="background:#2a2a3a;">Reset to Default</button>
                 <span id="globalQrStatus" style="font-size:12px;color:#8f95a3;"></span>
             </div>
-            <div id="scanHealthWrap" style="margin-top:10px;padding:10px 12px;border:1px solid #2a2a3a;border-radius:10px;background:#11121a;">
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                    <strong style="color:#d9dbe6;">Scan Health</strong>
-                    <span id="scanHealthBadge" style="font-size:11px;padding:4px 8px;border-radius:999px;background:#1f3f28;color:#8dffb2;">Excellent</span>
-                    <span id="scanHealthScore" style="font-size:12px;color:#9aa1b3;">Score: 95/100</span>
+            <?php if ($isAdminUser): ?>
+                <div id="scanHealthWrap" style="margin-top:10px;padding:10px 12px;border:1px solid #2a2a3a;border-radius:10px;background:#11121a;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <strong style="color:#d9dbe6;">Scan Health <span class="admin-badge">Admin</span></strong>
+                        <span id="scanHealthBadge" style="font-size:11px;padding:4px 8px;border-radius:999px;background:#1f3f28;color:#8dffb2;">Excellent</span>
+                        <span id="scanHealthScore" style="font-size:12px;color:#9aa1b3;">Score: 95/100</span>
+                    </div>
+                    <div id="scanHealthDetail" style="font-size:12px;color:#8f95a3;margin-top:4px;">Contrast and style look scan-safe.</div>
                 </div>
-                <div id="scanHealthDetail" style="font-size:12px;color:#8f95a3;margin-top:4px;">Contrast and style look scan-safe.</div>
-            </div>
+            <?php endif; ?>
             </form>
         <?php else: ?>
             <div class="settings-help" style="margin-top:0;">
@@ -929,7 +962,7 @@ require __DIR__ . '/layout.php';
                         <textarea
                             class="settings-input"
                             id="default_event_broadcast_message_preview"
-                            rows="8"
+                            rows="13"
                             readonly
                         ><?php echo e($defaultBroadcastTemplate); ?></textarea>
                     </div>
@@ -953,7 +986,7 @@ require __DIR__ . '/layout.php';
 
         </div>
 
-        <button type="submit" class="settings-btn">Save Settings</button>
+        <button type="submit" class="settings-btn" style="margin-bottom:16px;">Save Settings</button>
     </form>
 
     <div class="settings-card settings-after-save-gap settings-order-messages" id="message-statuses">
