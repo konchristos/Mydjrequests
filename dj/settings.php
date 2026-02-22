@@ -643,6 +643,20 @@ require __DIR__ . '/layout.php';
                     <button type="button" class="settings-btn qr-preset-btn" data-preset="mono" style="padding:7px 10px;background:#2a2a3a;">Monochrome</button>
                     <button type="button" class="settings-btn qr-preset-btn" data-preset="festival" style="padding:7px 10px;background:#2a2a3a;">Festival</button>
                 </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 14px;">
+                    <span style="font-size:12px;color:#aaa;">Saved Presets (3 slots)</span>
+                    <select id="qrPresetSlot" class="settings-select" style="max-width:140px;">
+                        <option value="1">Slot 1</option>
+                        <option value="2">Slot 2</option>
+                        <option value="3">Slot 3</option>
+                    </select>
+                    <button type="button" id="saveQrPresetBtn" class="settings-btn" style="padding:8px 12px;background:#2a2a3a;">Save Slot</button>
+                    <button type="button" id="loadQrPresetBtn" class="settings-btn" style="padding:8px 12px;background:#2a2a3a;">Load Slot</button>
+                    <span id="qrPresetStatus" style="font-size:12px;color:#8f95a3;"></span>
+                </div>
+                <div class="settings-help" style="margin-top:-6px;margin-bottom:10px;">
+                    Presets store style/settings values only. Generated QR images are not stored.
+                </div>
 
                 <div class="qr-tab-pane" data-pane="style" style="display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px;">
                     <label style="display:flex;flex-direction:column;gap:6px;">
@@ -717,7 +731,6 @@ require __DIR__ . '/layout.php';
                         $mobileSizeVal = (int)($globalQrSettings['mobile_image_size'] ?? 480);
                         $obsScaleVal = (int)($globalQrSettings['obs_qr_scale_pct'] ?? 100);
                         $posterScaleVal = (int)($globalQrSettings['poster_qr_scale_pct'] ?? 48);
-                        $useGlobalOutputSizing = ($obsSizeVal === $globalSizeVal && $posterSizeVal === $globalSizeVal && $mobileSizeVal === $globalSizeVal);
                     ?>
                     <input type="hidden" name="obs_image_size" value="<?php echo $obsSizeVal; ?>">
                     <input type="hidden" name="poster_image_size" value="<?php echo $posterSizeVal; ?>">
@@ -725,25 +738,30 @@ require __DIR__ . '/layout.php';
                     <input type="hidden" name="obs_qr_scale_pct" value="<?php echo $obsScaleVal; ?>">
                     <input type="hidden" name="poster_qr_scale_pct" value="<?php echo $posterScaleVal; ?>">
                     <label style="display:flex;flex-direction:column;gap:6px;">
-                        <span style="font-size:12px;color:#aaa;">Logo Size (%)</span>
+                        <span style="font-size:12px;color:#aaa;">Logo Size (%, 8-20)</span>
                         <input name="logo_scale_pct" type="number" min="8" max="20" value="<?php echo (int)($globalQrSettings['logo_scale_pct'] ?? 18); ?>" class="settings-input">
+                        <span style="font-size:12px;color:#8f95a3;line-height:1.35;">Controls center logo footprint inside the QR. Keep lower for safest scanning. Recommended: <code>12-18%</code>.</span>
                     </label>
                     <label style="display:flex;flex-direction:column;gap:6px;">
-                        <span style="font-size:12px;color:#aaa;">Image Size</span>
+                        <span style="font-size:12px;color:#aaa;">Global Image Size (render px, 220-1200)</span>
                         <input name="image_size" type="number" min="220" max="1200" value="<?php echo (int)($globalQrSettings['image_size'] ?? 480); ?>" class="settings-input">
+                        <span style="font-size:12px;color:#8f95a3;line-height:1.35;">Base render size used by global/mobile output. Higher = sharper output, larger file size. Recommended: <code>480-720</code>.</span>
                     </label>
                     <label style="display:flex;flex-direction:column;gap:6px;">
-                        <span style="font-size:12px;color:#aaa;">Center Logo (PNG/JPG/WEBP)</span>
+                        <span style="font-size:12px;color:#aaa;">Center Logo Upload (PNG/JPG/WEBP, max 2MB)</span>
                         <input name="logo" type="file" accept="image/png,image/jpeg,image/webp" class="settings-input">
+                        <span style="font-size:12px;color:#8f95a3;line-height:1.35;">Replaces the current center logo on save. Square logos with transparent background usually look best.</span>
                     </label>
                     <label style="display:flex;align-items:center;gap:8px;margin-top:12px;color:#ddd;">
                         <input type="checkbox" name="remove_logo" value="1">
                         Remove existing logo
+                        <span style="font-size:12px;color:#8f95a3;">Deletes the saved center logo when you click <strong>Save Global QR Style</strong>.</span>
                     </label>
                     <label style="display:flex;align-items:center;gap:8px;margin-top:12px;color:#ddd;">
                         <input type="checkbox" name="animated_overlay" value="1" <?php echo !empty($globalQrSettings['animated_overlay']) ? 'checked' : ''; ?>>
                         Animated OBS overlay shimmer
                         <span class="premium-badge" style="font-size:10px;padding:2px 7px;">Premium</span>
+                        <span style="font-size:12px;color:#8f95a3;">Adds subtle movement to the OBS QR container only. Does not change poster or static image exports.</span>
                     </label>
                 </div>
 
@@ -757,26 +775,12 @@ require __DIR__ . '/layout.php';
                     </div>
 
                     <div class="preview-tab-pane" data-preview-pane="global">
-                        <div style="display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:10px;margin-bottom:10px;">
-                            <label style="display:flex;align-items:center;gap:8px;margin-top:8px;color:#ddd;grid-column:1/-1;">
-                                <input type="checkbox" id="useGlobalOutputSize" name="use_global_output_size" value="1" <?php echo $useGlobalOutputSizing ? 'checked' : ''; ?>>
-                                Use global size for all outputs (recommended)
-                            </label>
-                            <label style="display:flex;flex-direction:column;gap:6px;">
-                                <span style="font-size:12px;color:#aaa;">Mobile Download Size (render px)</span>
-                                <input id="mobile_image_size_proxy" type="number" min="220" max="900" class="settings-input" value="<?php echo $mobileSizeVal; ?>">
-                            </label>
-                            <div style="font-size:12px;color:#8f95a3;line-height:1.4;">
-                                <strong style="color:#cfd3df;">How this works:</strong><br>
-                                Keep this ON for simple setup. When ON, OBS/Poster/Mobile use your single Global `Image Size` from Brand tab. When OFF, each tab can use separate render size.
-                            </div>
-                        </div>
                         <img
                             id="globalQrPreview"
-                            src="<?php echo e(url('qr/premium_generate.php?uuid=' . urlencode($previewEventUuid) . '&size=360&preview=1&preview_url=' . urlencode($previewTargetUrl))); ?>"
+                            src="<?php echo e(url('qr/premium_generate.php?uuid=' . urlencode($previewEventUuid) . '&size=560&preview=1&preview_url=' . urlencode($previewTargetUrl))); ?>"
                             data-preview-target="<?php echo e($previewTargetUrl); ?>"
                             alt="QR preview"
-                            style="width:220px;height:220px;border-radius:12px;border:1px solid #2a2a3a;background:#0f0f14;display:block;"
+                            style="width:min(320px,100%);height:auto;aspect-ratio:1/1;border-radius:12px;border:1px solid #2a2a3a;background:#0f0f14;display:block;"
                         >
                         <div class="settings-help" style="margin-top:8px;">
                             <?php if ($previewHasLiveEvent): ?>
@@ -784,21 +788,22 @@ require __DIR__ . '/layout.php';
                             <?php else: ?>
                                 No LIVE event currently. Preview scans to MyDJRequests.com homepage.
                             <?php endif; ?>
+                            Recommended preview render size: <code>560px</code>.
                         </div>
                     </div>
 
                     <div class="preview-tab-pane" data-preview-pane="obs" style="display:none;">
                         <div style="display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:10px;margin-bottom:10px;">
                             <label style="display:flex;flex-direction:column;gap:6px;">
-                                <span style="font-size:12px;color:#aaa;">OBS QR Size (render px)</span>
+                                <span style="font-size:12px;color:#aaa;">OBS QR Size (render px, 320-1400)</span>
                                 <input id="obs_image_size_proxy" type="number" min="320" max="1400" class="settings-input" value="<?php echo (int)($globalQrSettings['obs_image_size'] ?? 600); ?>">
                             </label>
                             <label style="display:flex;flex-direction:column;gap:6px;">
-                                <span style="font-size:12px;color:#aaa;">OBS QR Display Scale (%)</span>
+                                <span style="font-size:12px;color:#aaa;">OBS QR Display Scale (%, 70-115)</span>
                                 <input id="obs_qr_scale_pct_proxy" type="number" min="70" max="115" class="settings-input" value="<?php echo (int)($globalQrSettings['obs_qr_scale_pct'] ?? 100); ?>">
                             </label>
                             <div style="font-size:12px;color:#8f95a3;line-height:1.4;grid-column:1/-1;">
-                                `Render px` controls output resolution/sharpness for OBS Browser Source. `Display Scale` controls how large the QR appears inside the OBS tile. Recommended: `600-900px` render, `90-105%` display.
+                                OBS QR Size sets export resolution for sharper rendering in OBS Browser Source (allowed <code>320-1400</code>, recommended <code>600-900</code>). OBS QR Display Scale controls how large the QR appears inside the OBS layout tile (allowed <code>70-115%</code>, recommended <code>90-105%</code>).
                             </div>
                         </div>
                         <div style="padding:8px;border:1px solid #2a2a3a;border-radius:10px;background:#10111a;display:inline-block;">
@@ -814,15 +819,15 @@ require __DIR__ . '/layout.php';
                     <div class="preview-tab-pane" data-preview-pane="poster" style="display:none;">
                         <div style="display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:10px;margin-bottom:10px;">
                             <label style="display:flex;flex-direction:column;gap:6px;">
-                                <span style="font-size:12px;color:#aaa;">Poster QR Size (render px)</span>
+                                <span style="font-size:12px;color:#aaa;">Poster QR Size (render px, 600-1800)</span>
                                 <input id="poster_image_size_proxy" type="number" min="600" max="1800" class="settings-input" value="<?php echo (int)($globalQrSettings['poster_image_size'] ?? 900); ?>">
                             </label>
                             <label style="display:flex;flex-direction:column;gap:6px;">
-                                <span style="font-size:12px;color:#aaa;">Poster QR Fill Scale (%)</span>
+                                <span style="font-size:12px;color:#aaa;">Poster QR Fill Scale (%, 30-75)</span>
                                 <input id="poster_qr_scale_pct_proxy" type="number" min="30" max="75" class="settings-input" value="<?php echo (int)($globalQrSettings['poster_qr_scale_pct'] ?? 48); ?>">
                             </label>
                             <div style="font-size:12px;color:#8f95a3;line-height:1.4;grid-column:1/-1;">
-                                `Render px` sets QR source detail used in the A4 poster export. `Fill Scale` sets how much of the poster width the QR occupies. Recommended: `900-1200px` render, `45-55%` fill.
+                                Poster QR Size sets output resolution used in A4 poster export (allowed <code>600-1800</code>, recommended <code>900-1200</code>). Poster QR Fill Scale controls how much poster width the QR occupies (allowed <code>30-75%</code>, recommended <code>45-55%</code>).
                             </div>
                         </div>
                         <div style="padding:8px;border:1px solid #2a2a3a;border-radius:10px;background:#10111a;display:inline-block;">
@@ -1086,7 +1091,6 @@ require __DIR__ . '/layout.php';
     const scanHealthBadge = document.getElementById('scanHealthBadge');
     const scanHealthScore = document.getElementById('scanHealthScore');
     const scanHealthDetail = document.getElementById('scanHealthDetail');
-    const useGlobalOutputSizeEl = document.getElementById('useGlobalOutputSize');
     const obsSizePreviewBox = document.getElementById('obsSizePreviewBox');
     const posterSizePreviewBox = document.getElementById('posterSizePreviewBox');
     const obsSizePreviewMeta = document.getElementById('obsSizePreviewMeta');
@@ -1097,7 +1101,10 @@ require __DIR__ . '/layout.php';
     const obsScaleProxy = document.getElementById('obs_qr_scale_pct_proxy');
     const posterRenderProxy = document.getElementById('poster_image_size_proxy');
     const posterScaleProxy = document.getElementById('poster_qr_scale_pct_proxy');
-    const mobileRenderProxy = document.getElementById('mobile_image_size_proxy');
+    const qrPresetSlot = document.getElementById('qrPresetSlot');
+    const saveQrPresetBtn = document.getElementById('saveQrPresetBtn');
+    const loadQrPresetBtn = document.getElementById('loadQrPresetBtn');
+    const qrPresetStatus = document.getElementById('qrPresetStatus');
     if (!form || !statusEl || !saveBtn) return;
 
     let isContrastBlocked = false;
@@ -1262,20 +1269,9 @@ require __DIR__ . '/layout.php';
         if (gradientAngleWrap) gradientAngleWrap.style.display = mode === 'linear' ? 'flex' : 'none';
     }
 
-    function syncOutputSizingVisibility() {
-        if (!useGlobalOutputSizeEl) return;
-        const useGlobal = !!useGlobalOutputSizeEl.checked;
-        if (obsRenderProxy) obsRenderProxy.disabled = useGlobal;
-        if (posterRenderProxy) posterRenderProxy.disabled = useGlobal;
-        if (mobileRenderProxy) mobileRenderProxy.disabled = useGlobal;
-        syncOutputSizePreviews();
-    }
-
     function syncOutputSizePreviews() {
-        const globalSize = parseInt(form.querySelector('input[name="image_size"]')?.value || '480', 10) || 480;
-        const useGlobal = !!(useGlobalOutputSizeEl && useGlobalOutputSizeEl.checked);
-        const obsRender = parseInt(form.querySelector('input[name="obs_image_size"]')?.value || String(globalSize), 10) || globalSize;
-        const posterRender = parseInt(form.querySelector('input[name="poster_image_size"]')?.value || String(globalSize), 10) || globalSize;
+        const obsRender = parseInt(form.querySelector('input[name="obs_image_size"]')?.value || '600', 10) || 600;
+        const posterRender = parseInt(form.querySelector('input[name="poster_image_size"]')?.value || '900', 10) || 900;
         const obsScale = parseInt(form.querySelector('input[name="obs_qr_scale_pct"]')?.value || '100', 10) || 100;
         const posterScale = parseInt(form.querySelector('input[name="poster_qr_scale_pct"]')?.value || '48', 10) || 48;
         const obsVisualPct = Math.max(56, Math.min(94, Math.round(obsScale * 0.82)));
@@ -1290,26 +1286,17 @@ require __DIR__ . '/layout.php';
         }
         const obsInput = form.querySelector('input[name="obs_image_size"]');
         const posterInput = form.querySelector('input[name="poster_image_size"]');
-        const mobileInput = form.querySelector('input[name="mobile_image_size"]');
         const obsScaleInput = form.querySelector('input[name="obs_qr_scale_pct"]');
         const posterScaleInput = form.querySelector('input[name="poster_qr_scale_pct"]');
-        if (useGlobal) {
-            if (obsInput) obsInput.value = String(globalSize);
-            if (posterInput) posterInput.value = String(globalSize);
-            if (mobileInput) mobileInput.value = String(globalSize);
-        }
         if (obsRenderProxy && obsInput) obsRenderProxy.value = obsInput.value;
         if (posterRenderProxy && posterInput) posterRenderProxy.value = posterInput.value;
-        if (mobileRenderProxy && mobileInput) mobileRenderProxy.value = mobileInput.value;
         if (obsScaleProxy && obsScaleInput) obsScaleProxy.value = obsScaleInput.value;
         if (posterScaleProxy && posterScaleInput) posterScaleProxy.value = posterScaleInput.value;
         if (obsSizePreviewMeta) {
-            const renderPx = useGlobal ? globalSize : obsRender;
-            obsSizePreviewMeta.textContent = 'Render ' + renderPx + 'px, Display ' + Math.max(70, Math.min(115, obsScale)) + '%';
+            obsSizePreviewMeta.textContent = 'Render ' + obsRender + 'px, Display ' + Math.max(70, Math.min(115, obsScale)) + '%';
         }
         if (posterSizePreviewMeta) {
-            const renderPx = useGlobal ? globalSize : posterRender;
-            posterSizePreviewMeta.textContent = 'Render ' + renderPx + 'px, Fill ' + posterVisualPct + '%';
+            posterSizePreviewMeta.textContent = 'Render ' + posterRender + 'px, Fill ' + posterVisualPct + '%';
         }
     }
 
@@ -1344,6 +1331,39 @@ require __DIR__ . '/layout.php';
         syncOutputSizePreviews();
     }
 
+    function applySavedPreset(preset) {
+        if (!preset || typeof preset !== 'object') return;
+        const set = (selector, value) => {
+            const el = form.querySelector(selector);
+            if (!el || value === undefined || value === null) return;
+            if (el.type === 'checkbox') {
+                el.checked = !!value;
+            } else {
+                el.value = String(value);
+            }
+        };
+        set('input[name="foreground_color"]', preset.foreground_color);
+        set('input[name="background_color"]', preset.background_color);
+        set('select[name="dot_style"]', preset.dot_style);
+        set('select[name="eye_outer_style"]', preset.eye_outer_style);
+        set('select[name="eye_inner_style"]', preset.eye_inner_style);
+        set('select[name="fill_mode"]', preset.fill_mode);
+        set('input[name="gradient_start"]', preset.gradient_start);
+        set('input[name="gradient_end"]', preset.gradient_end);
+        set('input[name="gradient_angle"]', preset.gradient_angle);
+        set('input[name="logo_scale_pct"]', preset.logo_scale_pct);
+        set('input[name="image_size"]', preset.image_size);
+        set('input[name="obs_image_size"]', preset.obs_image_size);
+        set('input[name="poster_image_size"]', preset.poster_image_size);
+        set('input[name="mobile_image_size"]', preset.mobile_image_size);
+        set('input[name="obs_qr_scale_pct"]', preset.obs_qr_scale_pct);
+        set('input[name="poster_qr_scale_pct"]', preset.poster_qr_scale_pct);
+        set('input[name="animated_overlay"]', !!preset.animated_overlay);
+        syncGradientVisibility();
+        syncOutputSizePreviews();
+        updatePreview();
+    }
+
     let previewTimer = null;
     form.querySelectorAll('input[name="foreground_color"], input[name="background_color"], input[name="logo_scale_pct"], input[name="image_size"], input[name="obs_image_size"], input[name="poster_image_size"], input[name="mobile_image_size"], input[name="obs_qr_scale_pct"], input[name="poster_qr_scale_pct"], input[name="gradient_start"], input[name="gradient_end"], input[name="gradient_angle"], select[name="dot_style"], select[name="eye_outer_style"], select[name="eye_inner_style"], select[name="fill_mode"]').forEach((el) => {
         const handler = () => {
@@ -1376,7 +1396,6 @@ require __DIR__ . '/layout.php';
         previewTabButtons[0].click();
     }
     syncGradientVisibility();
-    syncOutputSizingVisibility();
     syncOutputSizePreviews();
     evaluateScanHealth();
     presetButtons.forEach((btn) => {
@@ -1385,9 +1404,6 @@ require __DIR__ . '/layout.php';
         });
     });
     if (fillModeEl) fillModeEl.addEventListener('change', syncGradientVisibility);
-    if (useGlobalOutputSizeEl) {
-        useGlobalOutputSizeEl.addEventListener('change', syncOutputSizingVisibility);
-    }
     const bindProxy = (proxyEl, targetName) => {
         if (!proxyEl) return;
         const target = form.querySelector('input[name="' + targetName + '"]');
@@ -1403,7 +1419,48 @@ require __DIR__ . '/layout.php';
     bindProxy(obsScaleProxy, 'obs_qr_scale_pct');
     bindProxy(posterRenderProxy, 'poster_image_size');
     bindProxy(posterScaleProxy, 'poster_qr_scale_pct');
-    bindProxy(mobileRenderProxy, 'mobile_image_size');
+
+    if (saveQrPresetBtn && qrPresetSlot) {
+        saveQrPresetBtn.addEventListener('click', async () => {
+            const fd = new FormData(form);
+            fd.set('action', 'save');
+            fd.set('slot', qrPresetSlot.value || '1');
+            if (qrPresetStatus) qrPresetStatus.textContent = 'Saving preset...';
+            saveQrPresetBtn.disabled = true;
+            try {
+                const res = await fetch('/dj/api/premium_qr_preset.php', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (!data.ok) throw new Error(data.error || 'Failed to save preset');
+                if (qrPresetStatus) qrPresetStatus.textContent = 'Preset saved to Slot ' + (qrPresetSlot.value || '1') + '.';
+                setTimeout(() => { if (qrPresetStatus) qrPresetStatus.textContent = ''; }, 1800);
+            } catch (err) {
+                if (qrPresetStatus) qrPresetStatus.textContent = err.message || 'Preset save failed.';
+            } finally {
+                saveQrPresetBtn.disabled = false;
+            }
+        });
+    }
+
+    if (loadQrPresetBtn && qrPresetSlot) {
+        loadQrPresetBtn.addEventListener('click', async () => {
+            const fd = new FormData();
+            fd.set('action', 'load');
+            fd.set('slot', qrPresetSlot.value || '1');
+            if (qrPresetStatus) qrPresetStatus.textContent = 'Loading preset...';
+            loadQrPresetBtn.disabled = true;
+            try {
+                const res = await fetch('/dj/api/premium_qr_preset.php', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (!data.ok) throw new Error(data.error || 'Failed to load preset');
+                applySavedPreset(data.preset || {});
+                if (qrPresetStatus) qrPresetStatus.textContent = 'Preset loaded from Slot ' + (qrPresetSlot.value || '1') + '. Click Save Global QR Style to apply.';
+            } catch (err) {
+                if (qrPresetStatus) qrPresetStatus.textContent = err.message || 'Preset load failed.';
+            } finally {
+                loadQrPresetBtn.disabled = false;
+            }
+        });
+    }
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -1417,12 +1474,6 @@ require __DIR__ . '/layout.php';
 
         try {
             const fd = new FormData(form);
-            if (useGlobalOutputSizeEl && useGlobalOutputSizeEl.checked) {
-                const globalSize = form.querySelector('input[name="image_size"]')?.value || '480';
-                fd.set('obs_image_size', globalSize);
-                fd.set('poster_image_size', globalSize);
-                fd.set('mobile_image_size', globalSize);
-            }
             const res = await fetch('/dj/api/premium_qr_global_settings_save.php', {
                 method: 'POST',
                 body: fd
@@ -1470,7 +1521,6 @@ require __DIR__ . '/layout.php';
                 form.querySelector('input[name="mobile_image_size"]').value = '480';
                 form.querySelector('input[name="obs_qr_scale_pct"]').value = '100';
                 form.querySelector('input[name="poster_qr_scale_pct"]').value = '48';
-                if (useGlobalOutputSizeEl) useGlobalOutputSizeEl.checked = true;
                 form.querySelector('select[name="dot_style"]').value = 'square';
                 form.querySelector('select[name="eye_outer_style"]').value = 'square';
                 form.querySelector('select[name="eye_inner_style"]').value = 'square';
@@ -1485,7 +1535,7 @@ require __DIR__ . '/layout.php';
                 const logoInput = form.querySelector('input[name="logo"]');
                 if (logoInput) logoInput.value = '';
                 syncGradientVisibility();
-                syncOutputSizingVisibility();
+                syncOutputSizePreviews();
                 setActiveTab('style');
 
                 statusEl.textContent = 'Global QR style reset to default.';

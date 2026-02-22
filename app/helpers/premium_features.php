@@ -248,6 +248,16 @@ function mdjr_ensure_premium_tables(PDO $db): void
             KEY idx_premium_event_link_hits_created (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS premium_user_qr_presets (
+            user_id INT UNSIGNED NOT NULL PRIMARY KEY,
+            preset_1_json MEDIUMTEXT NULL,
+            preset_2_json MEDIUMTEXT NULL,
+            preset_3_json MEDIUMTEXT NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
 }
 
 function mdjr_slugify(string $value): string
@@ -513,6 +523,105 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
         'obs_qr_scale_pct' => $obsQrScalePct,
         'poster_qr_scale_pct' => $posterQrScalePct,
     ]);
+}
+
+function mdjr_normalize_user_qr_preset(array $settings): array
+{
+    $norm = [];
+    $norm['foreground_color'] = strtoupper((string)($settings['foreground_color'] ?? '#000000'));
+    $norm['background_color'] = strtoupper((string)($settings['background_color'] ?? '#FFFFFF'));
+    $norm['dot_style'] = strtolower((string)($settings['dot_style'] ?? 'square'));
+    $norm['eye_outer_style'] = strtolower((string)($settings['eye_outer_style'] ?? 'square'));
+    $norm['eye_inner_style'] = strtolower((string)($settings['eye_inner_style'] ?? 'square'));
+    $norm['fill_mode'] = strtolower((string)($settings['fill_mode'] ?? 'solid'));
+    $norm['gradient_start'] = strtoupper((string)($settings['gradient_start'] ?? '#000000'));
+    $norm['gradient_end'] = strtoupper((string)($settings['gradient_end'] ?? '#FF2FD2'));
+    $norm['gradient_angle'] = (int)($settings['gradient_angle'] ?? 45);
+    $norm['logo_scale_pct'] = (int)($settings['logo_scale_pct'] ?? 18);
+    $norm['image_size'] = (int)($settings['image_size'] ?? 480);
+    $norm['obs_image_size'] = (int)($settings['obs_image_size'] ?? 600);
+    $norm['poster_image_size'] = (int)($settings['poster_image_size'] ?? 900);
+    $norm['mobile_image_size'] = (int)($settings['mobile_image_size'] ?? 480);
+    $norm['obs_qr_scale_pct'] = (int)($settings['obs_qr_scale_pct'] ?? 100);
+    $norm['poster_qr_scale_pct'] = (int)($settings['poster_qr_scale_pct'] ?? 48);
+    $norm['animated_overlay'] = !empty($settings['animated_overlay']) ? 1 : 0;
+
+    $allowedStyles = ['square', 'rounded', 'circle', 'extra-rounded'];
+    if (!preg_match('/^#[0-9A-F]{6}$/', $norm['foreground_color'])) {
+        $norm['foreground_color'] = '#000000';
+    }
+    if (!preg_match('/^#[0-9A-F]{6}$/', $norm['background_color'])) {
+        $norm['background_color'] = '#FFFFFF';
+    }
+    if (!in_array($norm['dot_style'], $allowedStyles, true)) {
+        $norm['dot_style'] = 'square';
+    }
+    if (!in_array($norm['eye_outer_style'], $allowedStyles, true)) {
+        $norm['eye_outer_style'] = 'square';
+    }
+    if (!in_array($norm['eye_inner_style'], $allowedStyles, true)) {
+        $norm['eye_inner_style'] = 'square';
+    }
+    if (!in_array($norm['fill_mode'], ['solid', 'linear', 'radial'], true)) {
+        $norm['fill_mode'] = 'solid';
+    }
+    if (!preg_match('/^#[0-9A-F]{6}$/', $norm['gradient_start'])) {
+        $norm['gradient_start'] = '#000000';
+    }
+    if (!preg_match('/^#[0-9A-F]{6}$/', $norm['gradient_end'])) {
+        $norm['gradient_end'] = '#FF2FD2';
+    }
+
+    $norm['gradient_angle'] = max(0, min(360, $norm['gradient_angle']));
+    $norm['logo_scale_pct'] = max(8, min(20, $norm['logo_scale_pct']));
+    $norm['image_size'] = max(220, min(1200, $norm['image_size']));
+    $norm['obs_image_size'] = max(320, min(1400, $norm['obs_image_size']));
+    $norm['poster_image_size'] = max(600, min(1800, $norm['poster_image_size']));
+    $norm['mobile_image_size'] = max(220, min(900, $norm['mobile_image_size']));
+    $norm['obs_qr_scale_pct'] = max(70, min(115, $norm['obs_qr_scale_pct']));
+    $norm['poster_qr_scale_pct'] = max(30, min(75, $norm['poster_qr_scale_pct']));
+
+    return $norm;
+}
+
+function mdjr_save_user_qr_preset(PDO $db, int $userId, int $slot, array $settings): void
+{
+    $slot = max(1, min(3, $slot));
+    $column = 'preset_' . $slot . '_json';
+    $payload = json_encode(mdjr_normalize_user_qr_preset($settings), JSON_UNESCAPED_SLASHES);
+    if ($payload === false) {
+        throw new RuntimeException('Failed to encode preset');
+    }
+
+    $sql = "
+        INSERT INTO premium_user_qr_presets (user_id, {$column})
+        VALUES (:user_id, :payload)
+        ON DUPLICATE KEY UPDATE
+            {$column} = VALUES({$column}),
+            updated_at = CURRENT_TIMESTAMP
+    ";
+    $stmt = $db->prepare($sql);
+    $stmt->execute([
+        'user_id' => $userId,
+        'payload' => $payload,
+    ]);
+}
+
+function mdjr_get_user_qr_preset(PDO $db, int $userId, int $slot): ?array
+{
+    $slot = max(1, min(3, $slot));
+    $column = 'preset_' . $slot . '_json';
+    $stmt = $db->prepare("SELECT {$column} FROM premium_user_qr_presets WHERE user_id = :user_id LIMIT 1");
+    $stmt->execute(['user_id' => $userId]);
+    $raw = (string)($stmt->fetchColumn() ?: '');
+    if ($raw === '') {
+        return null;
+    }
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return null;
+    }
+    return mdjr_normalize_user_qr_preset($decoded);
 }
 
 function mdjr_detect_upload_mime(string $tmpPath): string
