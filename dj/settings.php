@@ -648,16 +648,9 @@ require __DIR__ . '/layout.php';
                     <div class="settings-help">
                         Direct PNG endpoint for scripts/embeds. It updates automatically to your current LIVE event.
                     </div>
-                    <?php if ($previewHasLiveEvent): ?>
-                        <div class="settings-help" style="margin-top:8px;">Current LIVE preview:</div>
-                        <img
-                            src="<?php echo e(url('qr/live.php?dj=' . urlencode($djUuid) . '&t=' . time())); ?>"
-                            alt="Current live OBS QR image preview"
-                            style="display:block;width:min(280px,100%);height:auto;border:1px solid #2a2a3a;border-radius:10px;background:#0f0f14;margin-top:6px;"
-                        >
-                    <?php else: ?>
-                        <div class="settings-help" style="margin-top:8px;">No LIVE event right now. URL remains valid and will switch automatically when you go LIVE.</div>
-                    <?php endif; ?>
+                    <div class="settings-help" style="margin-top:8px;">
+                        Preview for this output is shown in <strong>Global QR Style → Preview Studio</strong>.
+                    </div>
                 <?php else: ?>
                     <div class="settings-help">
                         Available on <strong>Premium</strong>. Unlock direct OBS QR image endpoint for scripts and external embeds.
