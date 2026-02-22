@@ -443,7 +443,6 @@ $size = $requestedSize > 0
 
 $fgHex = strtoupper((string)($settings['foreground_color'] ?? '#000000'));
 $bgHex = strtoupper((string)($settings['background_color'] ?? '#FFFFFF'));
-$frameText = trim((string)($settings['frame_text'] ?? ''));
 $logoScalePct = max(8, min(20, (int)($settings['logo_scale_pct'] ?? 18)));
 $dotStyle = strtolower((string)($settings['dot_style'] ?? 'square'));
 $eyeOuterStyle = strtolower((string)($settings['eye_outer_style'] ?? 'square'));
@@ -472,9 +471,6 @@ if (preg_match('/^#[0-9A-F]{6}$/', strtoupper(trim((string)($_GET['fg'] ?? '')))
 }
 if (preg_match('/^#[0-9A-F]{6}$/', strtoupper(trim((string)($_GET['bg'] ?? ''))))) {
     $bgHex = strtoupper(trim((string)$_GET['bg']));
-}
-if (array_key_exists('frame', $_GET)) {
-    $frameText = substr(trim((string)($_GET['frame'] ?? '')), 0, 80);
 }
 $qLogoScale = (int)($_GET['logo_scale'] ?? 0);
 if ($qLogoScale > 0) {
@@ -638,27 +634,6 @@ if ($logoPath !== '') {
 }
 
 $out = $canvas;
-if ($frameText !== '') {
-    $paddingY = 56;
-    $canvasW = imagesx($canvas);
-    $canvasH = imagesy($canvas) + $paddingY;
-
-    $framed = imagecreatetruecolor($canvasW, $canvasH);
-    $frameBg = imagecolorallocate($framed, $bg[0], $bg[1], $bg[2]);
-    imagefill($framed, 0, 0, $frameBg);
-
-    imagecopy($framed, $canvas, 0, 0, 0, 0, imagesx($canvas), imagesy($canvas));
-
-    $textColor = imagecolorallocate($framed, $fg[0], $fg[1], $fg[2]);
-    $font = 5;
-    $text = strtoupper(substr($frameText, 0, 42));
-    $textW = imagefontwidth($font) * strlen($text);
-    $textX = (int)max(0, floor(($canvasW - $textW) / 2));
-    $textY = imagesy($canvas) + 20;
-    imagestring($framed, $font, $textX, $textY, $text, $textColor);
-
-    $out = $framed;
-}
 
 header('Content-Type: image/png');
 header('Cache-Control: no-store, max-age=0');

@@ -21,7 +21,7 @@ if (!mdjr_user_has_premium($db, $djId)) {
 
 $fg = strtoupper(trim((string)($_POST['foreground_color'] ?? '#000000')));
 $bg = strtoupper(trim((string)($_POST['background_color'] ?? '#FFFFFF')));
-$frameText = trim((string)($_POST['frame_text'] ?? ''));
+$frameText = '';
 $logoScalePct = (int)($_POST['logo_scale_pct'] ?? 18);
 $imageSize = (int)($_POST['image_size'] ?? 480);
 $dotStyle = strtolower(trim((string)($_POST['dot_style'] ?? 'square')));
@@ -37,7 +37,7 @@ $mobileImageSize = (int)($_POST['mobile_image_size'] ?? 480);
 $animatedOverlay = ((string)($_POST['animated_overlay'] ?? '0') === '1');
 $obsQrScalePct = (int)($_POST['obs_qr_scale_pct'] ?? 100);
 $posterQrScalePct = (int)($_POST['poster_qr_scale_pct'] ?? 48);
-$removeLogo = ((string)($_POST['remove_logo'] ?? '0') === '1');
+$removeLogo = !empty($_POST['remove_logo']);
 $resetDefaults = ((string)($_POST['reset_defaults'] ?? '0') === '1');
 
 if (!preg_match('/^#[0-9A-F]{6}$/', $fg)) {
@@ -106,6 +106,12 @@ try {
     }
 
     if ($removeLogo) {
+        if ($logoPath !== '') {
+            $currentLogoFile = APP_ROOT . '/' . ltrim($logoPath, '/');
+            if (is_file($currentLogoFile)) {
+                @unlink($currentLogoFile);
+            }
+        }
         $logoPath = '';
     }
 
@@ -141,6 +147,12 @@ try {
             throw new RuntimeException('Failed to save logo');
         }
 
+        if ($logoPath !== '') {
+            $currentLogoFile = APP_ROOT . '/' . ltrim($logoPath, '/');
+            if (is_file($currentLogoFile)) {
+                @unlink($currentLogoFile);
+            }
+        }
         $logoPath = '/uploads/qr_logos/user_' . $djId . '/' . $name;
     }
 

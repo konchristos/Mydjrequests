@@ -725,10 +725,6 @@ require __DIR__ . '/layout.php';
                     <input type="hidden" name="obs_qr_scale_pct" value="<?php echo $obsScaleVal; ?>">
                     <input type="hidden" name="poster_qr_scale_pct" value="<?php echo $posterScaleVal; ?>">
                     <label style="display:flex;flex-direction:column;gap:6px;">
-                        <span style="font-size:12px;color:#aaa;">Frame Text</span>
-                        <input name="frame_text" type="text" maxlength="80" placeholder="SCAN TO REQUEST" value="<?php echo e((string)($globalQrSettings['frame_text'] ?? '')); ?>" class="settings-input">
-                    </label>
-                    <label style="display:flex;flex-direction:column;gap:6px;">
                         <span style="font-size:12px;color:#aaa;">Logo Size (%)</span>
                         <input name="logo_scale_pct" type="number" min="8" max="20" value="<?php echo (int)($globalQrSettings['logo_scale_pct'] ?? 18); ?>" class="settings-input">
                     </label>
@@ -1321,7 +1317,6 @@ require __DIR__ . '/layout.php';
         if (!previewImg) return;
         const fg = form.querySelector('input[name="foreground_color"]')?.value || '#000000';
         const bg = form.querySelector('input[name="background_color"]')?.value || '#ffffff';
-        const frame = form.querySelector('input[name="frame_text"]')?.value || '';
         const logoScale = form.querySelector('input[name="logo_scale_pct"]')?.value || '18';
         const dotStyle = form.querySelector('select[name="dot_style"]')?.value || 'square';
         const eyeOuterStyle = form.querySelector('select[name="eye_outer_style"]')?.value || 'square';
@@ -1333,7 +1328,6 @@ require __DIR__ . '/layout.php';
         const url = new URL(previewImg.src, window.location.origin);
         url.searchParams.set('fg', fg);
         url.searchParams.set('bg', bg);
-        url.searchParams.set('frame', frame);
         url.searchParams.set('logo_scale', logoScale);
         url.searchParams.set('dot', dotStyle);
         url.searchParams.set('eyeo', eyeOuterStyle);
@@ -1351,7 +1345,7 @@ require __DIR__ . '/layout.php';
     }
 
     let previewTimer = null;
-    form.querySelectorAll('input[name="foreground_color"], input[name="background_color"], input[name="frame_text"], input[name="logo_scale_pct"], input[name="image_size"], input[name="obs_image_size"], input[name="poster_image_size"], input[name="mobile_image_size"], input[name="obs_qr_scale_pct"], input[name="poster_qr_scale_pct"], input[name="gradient_start"], input[name="gradient_end"], input[name="gradient_angle"], select[name="dot_style"], select[name="eye_outer_style"], select[name="eye_inner_style"], select[name="fill_mode"]').forEach((el) => {
+    form.querySelectorAll('input[name="foreground_color"], input[name="background_color"], input[name="logo_scale_pct"], input[name="image_size"], input[name="obs_image_size"], input[name="poster_image_size"], input[name="mobile_image_size"], input[name="obs_qr_scale_pct"], input[name="poster_qr_scale_pct"], input[name="gradient_start"], input[name="gradient_end"], input[name="gradient_angle"], select[name="dot_style"], select[name="eye_outer_style"], select[name="eye_inner_style"], select[name="fill_mode"]').forEach((el) => {
         const handler = () => {
             clearTimeout(previewTimer);
             previewTimer = setTimeout(updatePreview, 180);
@@ -1435,6 +1429,12 @@ require __DIR__ . '/layout.php';
             });
             const data = await res.json();
             if (!data.ok) throw new Error(data.error || 'Failed to save global QR style');
+            const removeLogo = form.querySelector('input[name="remove_logo"]');
+            if (removeLogo) removeLogo.checked = false;
+            if (data && data.settings && !data.settings.logo_path) {
+                const logoInput = form.querySelector('input[name="logo"]');
+                if (logoInput) logoInput.value = '';
+            }
 
             statusEl.textContent = 'Global QR style saved.';
             updatePreview();
@@ -1463,7 +1463,6 @@ require __DIR__ . '/layout.php';
 
                 form.querySelector('input[name="foreground_color"]').value = '#000000';
                 form.querySelector('input[name="background_color"]').value = '#ffffff';
-                form.querySelector('input[name="frame_text"]').value = '';
                 form.querySelector('input[name="logo_scale_pct"]').value = '18';
                 form.querySelector('input[name="image_size"]').value = '480';
                 form.querySelector('input[name="obs_image_size"]').value = '600';
