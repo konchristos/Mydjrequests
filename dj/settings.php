@@ -23,6 +23,7 @@ $djDisplay = trim((string)($userRow['dj_name'] ?? '')) !== ''
     ? (string)$userRow['dj_name']
     : (string)($userRow['name'] ?? '');
 $dynamicObsUrl = $djUuid !== '' ? url('qr/live_embed.php?dj=' . urlencode($djUuid) . '&t=init') : '';
+$dynamicObsImageUrl = $djUuid !== '' ? url('qr/live.php?dj=' . urlencode($djUuid) . '&t=init') : '';
 $isAdminUser = is_admin();
 $basePlan = mdjr_get_user_plan_base($db, $djId);
 $activeSimulation = mdjr_get_admin_plan_simulation($db, $djId);
@@ -477,6 +478,51 @@ require __DIR__ . '/layout.php';
 .settings-order-dynamic { order: 40; }
 .settings-order-qr { order: 50; }
 .settings-order-messages { order: 60; }
+.qr-preview-wrap {
+    position: relative;
+    width: min(320px, 100%);
+}
+.qr-preview-loader {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    border: 1px solid #2a2a3a;
+    background: rgba(12, 13, 22, 0.88);
+    z-index: 2;
+}
+.qr-preview-loader[hidden] {
+    display: none;
+}
+.qr-preview-spinner {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 47, 210, 0.25);
+    border-top-color: #ff2fd2;
+    animation: qrSpin 0.9s linear infinite;
+}
+@keyframes qrSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.poster-live-preview-frame {
+    position: relative;
+    width: min(280px, 100%);
+    aspect-ratio: 210 / 297;
+    border: 1px solid #2a2a3a;
+    border-radius: 8px;
+    background: #ffffff;
+    overflow: hidden;
+}
+.poster-live-preview-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
 #premium-qr-style .qr-tab-pane {
     gap: 14px !important;
     margin-top: 4px;
@@ -575,6 +621,46 @@ require __DIR__ . '/layout.php';
                 <?php else: ?>
                     <div class="settings-help">
                         Available on <strong>Premium</strong>. Unlock dynamic OBS overlays that auto-follow your LIVE event.
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label" for="dynamic_obs_image_url">
+                    Live OBS QR Image URL (Direct PNG)
+                    <span class="premium-badge">Premium</span>
+                    <?php if (!$isPremiumPlan): ?>
+                        <span class="premium-lock-tip" title="Locked for Pro. Requires Premium subscription.">🔒</span>
+                    <?php endif; ?>
+                </label>
+                <?php if ($isPremiumPlan): ?>
+                    <div class="settings-copy-row">
+                        <input
+                            class="settings-input"
+                            id="dynamic_obs_image_url"
+                            type="text"
+                            readonly
+                            value="<?php echo e($dynamicObsImageUrl); ?>"
+                        >
+                        <button type="button" class="settings-btn copy-btn" data-target="dynamic_obs_image_url" data-feedback="dynamicObsImageFeedback">Copy</button>
+                    </div>
+                    <div id="dynamicObsImageFeedback" class="settings-copy-feedback">Copied OBS image URL.</div>
+                    <div class="settings-help">
+                        Direct PNG endpoint for scripts/embeds. It updates automatically to your current LIVE event.
+                    </div>
+                    <?php if ($previewHasLiveEvent): ?>
+                        <div class="settings-help" style="margin-top:8px;">Current LIVE preview:</div>
+                        <img
+                            src="<?php echo e(url('qr/live.php?dj=' . urlencode($djUuid) . '&t=' . time())); ?>"
+                            alt="Current live OBS QR image preview"
+                            style="display:block;width:min(280px,100%);height:auto;border:1px solid #2a2a3a;border-radius:10px;background:#0f0f14;margin-top:6px;"
+                        >
+                    <?php else: ?>
+                        <div class="settings-help" style="margin-top:8px;">No LIVE event right now. URL remains valid and will switch automatically when you go LIVE.</div>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <div class="settings-help">
+                        Available on <strong>Premium</strong>. Unlock direct OBS QR image endpoint for scripts and external embeds.
                     </div>
                 <?php endif; ?>
             </div>
@@ -775,13 +861,18 @@ require __DIR__ . '/layout.php';
                     </div>
 
                     <div class="preview-tab-pane" data-preview-pane="global">
-                        <img
-                            id="globalQrPreview"
-                            src="<?php echo e(url('qr/premium_generate.php?uuid=' . urlencode($previewEventUuid) . '&size=560&preview=1&preview_url=' . urlencode($previewTargetUrl))); ?>"
-                            data-preview-target="<?php echo e($previewTargetUrl); ?>"
-                            alt="QR preview"
-                            style="width:min(320px,100%);height:auto;aspect-ratio:1/1;border-radius:12px;border:1px solid #2a2a3a;background:#0f0f14;display:block;"
-                        >
+                        <div class="qr-preview-wrap">
+                            <div id="globalQrPreviewLoader" class="qr-preview-loader" aria-hidden="true">
+                                <div class="qr-preview-spinner"></div>
+                            </div>
+                            <img
+                                id="globalQrPreview"
+                                src="<?php echo e(url('qr/premium_generate.php?uuid=' . urlencode($previewEventUuid) . '&size=560&preview=1&preview_url=' . urlencode($previewTargetUrl))); ?>"
+                                data-preview-target="<?php echo e($previewTargetUrl); ?>"
+                                alt="QR preview"
+                                style="width:min(320px,100%);height:auto;aspect-ratio:1/1;border-radius:12px;border:1px solid #2a2a3a;background:#0f0f14;display:block;"
+                            >
+                        </div>
                         <div class="settings-help" style="margin-top:8px;">
                             <?php if ($previewHasLiveEvent): ?>
                                 Preview scans to your current LIVE event.
@@ -807,12 +898,29 @@ require __DIR__ . '/layout.php';
                             </div>
                         </div>
                         <div style="padding:8px;border:1px solid #2a2a3a;border-radius:10px;background:#10111a;display:inline-block;">
-                            <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">OBS Layout Preview</div>
-                            <div style="width:120px;height:168px;border-radius:10px;background:#0b0c13;border:1px solid #2a2a3a;position:relative;overflow:hidden;">
-                                <div style="position:absolute;left:0;right:0;top:0;height:24px;background:linear-gradient(90deg,rgba(255,47,210,.35),rgba(106,227,255,.35));"></div>
-                                <div id="obsSizePreviewBox" style="position:absolute;left:50%;top:30px;transform:translateX(-50%);width:78%;aspect-ratio:1/1;border-radius:8px;background:#f2f2f2;border:1px solid #444;"></div>
-                            </div>
-                            <div id="obsSizePreviewMeta" style="font-size:10px;color:#9ba2b3;margin-top:6px;">Render 600px, Display 100%</div>
+                            <?php if ($previewHasLiveEvent && $djUuid !== ''): ?>
+                                <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">OBS Live Output Preview (actual embed URL)</div>
+                                <iframe
+                                    src="<?php echo e(url('qr/live_embed.php?dj=' . urlencode($djUuid) . '&t=' . time())); ?>"
+                                    style="width:314px;height:436px;border:1px solid #2a2a3a;border-radius:10px;background:#0b0c13;display:block;"
+                                    loading="lazy"
+                                    referrerpolicy="no-referrer"
+                                ></iframe>
+                                <div class="settings-help" style="margin-top:6px;max-width:300px;">
+                                    This is your real OBS overlay endpoint for the current LIVE event.
+                                </div>
+                                <div id="obsSizePreviewMeta" style="font-size:10px;color:#9ba2b3;margin-top:6px;">Render 600px, Display 100%</div>
+                            <?php else: ?>
+                                <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">OBS Layout Preview (fallback when no LIVE event)</div>
+                                <div style="width:120px;height:168px;border-radius:10px;background:#0b0c13;border:1px solid #2a2a3a;position:relative;overflow:hidden;">
+                                    <div style="position:absolute;left:0;right:0;top:0;height:24px;background:linear-gradient(90deg,rgba(255,47,210,.35),rgba(106,227,255,.35));"></div>
+                                    <div id="obsSizePreviewBox" style="position:absolute;left:50%;top:30px;transform:translateX(-50%);width:78%;aspect-ratio:1/1;border-radius:8px;background:#f2f2f2;border:1px solid #444;"></div>
+                                </div>
+                                <div class="settings-help" style="margin-top:6px;max-width:280px;">
+                                    No LIVE event right now, so this fallback preview shows approximate OBS placement/scale.
+                                </div>
+                                <div id="obsSizePreviewMeta" style="font-size:10px;color:#9ba2b3;margin-top:6px;">Render 600px, Display 100%</div>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -831,10 +939,31 @@ require __DIR__ . '/layout.php';
                             </div>
                         </div>
                         <div style="padding:8px;border:1px solid #2a2a3a;border-radius:10px;background:#10111a;display:inline-block;">
-                            <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">A4 Poster QR Fill Preview</div>
-                            <div style="width:120px;height:170px;border-radius:6px;background:#fff;border:1px solid #cfd3df;position:relative;overflow:hidden;">
-                                <div id="posterSizePreviewBox" style="position:absolute;left:50%;top:38px;transform:translateX(-50%);width:48%;aspect-ratio:1/1;border-radius:4px;background:#dedede;border:1px solid #999;"></div>
-                            </div>
+                            <?php if ($previewHasLiveEvent && $previewEventUuid !== ''): ?>
+                                <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">A4 Poster LIVE Preview (actual output)</div>
+                                <div class="poster-live-preview-frame">
+                                    <div id="posterLivePreviewLoader" class="qr-preview-loader" aria-hidden="true">
+                                        <div class="qr-preview-spinner"></div>
+                                    </div>
+                                    <img
+                                        id="posterLivePreviewImg"
+                                        src="<?php echo e(url('qr_poster.php?uuid=' . urlencode($previewEventUuid) . '&t=' . time())); ?>"
+                                        alt="Live A4 poster preview"
+                                        loading="lazy"
+                                    >
+                                </div>
+                                <div class="settings-help" style="margin-top:6px;max-width:280px;">
+                                    Showing actual poster output for your current LIVE event.
+                                </div>
+                            <?php else: ?>
+                                <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">A4 Poster QR Fill Preview</div>
+                                <div style="width:120px;height:170px;border-radius:6px;background:#fff;border:1px solid #cfd3df;position:relative;overflow:hidden;">
+                                    <div id="posterSizePreviewBox" style="position:absolute;left:50%;top:38px;transform:translateX(-50%);width:48%;aspect-ratio:1/1;border-radius:4px;background:#dedede;border:1px solid #999;"></div>
+                                </div>
+                                <div class="settings-help" style="margin-top:6px;max-width:260px;">
+                                    No LIVE event right now, so showing fallback poster fill preview.
+                                </div>
+                            <?php endif; ?>
                             <div id="posterSizePreviewMeta" style="font-size:10px;color:#9ba2b3;margin-top:6px;">Render 900px, Fill 48%</div>
                         </div>
                     </div>
@@ -1081,6 +1210,7 @@ require __DIR__ . '/layout.php';
     const saveBtn = document.getElementById('saveGlobalQrBtn');
     const resetBtn = document.getElementById('resetGlobalQrBtn');
     const previewImg = document.getElementById('globalQrPreview');
+    const previewLoader = document.getElementById('globalQrPreviewLoader');
     const fillModeEl = document.getElementById('qrFillMode');
     const gradientStartWrap = document.getElementById('gradientStartWrap');
     const gradientEndWrap = document.getElementById('gradientEndWrap');
@@ -1101,6 +1231,8 @@ require __DIR__ . '/layout.php';
     const obsScaleProxy = document.getElementById('obs_qr_scale_pct_proxy');
     const posterRenderProxy = document.getElementById('poster_image_size_proxy');
     const posterScaleProxy = document.getElementById('poster_qr_scale_pct_proxy');
+    const posterLivePreviewImg = document.getElementById('posterLivePreviewImg');
+    const posterLivePreviewLoader = document.getElementById('posterLivePreviewLoader');
     const qrPresetSlot = document.getElementById('qrPresetSlot');
     const saveQrPresetBtn = document.getElementById('saveQrPresetBtn');
     const loadQrPresetBtn = document.getElementById('loadQrPresetBtn');
@@ -1302,6 +1434,9 @@ require __DIR__ . '/layout.php';
 
     function updatePreview() {
         if (!previewImg) return;
+        if (previewLoader) {
+            previewLoader.hidden = false;
+        }
         const fg = form.querySelector('input[name="foreground_color"]')?.value || '#000000';
         const bg = form.querySelector('input[name="background_color"]')?.value || '#ffffff';
         const logoScale = form.querySelector('input[name="logo_scale_pct"]')?.value || '18';
@@ -1329,6 +1464,30 @@ require __DIR__ . '/layout.php';
         previewImg.src = url.toString();
         evaluateScanHealth();
         syncOutputSizePreviews();
+    }
+
+    if (previewImg) {
+        previewImg.addEventListener('load', () => {
+            if (previewLoader) previewLoader.hidden = true;
+        });
+        previewImg.addEventListener('error', () => {
+            if (previewLoader) previewLoader.hidden = true;
+        });
+        if (previewImg.complete) {
+            if (previewLoader) previewLoader.hidden = true;
+        }
+    }
+
+    if (posterLivePreviewImg) {
+        posterLivePreviewImg.addEventListener('load', () => {
+            if (posterLivePreviewLoader) posterLivePreviewLoader.hidden = true;
+        });
+        posterLivePreviewImg.addEventListener('error', () => {
+            if (posterLivePreviewLoader) posterLivePreviewLoader.hidden = true;
+        });
+        if (posterLivePreviewImg.complete) {
+            if (posterLivePreviewLoader) posterLivePreviewLoader.hidden = true;
+        }
     }
 
     function applySavedPreset(preset) {
