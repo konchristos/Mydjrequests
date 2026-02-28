@@ -139,6 +139,7 @@ body {
   align-items: center;
   gap: 10px;
   padding: 10px;
+  position: relative;
   border-radius: 12px;
   cursor: pointer;
 }
@@ -149,6 +150,11 @@ body {
 
 .request-row.active {
   background: rgba(255,47,210,0.18);
+}
+
+.request-row.expanded {
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
 }
 
 .request-row img {
@@ -186,6 +192,21 @@ body {
 .req-count {
   color: var(--accent);
   font-weight: 600;
+}
+
+.request-expand-btn {
+  border: none;
+  background: transparent;
+  color: #ff2fd2;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 4px;
+}
+
+.request-expand-btn:hover {
+  color: #ff6ee8;
 }
 
 
@@ -267,6 +288,78 @@ body {
   color: #30d158;
 }
 
+.req-count-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.request-played-pill {
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #b6ffd7;
+  border: 1px solid rgba(48, 209, 88, 0.65);
+  background: rgba(48, 209, 88, 0.18);
+}
+
+.request-skipped-pill {
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #ffd0cc;
+  border: 1px solid rgba(255, 69, 58, 0.65);
+  background: rgba(255, 69, 58, 0.18);
+}
+
+.request-variants {
+  margin: -4px 0 8px 52px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.request-variants.hidden {
+  display: none;
+}
+
+.request-variant-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  color: #d7d7e7;
+  padding: 6px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.request-variant-row:hover {
+  border-color: rgba(255,47,210,0.45);
+  background: rgba(255,47,210,0.10);
+}
+
+.request-variant-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.request-variant-count {
+  color: #ff2fd2;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
 
 
 /* =========================
@@ -285,7 +378,7 @@ body {
 .track-panel {
   background: var(--panel);
   border-radius: 16px;
-  padding: 20px;
+  padding: 16px;
 }
 
 .track-cover {
@@ -308,16 +401,16 @@ body {
 
 .track-meta {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   font-size: 13px;
   color: #aaa;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .track-actions {
-  margin-top: 18px;
+  margin-top: 10px;
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
 .track-actions button {
@@ -325,7 +418,7 @@ body {
   background: #1c1c28;
   border: none;
   border-radius: 10px;
-  padding: 10px;
+  padding: 8px;
   color: white;
   cursor: pointer;
 }
@@ -1415,7 +1508,7 @@ body {
 
 .track-panel .track-divider {
   height: 2px;
-  margin: 16px 0 14px;
+  margin: 6px 0 7px;
   border-radius: 999px;
 
   background: linear-gradient(
@@ -1438,7 +1531,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: rgba(255,255,255,0.6);
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 
 /* Names stack vertically */
@@ -1555,14 +1648,19 @@ body {
   top: 50%;
   right: 8px;
   transform: translateY(-50%);
+  z-index: 2;
   width: 22px;
   height: 22px;
+  padding: 0;
   border: 0;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
   color: #fff;
   font-size: 12px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 
@@ -1595,7 +1693,7 @@ body {
   display: flex;
   justify-content: space-between;
   font-size: 14px;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
 .detail-name {
@@ -1612,12 +1710,12 @@ body {
 }
 
 .detail-list {
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .track-requesters,
 .track-voters {
-  margin-top: 14px;
+  margin-top: 10px;
 }
 
 .detail-time {
@@ -2172,6 +2270,22 @@ button.insight-tile:hover {
   margin-left: auto;
 }
 
+.top-patron-message-btn {
+  border: 1px solid rgba(47,216,255,0.45);
+  background: rgba(47,216,255,0.12);
+  color: #baf3ff;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.top-patron-message-btn:hover {
+  background: rgba(47,216,255,0.24);
+  border-color: rgba(47,216,255,0.75);
+}
+
 .top-patron-expand-indicator {
   width: 22px;
   height: 22px;
@@ -2318,6 +2432,78 @@ button.insight-tile:hover {
   box-shadow: 0 0 35px rgba(99, 91, 255, 0.45);
 }
 
+.manual-match-modal-content {
+  width: min(860px, 94vw);
+  max-height: 86vh;
+}
+
+.manual-match-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.manual-match-track-meta {
+  font-size: 14px;
+  color: #dfe3f0;
+}
+
+.manual-match-search-row {
+  display: flex;
+  gap: 8px;
+}
+
+#manualMatchSearchInput {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  background: #0b0b12;
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #fff;
+}
+
+.manual-match-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 54vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.manual-match-item {
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.manual-match-item-main {
+  min-width: 0;
+}
+
+.manual-match-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.manual-match-artist,
+.manual-match-meta,
+.manual-match-score {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+  margin-top: 2px;
+}
+
 /* =========================
    SUPPORT LEDGER (MODAL)
 ========================= */
@@ -2404,9 +2590,9 @@ button.insight-tile:hover {
 
 .track-header-inline {
   display: flex !important;
-  align-items: center !important;
+  align-items: flex-start !important;
   gap: 16px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .track-header-inline img.track-cover {
@@ -2423,11 +2609,17 @@ button.insight-tile:hover {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding-top: 1px;
+}
+
+.track-title {
+  margin: 0;
+  line-height: 1.15;
 }
 
 .track-separator {
   height: 1px;
-  margin: 14px 0;
+  margin: 10px 0;
   background: linear-gradient(
     to right,
     transparent,

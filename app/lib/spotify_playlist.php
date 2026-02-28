@@ -146,6 +146,70 @@ function spotifyApiJson(string $method, string $url, string $accessToken, ?array
     ];
 }
 
+function spotifyFetchPlaylistTrackIds(string $playlistId, string $accessToken): array
+{
+    $ids = [];
+    $url = 'https://api.spotify.com/v1/playlists/' . rawurlencode($playlistId) . '/items?' . http_build_query([
+        'limit'  => 50,
+        'fields' => 'items(track(id)),next',
+    ]);
+
+    while ($url) {
+        $res = spotifyApiJson('GET', $url, $accessToken);
+        if (!$res['ok']) {
+            return ['ok' => false, 'error' => 'Failed reading playlist', 'status' => $res['status'] ?? 0];
+        }
+
+        foreach (($res['data']['items'] ?? []) as $item) {
+            $trackId = (string)($item['track']['id'] ?? '');
+            if ($trackId !== '') {
+                $ids[] = $trackId;
+            }
+        }
+
+        $url = $res['data']['next'] ?? null;
+    }
+
+    return ['ok' => true, 'ids' => $ids];
+}
+
+function spotifyBuildPlaylistDiff(array $desired, array $existing): array
+{
+    $remainingDesired = [];
+    foreach ($desired as $trackId) {
+        $trackId = trim((string)$trackId);
+        if ($trackId === '') {
+            continue;
+        }
+        $remainingDesired[$trackId] = ($remainingDesired[$trackId] ?? 0) + 1;
+    }
+
+    $toRemove = [];
+    foreach ($existing as $trackId) {
+        $trackId = trim((string)$trackId);
+        if ($trackId === '') {
+            continue;
+        }
+
+        if (($remainingDesired[$trackId] ?? 0) > 0) {
+            $remainingDesired[$trackId]--;
+            continue;
+        }
+
+        $toRemove[] = $trackId;
+    }
+
+    $toAdd = [];
+    foreach ($remainingDesired as $trackId => $count) {
+        while ($count > 0) {
+            $toAdd[] = $trackId;
+            $count--;
+        }
+    }
+
+    return ['to_add' => $toAdd, 'to_remove' => $toRemove];
+}
+
 /**
  * Create (or fetch existing) Spotify playlist for an event.
  * Stores playlist in event_spotify_playlists (unique per event).
@@ -160,20 +224,12 @@ function ensureSpotifyPlaylistForEvent(PDO $db, int $djId, int $eventId, string 
         return ['ok' => true, 'playlist' => $row, 'created' => false];
     }
 
-    // need DJ spotify_user_id
-    $stmt = $db->prepare("SELECT spotify_user_id FROM dj_spotify_accounts WHERE dj_id = ? LIMIT 1");
-    $stmt->execute([$djId]);
-    $acct = $stmt->fetch(PDO::FETCH_ASSOC);
-    if (!$acct || empty($acct['spotify_user_id'])) {
-        return ['ok' => false, 'error' => 'Spotify not connected for this DJ.'];
-    }
-
     $token = spotifyGetDjAccessToken($djId);
     if (!$token) {
         return ['ok' => false, 'error' => 'Unable to get Spotify access token.'];
     }
 
-    $create = spotifyApiJson('POST', 'https://api.spotify.com/v1/users/' . rawurlencode($acct['spotify_user_id']) . '/playlists', $token, [
+    $create = spotifyApiJson('POST', 'https://api.spotify.com/v1/me/playlists', $token, [
         'name'        => $playlistName,
         'public'      => $isPublic,
         'collaborative' => false,
@@ -246,11 +302,13 @@ function syncEventPlaylistFromRequests(PDO $db, int $djId, int $eventId): array
         FROM song_requests
         WHERE event_id = ?
           AND spotify_track_id IS NOT NULL
+          AND spotify_track_id <> ''
           AND status IN ('new', 'accepted')
     ");
     $stmt->execute([$eventId]);
 
     $desired = array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'spotify_track_id');
+    $desired = array_values(array_unique(array_map('strval', $desired)));
 
     // 3️⃣ Get Spotify token
     $token = spotifyGetDjAccessToken($djId);
@@ -259,50 +317,45 @@ function syncEventPlaylistFromRequests(PDO $db, int $djId, int $eventId): array
     }
 
     // 4️⃣ Fetch current playlist tracks from Spotify
-    $existing = [];
-    $url = "https://api.spotify.com/v1/playlists/" . rawurlencode($playlistId) . "/tracks?limit=100";
-
-    while ($url) {
-        $res = spotifyApiJson('GET', $url, $token);
-        if (!$res['ok']) {
-            return ['ok' => false, 'error' => 'Failed reading playlist'];
-        }
-
-        foreach ($res['data']['items'] as $item) {
-            if (!empty($item['track']['id'])) {
-                $existing[] = $item['track']['id'];
-            }
-        }
-
-        $url = $res['data']['next'] ?? null;
+    $existingRes = spotifyFetchPlaylistTrackIds($playlistId, $token);
+    if (!$existingRes['ok']) {
+        return ['ok' => false, 'error' => $existingRes['error']];
     }
+    $existing = $existingRes['ids'];
 
     // 5️⃣ Diff
-    $toAdd    = array_diff($desired, $existing);
-    $toRemove = array_diff($existing, $desired);
+    $diff = spotifyBuildPlaylistDiff($desired, $existing);
+    $toAdd = $diff['to_add'];
+    $toRemove = $diff['to_remove'];
 
     // 6️⃣ Remove first (played/skipped)
     if ($toRemove) {
-        spotifyApiJson(
+        $removeRes = spotifyApiJson(
             'DELETE',
-            "https://api.spotify.com/v1/playlists/" . rawurlencode($playlistId) . "/tracks",
+            "https://api.spotify.com/v1/playlists/" . rawurlencode($playlistId) . "/items",
             $token,
             [
-                'tracks' => array_map(fn($id) => ['uri' => "spotify:track:$id"], $toRemove)
+                'items' => array_map(fn($id) => ['uri' => "spotify:track:$id"], $toRemove)
             ]
         );
+        if (!$removeRes['ok']) {
+            return ['ok' => false, 'error' => 'Failed removing playlist items: ' . ($removeRes['error'] ?? 'unknown')];
+        }
     }
 
     // 7️⃣ Add missing (new/accepted)
     foreach (array_chunk($toAdd, 100) as $chunk) {
-        spotifyApiJson(
+        $addRes = spotifyApiJson(
             'POST',
-            "https://api.spotify.com/v1/playlists/" . rawurlencode($playlistId) . "/tracks",
+            "https://api.spotify.com/v1/playlists/" . rawurlencode($playlistId) . "/items",
             $token,
             [
                 'uris' => array_map(fn($id) => "spotify:track:$id", $chunk)
             ]
         );
+        if (!$addRes['ok']) {
+            return ['ok' => false, 'error' => 'Failed adding playlist items: ' . ($addRes['error'] ?? 'unknown')];
+        }
     }
 
     return [
@@ -495,7 +548,4 @@ function spotifyGetAppAccessToken(): ?string
 
     return $cachedToken;
 }
-
-
-
 

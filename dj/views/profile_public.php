@@ -19,6 +19,12 @@ $countryName = ($countryCode !== '' && isset($countries[$countryCode]))
     ? stripFlag((string)$countries[$countryCode])
     : '';
 $hasLocation = ($city !== '' || $countryName !== '');
+$logoUrl = trim((string)($profile['logo_url'] ?? ''));
+$showLogoPublicProfile = !isset($profile['show_logo_public_profile']) || (int)$profile['show_logo_public_profile'] === 1;
+$hasPublicProfileImage = ($logoUrl !== '' && $showLogoPublicProfile);
+$logoFocusX = isset($profile['logo_focus_x']) ? max(0, min(100, (float)$profile['logo_focus_x'])) : 50.0;
+$logoFocusY = isset($profile['logo_focus_y']) ? max(0, min(100, (float)$profile['logo_focus_y'])) : 50.0;
+$logoZoomPct = isset($profile['logo_zoom_pct']) ? max(100, min(220, (int)$profile['logo_zoom_pct'])) : 100;
 
 $links = [
     'Website'    => $profile['social_website'] ?? null,
@@ -191,6 +197,23 @@ body {
   max-width: 75ch;
 }
 
+.public-profile-image {
+  margin-top: 14px;
+  width: min(520px, 100%);
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.public-profile-image img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  transform-origin: center center;
+}
+
 .section {
   padding: 22px 24px;
 }
@@ -339,6 +362,18 @@ body {
             <?= $city !== '' ? ' · ' : ''; ?>
             <?= countryFlag($countryCode); ?> <?= htmlspecialchars($countryName); ?>
           <?php endif; ?>
+        </div>
+      <?php endif; ?>
+
+      <?php if ($hasPublicProfileImage): ?>
+        <div class="public-profile-image">
+          <img
+            src="<?= htmlspecialchars($logoUrl); ?>"
+            alt="<?= htmlspecialchars($displayName); ?> profile image"
+            loading="lazy"
+            referrerpolicy="no-referrer"
+            style="object-position: <?= number_format($logoFocusX, 2, '.', '') ?>% <?= number_format($logoFocusY, 2, '.', '') ?>%; transform: scale(<?= number_format($logoZoomPct / 100, 2, '.', '') ?>);"
+          >
         </div>
       <?php endif; ?>
 

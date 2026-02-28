@@ -115,6 +115,46 @@ $event = $eventModel->findById((int)$event['id']) ?: $event;
 $djPlan = mdjr_get_user_plan($db, $djId);
 $isPremiumPlan = ($djPlan === 'premium');
 
+$globalPosterSettings = $isPremiumPlan ? (mdjr_get_user_qr_settings($db, $djId) ?: []) : [];
+$posterOverrideRow = $isPremiumPlan ? (mdjr_get_event_poster_override($db, (int)$event['id'], $djId) ?: []) : [];
+$posterOverrideSaved = ((string)($_GET['poster_override_saved'] ?? '') === '1');
+$posterOverrideError = '';
+
+if (
+    $isPremiumPlan
+    && $_SERVER['REQUEST_METHOD'] === 'POST'
+    && isset($_POST['save_poster_override'])
+) {
+    if (!verify_csrf_token()) {
+        $posterOverrideError = 'Security check failed. Please refresh and try again.';
+    } else {
+        $orderMap = [
+            'event_name' => max(1, min(4, (int)($_POST['poster_order_event_name'] ?? 2))),
+            'location' => max(1, min(4, (int)($_POST['poster_order_location'] ?? 3))),
+            'date' => max(1, min(4, (int)($_POST['poster_order_date'] ?? 4))),
+            'dj_name' => max(1, min(4, (int)($_POST['poster_order_dj_name'] ?? 1))),
+        ];
+        asort($orderMap, SORT_NUMERIC);
+        $order = mdjr_normalize_poster_field_order(implode(',', array_keys($orderMap)));
+
+        mdjr_save_event_poster_override($db, (int)$event['id'], $djId, [
+            'use_override' => !empty($_POST['poster_use_override']) ? 1 : 0,
+            'poster_show_event_name' => !empty($_POST['poster_show_event_name']) ? 1 : 0,
+            'poster_show_location' => !empty($_POST['poster_show_location']) ? 1 : 0,
+            'poster_show_date' => !empty($_POST['poster_show_date']) ? 1 : 0,
+            'poster_show_dj_name' => !empty($_POST['poster_show_dj_name']) ? 1 : 0,
+            'poster_field_order' => $order,
+            'poster_bg_path' => $posterOverrideRow['poster_bg_path'] ?? null,
+        ]);
+
+        redirect('dj/event_details.php?uuid=' . urlencode((string)$event['uuid']) . '&poster_override_saved=1#posterOverrideCard');
+    }
+}
+
+if ($isPremiumPlan) {
+    $posterOverrideRow = mdjr_get_event_poster_override($db, (int)$event['id'], $djId) ?: [];
+}
+
 // Global platform gate from app_settings (production patron page).
 $platformTipsBoostEnabled = false;
 try {
@@ -158,6 +198,46 @@ if ($posterDate) {
     if ($dt) {
         $posterDate = $dt->format('j F Y');
     }
+}
+
+$posterDownloadUrl = url(
+    'qr_poster.php'
+    . '?uuid=' . urlencode((string)$event['uuid'])
+    . '&dj=' . urlencode((string)$djDisplay)
+    . '&title=' . urlencode((string)($event['title'] ?? ''))
+    . '&location=' . urlencode((string)($event['location'] ?? ''))
+    . '&date=' . urlencode((string)$posterDate)
+);
+$posterPreviewUrl = $posterDownloadUrl . '&t=' . time();
+
+$globalPosterOrder = ['dj_name', 'event_name', 'location', 'date'];
+$globalPosterOrderIndex = array_flip($globalPosterOrder);
+$overrideOrder = $globalPosterOrder;
+$overrideOrderIndex = $globalPosterOrderIndex;
+$posterUseOverride = false;
+$posterShowEventName = true;
+$posterShowLocation = true;
+$posterShowDate = true;
+$posterShowDjName = true;
+
+if ($isPremiumPlan) {
+    $globalPosterOrder = mdjr_parse_poster_field_order((string)($globalPosterSettings['poster_field_order'] ?? 'dj_name,event_name,location,date'));
+    $globalPosterOrderIndex = array_flip($globalPosterOrder);
+    $overrideOrder = mdjr_parse_poster_field_order((string)($posterOverrideRow['poster_field_order'] ?? implode(',', $globalPosterOrder)));
+    $overrideOrderIndex = array_flip($overrideOrder);
+    $posterUseOverride = !empty($posterOverrideRow['use_override']);
+    $posterShowEventName = array_key_exists('poster_show_event_name', $posterOverrideRow)
+        ? !empty($posterOverrideRow['poster_show_event_name'])
+        : (!isset($globalPosterSettings['poster_show_event_name']) || !empty($globalPosterSettings['poster_show_event_name']));
+    $posterShowLocation = array_key_exists('poster_show_location', $posterOverrideRow)
+        ? !empty($posterOverrideRow['poster_show_location'])
+        : (!isset($globalPosterSettings['poster_show_location']) || !empty($globalPosterSettings['poster_show_location']));
+    $posterShowDate = array_key_exists('poster_show_date', $posterOverrideRow)
+        ? !empty($posterOverrideRow['poster_show_date'])
+        : (!isset($globalPosterSettings['poster_show_date']) || !empty($globalPosterSettings['poster_show_date']));
+    $posterShowDjName = array_key_exists('poster_show_dj_name', $posterOverrideRow)
+        ? !empty($posterOverrideRow['poster_show_dj_name'])
+        : (!isset($globalPosterSettings['poster_show_dj_name']) || !empty($globalPosterSettings['poster_show_dj_name']));
 }
 
 $isLiveEvent = false;
@@ -420,6 +500,20 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     margin-top: 0;
     color: #ff2fd2;
 }
+.premium-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  background: rgba(255,47,210,0.18);
+  border: 1px solid rgba(255,47,210,0.55);
+  color: #ff7de8;
+  vertical-align: middle;
+}
 
 .data-row {
     margin: 8px 0;
@@ -549,6 +643,48 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     gap: 12px;
 }
 
+.poster-studio-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(280px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.poster-preview-wrap {
+  background: #10111a;
+  border: 1px solid #2a2a3a;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.poster-preview-frame {
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 210 / 297;
+  border: 1px solid #2b2d3b;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.poster-preview-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #fff;
+}
+
+.poster-override-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  background: #11121a;
+  border: 1px solid #2b2d3b;
+  border-radius: 10px;
+  padding: 12px;
+}
+
 
 /* Ghost button for top-right DJ link */
 .qr-top-action a {
@@ -587,6 +723,43 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 .copy-patron-link:hover {
     opacity: 1;
     color: #ff2fd2;
+}
+
+.poster-override-tiles {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.poster-override-tile {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #2b2d3b;
+  border-radius: 8px;
+  background: #151722;
+  cursor: grab;
+  user-select: none;
+}
+
+.poster-override-tile label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #dde0ea;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.poster-override-tile .drag-handle {
+  color: #aab0bf;
+}
+
+.poster-override-tile.dragging {
+  opacity: .6;
+  border-color: #ff2fd2;
 }
 
 
@@ -633,6 +806,14 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .qr-actions-right a {
         width: 100%;
         text-align: center;
+    }
+
+    .poster-studio-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .poster-override-tiles {
+        grid-template-columns: 1fr;
     }
 
     .copy-patron-link {
@@ -1447,28 +1628,6 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <?php endif; ?>
 
         <div class="downloads">
-
-            <a href="<?php
-                echo url('qr_poster.php'
-                    . '?uuid=' . urlencode($event['uuid'])
-                    . '&dj=' . urlencode($djDisplay)
-                    . '&title=' . urlencode($event['title'])
-                    . '&location=' . urlencode($event['location'])
-                    . '&date=' . urlencode($posterDate)
-                );
-            ?>"
-               style="
-                    background:#ff2fd2;
-                    padding:12px 20px;
-                    border-radius:8px;
-                    color:#fff;
-                    font-weight:bold;
-                    text-decoration:none;
-                    text-align:center;
-               ">
-                🖨 Download Printable A4 Poster
-            </a>
-
             <a href="<?php echo e(url('qr_download.php?uuid=' . $event['uuid'])); ?>"
                style="
                     background:#292933;
@@ -1487,6 +1646,159 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 </div>
 
+</div>
+
+<div class="section-card" id="posterOverrideCard">
+    <h2>A4 Poster Studio <span class="premium-badge">Premium</span></h2>
+    <p style="color:#bbb;margin-bottom:16px;">
+        Preview and manage printable A4 poster layout. Global settings can be overridden for this event only.
+    </p>
+
+    <div class="poster-studio-layout">
+        <div class="poster-preview-wrap">
+            <div style="font-size:12px;color:#aeb4c3;margin-bottom:8px;">A4 Poster Preview (this event)</div>
+            <div class="poster-preview-frame">
+                <img src="<?php echo e($posterPreviewUrl); ?>" alt="A4 poster preview">
+            </div>
+            <div style="font-size:12px;color:#aeb4c3;margin-top:8px;">
+                Preview reflects current global style + this event override.
+            </div>
+            <a href="<?php echo e($posterDownloadUrl); ?>"
+               style="
+                    margin-top:10px;
+                    background:#ff2fd2;
+                    padding:12px 20px;
+                    border-radius:8px;
+                    color:#fff;
+                    font-weight:bold;
+                    text-decoration:none;
+                    text-align:center;
+                    display:block;
+               ">
+                🖨 Download Printable A4 Poster
+            </a>
+        </div>
+
+        <?php if ($isPremiumPlan): ?>
+            <div>
+                <div style="font-weight:700;color:#fff;margin-bottom:6px;">Poster Override (This Event Only)</div>
+                <div style="font-size:12px;color:#9aa1b3;line-height:1.45;margin-bottom:10px;">
+                    Optional premium override. Leave this OFF to inherit your Global QR Style poster layout.
+                </div>
+                <?php if ($posterOverrideSaved): ?>
+                    <div style="font-size:12px;color:#6de29d;margin-bottom:8px;">Poster override saved.</div>
+                <?php endif; ?>
+                <?php if ($posterOverrideError !== ''): ?>
+                    <div style="font-size:12px;color:#ff9ca8;margin-bottom:8px;"><?php echo e($posterOverrideError); ?></div>
+                <?php endif; ?>
+                <form method="POST" id="eventPosterOverrideForm" class="poster-override-form">
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="save_poster_override" value="1">
+                    <label style="display:flex;align-items:center;gap:8px;color:#ddd;font-size:13px;">
+                        <input type="checkbox" name="poster_use_override" value="1" <?php echo $posterUseOverride ? 'checked' : ''; ?>>
+                        Enable event-specific poster layout
+                    </label>
+                    <div>
+                        <div style="font-size:12px;color:#9aa1b3;margin-bottom:6px;">Drag to reorder. Check to show/hide.</div>
+                        <div id="eventPosterOverrideTiles" class="poster-override-tiles">
+                            <div class="poster-override-tile" data-field="event_name" draggable="true">
+                                <label><input type="checkbox" name="poster_show_event_name" value="1" <?php echo $posterShowEventName ? 'checked' : ''; ?>> Event Name</label>
+                                <span class="drag-handle">↕</span>
+                            </div>
+                            <div class="poster-override-tile" data-field="location" draggable="true">
+                                <label><input type="checkbox" name="poster_show_location" value="1" <?php echo $posterShowLocation ? 'checked' : ''; ?>> Location</label>
+                                <span class="drag-handle">↕</span>
+                            </div>
+                            <div class="poster-override-tile" data-field="date" draggable="true">
+                                <label><input type="checkbox" name="poster_show_date" value="1" <?php echo $posterShowDate ? 'checked' : ''; ?>> Date</label>
+                                <span class="drag-handle">↕</span>
+                            </div>
+                            <div class="poster-override-tile" data-field="dj_name" draggable="true">
+                                <label><input type="checkbox" name="poster_show_dj_name" value="1" <?php echo $posterShowDjName ? 'checked' : ''; ?>> DJ Name</label>
+                                <span class="drag-handle">↕</span>
+                            </div>
+                        </div>
+                        <input type="hidden" name="poster_order_event_name" value="<?php echo (int)(($overrideOrderIndex['event_name'] ?? $globalPosterOrderIndex['event_name'] ?? 1) + 1); ?>">
+                        <input type="hidden" name="poster_order_location" value="<?php echo (int)(($overrideOrderIndex['location'] ?? $globalPosterOrderIndex['location'] ?? 2) + 1); ?>">
+                        <input type="hidden" name="poster_order_date" value="<?php echo (int)(($overrideOrderIndex['date'] ?? $globalPosterOrderIndex['date'] ?? 3) + 1); ?>">
+                        <input type="hidden" name="poster_order_dj_name" value="<?php echo (int)(($overrideOrderIndex['dj_name'] ?? $globalPosterOrderIndex['dj_name'] ?? 0) + 1); ?>">
+                    </div>
+
+                    <div style="display:flex;justify-content:flex-end;">
+                        <button type="submit" class="settings-btn" style="padding:8px 12px;font-size:12px;">Save Poster Override</button>
+                    </div>
+                </form>
+                <script>
+                (function () {
+                    const form = document.getElementById('eventPosterOverrideForm');
+                    const tilesWrap = document.getElementById('eventPosterOverrideTiles');
+                    if (!form || !tilesWrap) return;
+                    let dragging = null;
+
+                    function inputNameForField(field) {
+                        if (field === 'event_name') return 'poster_order_event_name';
+                        if (field === 'location') return 'poster_order_location';
+                        if (field === 'date') return 'poster_order_date';
+                        if (field === 'dj_name') return 'poster_order_dj_name';
+                        return '';
+                    }
+
+                    function syncInputsFromTiles() {
+                        Array.from(tilesWrap.querySelectorAll('.poster-override-tile')).forEach((tile, idx) => {
+                            const inputName = inputNameForField(tile.getAttribute('data-field') || '');
+                            if (!inputName) return;
+                            const hidden = form.querySelector('input[name="' + inputName + '"]');
+                            if (hidden) hidden.value = String(idx + 1);
+                        });
+                    }
+
+                    function reorderTilesByInputs() {
+                        const tiles = Array.from(tilesWrap.querySelectorAll('.poster-override-tile'));
+                        tiles.sort((a, b) => {
+                            const aName = inputNameForField(a.getAttribute('data-field') || '');
+                            const bName = inputNameForField(b.getAttribute('data-field') || '');
+                            const aVal = parseInt(form.querySelector('input[name="' + aName + '"]')?.value || '99', 10);
+                            const bVal = parseInt(form.querySelector('input[name="' + bName + '"]')?.value || '99', 10);
+                            return aVal - bVal;
+                        });
+                        tiles.forEach((tile) => tilesWrap.appendChild(tile));
+                        syncInputsFromTiles();
+                    }
+
+                    Array.from(tilesWrap.querySelectorAll('.poster-override-tile')).forEach((tile) => {
+                        tile.addEventListener('dragstart', () => {
+                            dragging = tile;
+                            tile.classList.add('dragging');
+                        });
+                        tile.addEventListener('dragend', () => {
+                            tile.classList.remove('dragging');
+                            dragging = null;
+                            syncInputsFromTiles();
+                        });
+                        tile.addEventListener('dragover', (e) => {
+                            e.preventDefault();
+                            if (!dragging || dragging === tile) return;
+                            const rect = tile.getBoundingClientRect();
+                            const insertAfter = (e.clientY - rect.top) > (rect.height / 2);
+                            if (insertAfter) {
+                                tilesWrap.insertBefore(dragging, tile.nextSibling);
+                            } else {
+                                tilesWrap.insertBefore(dragging, tile);
+                            }
+                        });
+                    });
+
+                    form.addEventListener('submit', syncInputsFromTiles);
+                    reorderTilesByInputs();
+                })();
+                </script>
+            </div>
+        <?php else: ?>
+            <div class="settings-help" style="line-height:1.45;">
+                Poster editor/customization is available on <strong>Premium</strong>. Your <strong>A4 poster download</strong> remains available on Pro with default global layout.
+            </div>
+        <?php endif; ?>
+    </div>
 </div>
 
 
@@ -1573,6 +1885,22 @@ $isPublic     = !empty($spotifyPlaylist['is_public']);
             </div>
 
             <!-- RIGHT COLUMN -->
+
+            <button
+                id="btnSyncSpotifyPlaylist"
+                data-event-id="<?php echo (int)$event['id']; ?>"
+                title="Manually sync playlist with current active Spotify-backed requests."
+                style="
+                    background:#1f6feb;
+                    color:#fff;
+                    padding:12px 18px;
+                    border-radius:8px;
+                    border:1px solid #3b82f6;
+                    cursor:pointer;
+                "
+            >
+                🔄 Sync Now
+            </button>
 
             
             <button
@@ -2013,7 +2341,7 @@ function copyPatronLink(url) {
 (function () {
 
     
-    const SYNC_INTERVAL_MS = 45000; // 45 seconds
+    const SYNC_INTERVAL_MS = 30000; // 30 seconds
 
     const btnCreate = document.getElementById('btnCreateSpotifyPlaylist');
     const btnSync   = document.getElementById('btnSyncSpotifyPlaylist');
@@ -2083,12 +2411,7 @@ function copyPatronLink(url) {
         btnSync.addEventListener('click', () => syncPlaylist(true));
     }
 
-    // 🔁 Auto-sync ONLY when LIVE
-    if (IS_LIVE) {
-        setInterval(() => {
-            syncPlaylist(false);
-        }, SYNC_INTERVAL_MS);
-    }
+    // Auto-sync moved to /dj/index.php (DJ live view page).
 
 })();
 </script>

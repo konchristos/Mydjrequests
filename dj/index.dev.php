@@ -131,12 +131,15 @@ $pollsPremiumEnabled = mdjr_get_user_plan($db, (int)($event['user_id'] ?? 0)) ==
 
 <!-- 🔍 SEARCH ROW (NEW LINE) -->
 <div class="dj-search-row">
-  <input
-    id="djSearch"
-    type="text"
-    placeholder="Search tracks..."
-    autocomplete="off"
-  />
+  <div class="dj-search-wrap">
+    <input
+      id="djSearch"
+      type="text"
+      placeholder="Search tracks..."
+      autocomplete="off"
+    />
+    <button id="djSearchClear" class="dj-search-clear hidden" type="button" aria-label="Clear search">✕</button>
+  </div>
 </div>
 
 

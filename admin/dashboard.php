@@ -52,11 +52,82 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ? 'Dev tipping/boosting enabled (/request_v2/index.php).'
                 : 'Dev tipping/boosting disabled (/request_v2/index.php).';
         }
+
+        if ($action === 'set_platform_fee_bps') {
+            $rawBps = isset($_POST['platform_fee_bps']) ? (int)$_POST['platform_fee_bps'] : 0;
+            $bps = max(0, min(10000, $rawBps));
+            adminSetSetting($db, 'platform_fee_bps', (string)$bps);
+            $success = 'Platform fee saved at ' . number_format($bps / 100, 2) . '%.';
+        }
+
+        if ($action === 'set_alpha_open_access') {
+            adminSetSetting($db, 'alpha_open_access', $value);
+            $success = $value === '1'
+                ? 'Alpha open access enabled. All users receive premium feature access for testing.'
+                : 'Alpha open access disabled. Standard trial/subscription gates are now active.';
+        }
+
+        if ($action === 'end_alpha_to_trial') {
+            $configPath = APP_ROOT . '/app/config/subscriptions.php';
+            $config = file_exists($configPath) ? require $configPath : [];
+            $trialDays = max(1, (int)($config['trial_days'] ?? 30));
+            $trialEndsAt = gmdate('Y-m-d H:i:s', time() + ($trialDays * 86400));
+
+            $nonPaidWhere = "
+                NOT EXISTS (
+                    SELECT 1
+                    FROM subscriptions s
+                    WHERE s.user_id = users.id
+                      AND s.id = (
+                          SELECT MAX(s2.id)
+                          FROM subscriptions s2
+                          WHERE s2.user_id = users.id
+                      )
+                      AND LOWER(COALESCE(s.plan, '')) IN ('pro', 'premium')
+                      AND LOWER(COALESCE(s.status, '')) = 'active'
+                      AND (s.renews_at IS NULL OR s.renews_at > UTC_TIMESTAMP())
+                )
+            ";
+
+            try {
+                $db->beginTransaction();
+
+                adminSetSetting($db, 'alpha_open_access', '0');
+
+                $updateUsers = $db->prepare("
+                    UPDATE users
+                    SET subscription = 'trial',
+                        subscription_status = 'trial',
+                        trial_ends_at = :trial_ends_at
+                    WHERE {$nonPaidWhere}
+                ");
+                $updateUsers->execute(['trial_ends_at' => $trialEndsAt]);
+                $affectedUsers = (int)$updateUsers->rowCount();
+
+                $insertSubs = $db->prepare("
+                    INSERT INTO subscriptions (user_id, plan, status, renews_at, created_at)
+                    SELECT users.id, 'trial', 'active', :trial_ends_at, UTC_TIMESTAMP()
+                    FROM users
+                    WHERE {$nonPaidWhere}
+                ");
+                $insertSubs->execute(['trial_ends_at' => $trialEndsAt]);
+
+                $db->commit();
+                $success = "Alpha ended. {$affectedUsers} users were moved to trial until " . gmdate('d M Y', strtotime($trialEndsAt)) . ' (UTC).';
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                $error = 'Failed to end alpha and convert users to trial: ' . $e->getMessage();
+            }
+        }
     }
 }
 
 $tippingEnabledProd = adminGetSetting($db, 'patron_payments_enabled_prod', adminGetSetting($db, 'patron_payments_enabled', '0')) === '1';
 $tippingEnabledDev = adminGetSetting($db, 'patron_payments_enabled_dev', adminGetSetting($db, 'patron_payments_enabled', '0')) === '1';
+$alphaOpenAccess = adminGetSetting($db, 'alpha_open_access', '0') === '1';
+$platformFeeBps = max(0, min(10000, (int)adminGetSetting($db, 'platform_fee_bps', (string)(defined('STRIPE_PLATFORM_FEE_BPS') ? (int)STRIPE_PLATFORM_FEE_BPS : 0))));
 
 $adminId = (int)($_SESSION['dj_id'] ?? 0);
 $seenKeyNotify = 'admin_seen_notify_signups_' . $adminId;
@@ -227,6 +298,16 @@ include APP_ROOT . '/dj/layout.php';
         <h2>Platform Controls</h2>
         <p class="admin-section-copy">Performance and monetization switches.</p>
         <div class="admin-dashboard">
+            <a href="/admin/schema_audit.php" class="admin-card">
+                <h3>Schema Audit</h3>
+                <p>Compare live DB tables/columns against code references</p>
+            </a>
+
+            <a href="/admin/revenue.php" class="admin-card">
+                <h3>Platform Revenue</h3>
+                <p>Gross, platform fees, Stripe fees, DJ net payouts</p>
+            </a>
+
             <a href="/admin/performance.php" class="admin-card">
                 <h3>Performance</h3>
                 <p>Queue pending: <?php echo (int)$enrichmentPending; ?> · toggles and indexes</p>
@@ -255,6 +336,46 @@ include APP_ROOT . '/dj/layout.php';
                     <form method="POST"><?php echo csrf_field(); ?><input type="hidden" name="action" value="set_tipping_dev"><input type="hidden" name="value" value="0"><button type="submit" class="admin-toggle-btn secondary">Disable</button></form>
                 </div>
                 <div class="admin-note">Values persist in <code>app_settings</code> and stay after reload.</div>
+            </div>
+
+            <div class="admin-card" style="cursor:default;">
+                <h3>Platform Fee</h3>
+                <p>Applied to new tip/boost PaymentIntents via <code>application_fee_amount</code>.</p>
+                <form method="POST" class="admin-toggle-row" style="align-items:center;">
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="action" value="set_platform_fee_bps">
+                    <label style="display:flex;gap:8px;align-items:center;">
+                        <span>BPS:</span>
+                        <input name="platform_fee_bps" type="number" min="0" max="10000" step="1" value="<?php echo (int)$platformFeeBps; ?>" style="width:110px;background:#0e0e14;color:#fff;border:1px solid #2a2a3f;border-radius:8px;padding:8px 10px;">
+                    </label>
+                    <button type="submit" class="admin-toggle-btn">Save</button>
+                </form>
+                <div class="admin-note">Current fee: <strong><?php echo number_format($platformFeeBps / 100, 2); ?>%</strong> (100 bps = 1%).</div>
+            </div>
+
+            <div class="admin-card" style="cursor:default;">
+                <h3>
+                    Alpha Open Access
+                    <span class="admin-status-pill <?php echo $alphaOpenAccess ? 'on' : 'off'; ?>"><?php echo $alphaOpenAccess ? 'Enabled' : 'Disabled'; ?></span>
+                </h3>
+                <p>When enabled, all DJs are treated as Premium for feature access and Account page labels show Early Access messaging.</p>
+                <div class="admin-toggle-row">
+                    <form method="POST"><?php echo csrf_field(); ?><input type="hidden" name="action" value="set_alpha_open_access"><input type="hidden" name="value" value="1"><button type="submit" class="admin-toggle-btn">Enable</button></form>
+                    <form method="POST"><?php echo csrf_field(); ?><input type="hidden" name="action" value="set_alpha_open_access"><input type="hidden" name="value" value="0"><button type="submit" class="admin-toggle-btn secondary">Disable</button></form>
+                </div>
+                <div class="admin-note">Use this during public alpha when subscriptions are not live yet.</div>
+            </div>
+
+            <div class="admin-card" style="cursor:default;">
+                <h3>End Alpha & Convert Users to Trial</h3>
+                <p>Turns OFF Alpha Open Access and moves all non-paying users to trial immediately (paid Pro/Premium users are preserved).</p>
+                <div class="admin-toggle-row">
+                    <form method="POST" onsubmit="return confirm('End alpha now? This will disable open access and convert non-paying users to trial.');">
+                        <?php echo csrf_field(); ?>
+                        <input type="hidden" name="action" value="end_alpha_to_trial">
+                        <button type="submit" class="admin-toggle-btn">Run End-Alpha Conversion</button>
+                    </form>
+                </div>
             </div>
         </div>
     </div>

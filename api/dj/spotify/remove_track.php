@@ -38,41 +38,17 @@ if (!$pl) {
     exit;
 }
 
-$playlistId = $pl['spotify_playlist_id'];
-
-$token = spotifyGetDjAccessToken($djId);
-if (!$token) {
-    echo json_encode(['ok' => false, 'error' => 'Spotify not connected']);
-    exit;
-}
-
-// Remove track from Spotify playlist
-$res = spotifyApiJson(
-    'DELETE',
-    'https://api.spotify.com/v1/playlists/' . rawurlencode($playlistId) . '/tracks',
-    $token,
-    [
-        'tracks' => [
-            ['uri' => 'spotify:track:' . $spotifyTrackId]
-        ]
-    ]
-);
-
-// Accept success OR "already gone"
-if (!$res['ok'] && $res['status'] !== 404) {
+$res = syncEventPlaylistFromRequests($db, $djId, $eventId);
+if (!$res['ok']) {
     echo json_encode([
         'ok'    => false,
-        'error' => 'Spotify remove failed: ' . $res['error']
+        'error' => 'Spotify remove failed: ' . ($res['error'] ?? 'Sync failed')
     ]);
     exit;
 }
 
-// Keep DB in sync
-$del = $db->prepare("
-    DELETE FROM event_spotify_playlist_tracks
-    WHERE event_id = ?
-      AND spotify_track_id = ?
-");
-$del->execute([$eventId, $spotifyTrackId]);
-
-echo json_encode(['ok' => true]);
+echo json_encode([
+    'ok' => true,
+    'added' => $res['added'] ?? 0,
+    'removed' => $res['removed'] ?? 0,
+]);

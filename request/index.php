@@ -76,6 +76,7 @@ $eventTipsBoostEnabled = $eventOverrideRaw === null || $eventOverrideRaw === ''
 $eventState = strtolower((string)($event['event_state'] ?? 'upcoming'));
 $isEventLiveForPayments = ($eventState === 'live');
 $ENABLE_PATRON_PAYMENTS = $ENABLE_PATRON_PAYMENTS && $eventTipsBoostEnabled && $isEventLiveForPayments;
+$djHasPremiumPlan = mdjr_user_has_premium($db, (int)$event['user_id']);
 
 // Load DJ (for name replacement)
 $userModel = new User();
@@ -159,6 +160,22 @@ body {
     padding: 26px;
     margin-bottom: 32px;
     box-shadow: 0 0 25px rgba(255, 47, 210, 0.15);
+}
+.dj-contact-photo-wrap {
+    margin: 0 0 14px;
+    width: 100%;
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.18);
+    box-shadow: 0 0 16px rgba(255,47,210,0.18);
+    background: #0e0f17;
+}
+.dj-contact-photo {
+    width: 100%;
+    max-width: none;
+    aspect-ratio: 16 / 10;
+    object-fit: cover;
+    display: block;
 }
 
 /* EVENT CARD */
@@ -616,6 +633,7 @@ button.send-btn:hover {
     justify-content: space-between;
     align-items: center;
     padding: 10px 12px;
+    position: relative;
     border-radius: 12px;
     background: #11111a;
     margin-bottom: 8px;
@@ -809,6 +827,7 @@ button.send-btn:hover {
     display: flex;
     gap: 8px;
     margin-top: 6px;
+    width: 100%;
 
     flex-wrap: nowrap;       /* ⬅️ DO NOT ALLOW WRAP */
     align-items: center;
@@ -869,10 +888,22 @@ button.send-btn:hover {
 
 /* Optional: small badge */
 .played-badge {
-    font-size: 11px;
-    color: #3cffb0;
-    font-weight: 600;
-    margin-left: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    font-size: 10px;
+    line-height: 1;
+    color: #b6ffd7;
+    font-weight: 700;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(0, 200, 120, 0.65);
+    background: rgba(0, 200, 120, 0.18);
+    white-space: nowrap;
+    margin-left: 0 !important;
 }
 
 
@@ -1547,6 +1578,22 @@ require_once __DIR__ . '/../app/models/DjProfile.php';
 
 $profileModel = new DjProfile();
 $djProfile = $profileModel->findByUserId($event['user_id']);
+$djContactImageUrl = '';
+$djContactFocusX = 50.0;
+$djContactFocusY = 50.0;
+$djContactZoomScale = 1.0;
+if ($djHasPremiumPlan && $djProfile && !empty($djProfile['logo_url'])) {
+    $candidate = trim((string)$djProfile['logo_url']);
+    if (preg_match('#^(https?://|/)#i', $candidate)) {
+        $djContactImageUrl = $candidate;
+        $focusX = isset($djProfile['logo_focus_x']) ? (float)$djProfile['logo_focus_x'] : 50.0;
+        $focusY = isset($djProfile['logo_focus_y']) ? (float)$djProfile['logo_focus_y'] : 50.0;
+        $zoomPct = isset($djProfile['logo_zoom_pct']) ? (int)$djProfile['logo_zoom_pct'] : 100;
+        $djContactFocusX = max(0, min(100, $focusX));
+        $djContactFocusY = max(0, min(100, $focusY));
+        $djContactZoomScale = max(1.0, min(2.2, $zoomPct / 100));
+    }
+}
 ?>
 
 <div class="tab-panel" id="section-contact">
@@ -1557,6 +1604,19 @@ $djProfile = $profileModel->findByUserId($event['user_id']);
     <?php if (!empty($djProfile['display_name'])): ?>
         <div class="dj-name" style="font-size:22px;font-weight:700;margin-bottom:6px;">
             <?= e($djProfile['display_name']) ?>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($djContactImageUrl !== ''): ?>
+        <div class="dj-contact-photo-wrap">
+            <img
+                class="dj-contact-photo"
+                src="<?= e($djContactImageUrl) ?>"
+                alt="<?= e((string)($djProfile['display_name'] ?: ($dj['dj_name'] ?? 'DJ photo'))) ?>"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                style="object-position: <?= e((string)$djContactFocusX) ?>% <?= e((string)$djContactFocusY) ?>%; transform: scale(<?= e(number_format($djContactZoomScale, 2, '.', '')) ?>);"
+            >
         </div>
     <?php endif; ?>
 
@@ -2375,6 +2435,7 @@ async function loadAllRequests() {
         allRequestsCache = data.rows;
         updateMyRequestStats();
         renderAllRequests();
+        renderMyRequests();
 
     } catch {
         allRequestsCache = [];
@@ -2430,11 +2491,28 @@ function renderMyRequests() {
 
     list.innerHTML = "";
 
+    const playedKeys = new Set();
+    allRequestsCache.forEach(r => {
+        if (r.is_played == 1) {
+            if (r.track_key) playedKeys.add(`key:${r.track_key}`);
+            playedKeys.add(`name:${buildGroupKey(r.song_title, r.artist)}`);
+        }
+    });
+
     rows.forEach(row => {
         const el = document.createElement("div");
         el.className = "all-request-item is-mine";
         const trackKey = row.track_key || "";
         const boosted = row.has_boosted == 1;
+        const isPlayed =
+            row.is_played == 1 ||
+            row.track_status === "played" ||
+            (trackKey && playedKeys.has(`key:${trackKey}`)) ||
+            playedKeys.has(`name:${buildGroupKey(row.song_title, row.artist)}`);
+
+        if (isPlayed) {
+            el.classList.add("is-played");
+        }
 
         const cover = row.spotify_album_art_url
             ? `<img src="${row.spotify_album_art_url}" class="all-request-cover" loading="lazy">`
@@ -2453,8 +2531,9 @@ function renderMyRequests() {
                 <div class="my-request-time">
                     Requested ${timeAgo(row.created_at)}
                 </div>
-                ${ENABLE_PATRON_PAYMENTS && trackKey ? `
+                ${(ENABLE_PATRON_PAYMENTS && trackKey) || isPlayed ? `
                 <div class="track-actions">
+                    ${ENABLE_PATRON_PAYMENTS && trackKey ? `
                     <button
                         type="button"
                         class="track-btn highlight-btn ${boosted ? 'boosted' : ''}"
@@ -2465,7 +2544,8 @@ function renderMyRequests() {
                         ${boosted ? 'disabled' : ''}
                     >
                         ${boosted ? '⚡ BOOSTED' : '🚀 BOOST'}
-                    </button>
+                    </button>` : ``}
+                    ${isPlayed ? `<span class="played-badge">Played</span>` : ``}
                 </div>` : ``}
             </div>
         `;
@@ -2601,12 +2681,13 @@ Object.values(groups)
         const voted = group.hasVoted === true;
         const tk = group.variants[0]?.track_key || ""; // ✅ MOVE HERE
         const boosted = group.hasBoosted == 1;
+        const isPlayed = group.variants.some(v => v.is_played == 1);
 
 if (group.isMine) {
     el.classList.add("is-mine");
 }
 
-if (group.variants.some(v => v.is_played == 1)) {
+if (isPlayed) {
     el.classList.add("is-played");
 }
 
@@ -2671,6 +2752,7 @@ ${ENABLE_PATRON_PAYMENTS ? `
 >
     ${boosted ? '⚡ BOOSTED' : '🚀 BOOST'}
 </button>` : ``}
+${isPlayed ? `<span class="played-badge">Played</span>` : ""}
 </div>
 
 

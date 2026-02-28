@@ -69,7 +69,7 @@ if (!$token) {
  */
 $res = spotifyApiJson(
     'PUT',
-    'https://api.spotify.com/v1/playlists/' . rawurlencode($playlistId) . '/tracks',
+    'https://api.spotify.com/v1/playlists/' . rawurlencode($playlistId) . '/items',
     $token,
     ['uris' => []] // Spotify trick: empty array = clear playlist
 );
@@ -120,7 +120,7 @@ $uris = array_map(
 foreach (array_chunk($uris, 100) as $chunk) {
     spotifyApiJson(
         'POST',
-        'https://api.spotify.com/v1/playlists/' . rawurlencode($playlistId) . '/tracks',
+        'https://api.spotify.com/v1/playlists/' . rawurlencode($playlistId) . '/items',
         $token,
         ['uris' => $chunk]
     );

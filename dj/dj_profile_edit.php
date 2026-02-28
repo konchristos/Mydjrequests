@@ -20,6 +20,7 @@ $user = $userModel->findById($djId);
 
 $profileModel = new DjProfile();
 $profile = $profileModel->findByUserId($djId);
+$isPremiumPlan = mdjr_user_has_premium(db(), $djId);
 
 // Auto-create blank profile if missing
 if (!$profile) {
@@ -69,6 +70,10 @@ function slugify(string $text): string {
     $text = preg_replace('/[^a-z0-9]+/', '-', $text);
     return trim($text, '-');
 }
+
+$profileLogoFocusX = isset($profile['logo_focus_x']) ? max(0, min(100, (float)$profile['logo_focus_x'])) : 50.0;
+$profileLogoFocusY = isset($profile['logo_focus_y']) ? max(0, min(100, (float)$profile['logo_focus_y'])) : 50.0;
+$profileLogoZoomPct = isset($profile['logo_zoom_pct']) ? max(100, min(220, (int)$profile['logo_zoom_pct'])) : 100;
 
 
 
@@ -238,6 +243,67 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
     font-size: 12px;
     color: #9a9ab0;
     margin-top: 6px;
+}
+.premium-badge {
+    display:inline-block;
+    margin-left:8px;
+    padding:2px 8px;
+    border-radius:999px;
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.04em;
+    text-transform:uppercase;
+    background:rgba(255,47,210,0.18);
+    border:1px solid rgba(255,47,210,0.55);
+    color:#ff7de8;
+    vertical-align:middle;
+}
+.dj-logo-preview {
+    margin-top: 10px;
+    display: inline-block;
+    border: 1px solid #333647;
+    border-radius: 12px;
+    background: #11121a;
+    padding: 6px;
+}
+.dj-logo-preview img {
+    width: 92px;
+    height: 92px;
+    object-fit: cover;
+    border-radius: 8px;
+    display: block;
+}
+.image-crop-preview {
+    margin-top: 10px;
+    width: 100%;
+    max-width: 360px;
+    aspect-ratio: 16 / 10;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #333647;
+    background: #10111a;
+    cursor: grab;
+    touch-action: none;
+}
+.image-crop-preview.dragging { cursor: grabbing; }
+.image-crop-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform-origin: center;
+    display: block;
+}
+.range-row {
+    display: grid;
+    grid-template-columns: 1fr 68px;
+    gap: 10px;
+    align-items: center;
+    margin-top: 10px;
+}
+.range-value {
+    text-align: right;
+    color: #c8c9d8;
+    font-size: 12px;
 }
 
 /* BIG Back + Preview + Save buttons bar */
@@ -488,6 +554,58 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
         <p class="small-help">
             Use a square PNG/JPG. This may be shown on your public profile and event pages.
         </p>
+        <?php if (!empty($profile['logo_url'])): ?>
+            <div class="dj-logo-preview">
+                <img src="<?= h($profile['logo_url']); ?>" alt="Current DJ image" loading="lazy" referrerpolicy="no-referrer">
+            </div>
+        <?php endif; ?>
+
+        <label>
+            Upload DJ Contact Image
+            <span class="premium-badge">Premium</span>
+        </label>
+        <?php if ($isPremiumPlan): ?>
+            <input type="file" name="logo_file" id="logo_file" accept="image/png,image/jpeg,image/webp">
+            <p class="small-help">
+                PNG/JPG/WEBP up to 2MB. Uploading replaces your current image and updates Logo URL automatically.
+            </p>
+            <input type="hidden" id="logo_focus_x" name="logo_focus_x" value="<?= (int)$profileLogoFocusX ?>">
+            <input type="hidden" id="logo_focus_y" name="logo_focus_y" value="<?= (int)$profileLogoFocusY ?>">
+            <p class="small-help">Drag preview image to set focus position.</p>
+
+            <div class="range-row">
+                <label for="logo_zoom_pct" style="margin:0;">Image Zoom</label>
+                <span id="logo_zoom_pct_val" class="range-value"><?= (int)$profileLogoZoomPct ?>%</span>
+            </div>
+            <input type="range" id="logo_zoom_pct" name="logo_zoom_pct" min="100" max="220" step="1" value="<?= (int)$profileLogoZoomPct ?>">
+            <p class="small-help">Adjust crop framing for large photos. This controls Contact-tab image display.</p>
+            <div class="image-crop-preview" id="logoCropPreviewWrap">
+                <img
+                    id="logoCropPreviewImage"
+                    src="<?= h($profile['logo_url'] ?: '/assets/logo/mydjrequests.svg'); ?>"
+                    alt="Image crop preview"
+                    style="object-position: <?= (int)$profileLogoFocusX ?>% <?= (int)$profileLogoFocusY ?>%; transform: scale(<?= number_format($profileLogoZoomPct / 100, 2, '.', '') ?>);"
+                >
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-weight:500;">
+                <input
+                    type="checkbox"
+                    name="show_logo_public_profile"
+                    value="1"
+                    style="width:auto;margin-top:0;"
+                    <?= !isset($profile['show_logo_public_profile']) || (int)$profile['show_logo_public_profile'] === 1 ? 'checked' : ''; ?>
+                >
+                Show DJ image on Public Profile (under location, above bio)
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:500;">
+                <input type="checkbox" name="remove_logo_image" value="1" style="width:auto;margin-top:0;">
+                Remove current DJ contact image
+            </label>
+        <?php else: ?>
+            <p class="small-help">
+                Image upload is available on Premium. Pro users can still use Logo URL.
+            </p>
+        <?php endif; ?>
 
         <!-- SOCIAL LINKS -->
         <div class="section-head">Links & Social</div>
@@ -782,6 +900,86 @@ form.addEventListener('submit', async (e) => {
         statusEl.textContent = 'Network error.';
     }
 });
+
+(() => {
+  const logoUrlEl = document.getElementById('logo_url');
+  const logoFileEl = document.getElementById('logo_file');
+  const previewWrapEl = document.getElementById('logoCropPreviewWrap');
+  const imgEl = document.getElementById('logoCropPreviewImage');
+  const xEl = document.getElementById('logo_focus_x');
+  const yEl = document.getElementById('logo_focus_y');
+  const zEl = document.getElementById('logo_zoom_pct');
+  const zValEl = document.getElementById('logo_zoom_pct_val');
+  if (!imgEl || !xEl || !yEl || !zEl || !previewWrapEl) return;
+
+  let dragState = null;
+
+  const update = () => {
+    const x = Math.max(0, Math.min(100, parseFloat(xEl.value || '50') || 50));
+    const y = Math.max(0, Math.min(100, parseFloat(yEl.value || '50') || 50));
+    const z = Math.max(100, Math.min(220, parseInt(zEl.value || '100', 10) || 100));
+    imgEl.style.objectPosition = x + '% ' + y + '%';
+    imgEl.style.transform = 'scale(' + (z / 100).toFixed(2) + ')';
+    if (zValEl) zValEl.textContent = z + '%';
+  };
+
+  const updateFromDrag = (event) => {
+    if (!dragState) return;
+    const rect = previewWrapEl.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const dx = event.clientX - dragState.startX;
+    const dy = event.clientY - dragState.startY;
+    const nextX = Math.max(0, Math.min(100, dragState.startFocusX + ((dx / rect.width) * 100)));
+    const nextY = Math.max(0, Math.min(100, dragState.startFocusY + ((dy / rect.height) * 100)));
+    xEl.value = String(Math.round(nextX));
+    yEl.value = String(Math.round(nextY));
+    update();
+  };
+
+  previewWrapEl.addEventListener('pointerdown', (event) => {
+    dragState = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startFocusX: Math.max(0, Math.min(100, parseFloat(xEl.value || '50') || 50)),
+      startFocusY: Math.max(0, Math.min(100, parseFloat(yEl.value || '50') || 50)),
+    };
+    previewWrapEl.classList.add('dragging');
+    previewWrapEl.setPointerCapture(event.pointerId);
+  });
+  previewWrapEl.addEventListener('pointermove', updateFromDrag);
+  previewWrapEl.addEventListener('pointerup', (event) => {
+    dragState = null;
+    previewWrapEl.classList.remove('dragging');
+    if (previewWrapEl.hasPointerCapture(event.pointerId)) {
+      previewWrapEl.releasePointerCapture(event.pointerId);
+    }
+  });
+  previewWrapEl.addEventListener('pointercancel', () => {
+    dragState = null;
+    previewWrapEl.classList.remove('dragging');
+  });
+
+  if (logoUrlEl) {
+    logoUrlEl.addEventListener('input', () => {
+      const v = (logoUrlEl.value || '').trim();
+      if (v !== '') imgEl.src = v;
+    });
+  }
+  if (logoFileEl) {
+    logoFileEl.addEventListener('change', () => {
+      const file = logoFileEl.files && logoFileEl.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => { if (reader.result) imgEl.src = String(reader.result); };
+      reader.readAsDataURL(file);
+    });
+  }
+  [xEl, yEl, zEl].forEach((el) => {
+    el.addEventListener('input', update);
+    el.addEventListener('change', update);
+  });
+  update();
+})();
 
 
 let slugTimer;

@@ -73,7 +73,7 @@ public function register(array $data): array
         $hasBeatport
     );
 
-    // Create free subscription record (initial free access)
+    // Create initial trial subscription record.
     $subscriptionModel = new Subscription();
     $subscriptionModel->createFree($userId, $trialDays);
 

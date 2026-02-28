@@ -222,66 +222,113 @@ try {
     }
 
     if ($view === 'revenue') {
-        $moneyEventClause = '';
-        $moneyParams = [$djId, $dateFrom, $dateTo, $fromTs, $toTs];
-        if ($selectedEventId > 0) {
-            $moneyEventClause = ' AND e.id = ?';
-            $moneyParams[] = $selectedEventId;
+        $ledgerExists = false;
+        try {
+            $ledgerCheckStmt = $db->prepare("
+                SELECT COUNT(*)
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'stripe_payment_ledger'
+            ");
+            $ledgerCheckStmt->execute();
+            $ledgerExists = ((int)$ledgerCheckStmt->fetchColumn() > 0);
+        } catch (Throwable $e) {
+            $ledgerExists = false;
         }
 
-        $moneySql = "
-            SELECT
-                totals.currency,
-                SUM(totals.tip_count) AS tip_count,
-                SUM(totals.tip_amount) AS tip_amount,
-                SUM(totals.boost_count) AS boost_count,
-                SUM(totals.boost_amount) AS boost_amount
-            FROM (
+        if ($ledgerExists) {
+            $ledgerEventClause = '';
+            $ledgerParams = [$djId, $fromTs, $toTs];
+            if ($selectedEventId > 0) {
+                $ledgerEventClause = ' AND l.event_id = ?';
+                $ledgerParams[] = $selectedEventId;
+            }
+
+            $moneySql = "
                 SELECT
-                    e.id AS event_id,
-                    t.currency AS currency,
-                    COUNT(*) AS tip_count,
-                    SUM(t.amount_cents) / 100 AS tip_amount,
-                    0 AS boost_count,
-                    0 AS boost_amount
-                FROM events e
-                INNER JOIN event_tips t ON t.event_id = e.id
-                WHERE e.user_id = ?
-                  AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
-                  AND t.status = 'succeeded'
-                  AND t.created_at BETWEEN ? AND ?
-                  $moneyEventClause
-                GROUP BY e.id, t.currency
+                    UPPER(COALESCE(l.currency, 'AUD')) AS currency,
+                    SUM(CASE WHEN l.entry_type = 'payment' AND l.payment_type = 'dj_tip' THEN 1 ELSE 0 END) AS tip_count,
+                    SUM(CASE WHEN l.entry_type = 'payment' AND l.payment_type = 'dj_tip' THEN l.gross_amount_cents ELSE 0 END) / 100 AS tip_amount,
+                    SUM(CASE WHEN l.entry_type = 'payment' AND l.payment_type = 'track_boost' THEN 1 ELSE 0 END) AS boost_count,
+                    SUM(CASE WHEN l.entry_type = 'payment' AND l.payment_type = 'track_boost' THEN l.gross_amount_cents ELSE 0 END) / 100 AS boost_amount,
+                    SUM(l.platform_fee_cents) / 100 AS platform_fee_amount,
+                    SUM(l.stripe_fee_cents) / 100 AS stripe_fee_amount,
+                    SUM(l.net_to_dj_cents) / 100 AS net_to_dj_amount
+                FROM stripe_payment_ledger l
+                WHERE l.dj_user_id = ?
+                  AND l.occurred_at BETWEEN ? AND ?
+                  {$ledgerEventClause}
+                GROUP BY UPPER(COALESCE(l.currency, 'AUD'))
+                ORDER BY UPPER(COALESCE(l.currency, 'AUD')) ASC
+            ";
+            $moneyStmt = $db->prepare($moneySql);
+            $moneyStmt->execute($ledgerParams);
+            $tipBoostSummary = $moneyStmt->fetchAll(PDO::FETCH_ASSOC);
+        } else {
+            $moneyEventClause = '';
+            $moneyParams = [$djId, $dateFrom, $dateTo, $fromTs, $toTs];
+            if ($selectedEventId > 0) {
+                $moneyEventClause = ' AND e.id = ?';
+                $moneyParams[] = $selectedEventId;
+            }
 
-                UNION ALL
-
+            $moneySql = "
                 SELECT
-                    e.id AS event_id,
-                    b.currency AS currency,
-                    0 AS tip_count,
-                    0 AS tip_amount,
-                    COUNT(*) AS boost_count,
-                    SUM(b.amount_cents) / 100 AS boost_amount
-                FROM events e
-                INNER JOIN event_track_boosts b ON b.event_id = e.id
-                WHERE e.user_id = ?
-                  AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
-                  AND b.status = 'succeeded'
-                  AND b.created_at BETWEEN ? AND ?
-                  $moneyEventClause
-                GROUP BY e.id, b.currency
-            ) totals
-            GROUP BY totals.currency
-            ORDER BY totals.currency ASC
-        ";
+                    totals.currency,
+                    SUM(totals.tip_count) AS tip_count,
+                    SUM(totals.tip_amount) AS tip_amount,
+                    SUM(totals.boost_count) AS boost_count,
+                    SUM(totals.boost_amount) AS boost_amount,
+                    0 AS platform_fee_amount,
+                    0 AS stripe_fee_amount,
+                    SUM(totals.tip_amount) + SUM(totals.boost_amount) AS net_to_dj_amount
+                FROM (
+                    SELECT
+                        e.id AS event_id,
+                        t.currency AS currency,
+                        COUNT(*) AS tip_count,
+                        SUM(t.amount_cents) / 100 AS tip_amount,
+                        0 AS boost_count,
+                        0 AS boost_amount
+                    FROM events e
+                    INNER JOIN event_tips t ON t.event_id = e.id
+                    WHERE e.user_id = ?
+                      AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
+                      AND t.status = 'succeeded'
+                      AND t.created_at BETWEEN ? AND ?
+                      $moneyEventClause
+                    GROUP BY e.id, t.currency
 
-        $moneyStmt = $db->prepare($moneySql);
-        $unionParams = [$djId, $dateFrom, $dateTo, $fromTs, $toTs];
-        if ($selectedEventId > 0) {
-            $unionParams[] = $selectedEventId;
+                    UNION ALL
+
+                    SELECT
+                        e.id AS event_id,
+                        b.currency AS currency,
+                        0 AS tip_count,
+                        0 AS tip_amount,
+                        COUNT(*) AS boost_count,
+                        SUM(b.amount_cents) / 100 AS boost_amount
+                    FROM events e
+                    INNER JOIN event_track_boosts b ON b.event_id = e.id
+                    WHERE e.user_id = ?
+                      AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
+                      AND b.status = 'succeeded'
+                      AND b.created_at BETWEEN ? AND ?
+                      $moneyEventClause
+                    GROUP BY e.id, b.currency
+                ) totals
+                GROUP BY totals.currency
+                ORDER BY totals.currency ASC
+            ";
+
+            $moneyStmt = $db->prepare($moneySql);
+            $unionParams = [$djId, $dateFrom, $dateTo, $fromTs, $toTs];
+            if ($selectedEventId > 0) {
+                $unionParams[] = $selectedEventId;
+            }
+            $moneyStmt->execute(array_merge($moneyParams, $unionParams));
+            $tipBoostSummary = $moneyStmt->fetchAll(PDO::FETCH_ASSOC);
         }
-        $moneyStmt->execute(array_merge($moneyParams, $unionParams));
-        $tipBoostSummary = $moneyStmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     if ($view === 'top_activity') {
@@ -817,7 +864,9 @@ require __DIR__ . '/layout.php';
                                 <th>Tips (Amount)</th>
                                 <th>Boosts (Count)</th>
                                 <th>Boosts (Amount)</th>
-                                <th>Total</th>
+                                <th>Platform Fee</th>
+                                <th>Stripe Fee</th>
+                                <th>Net to DJ</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -825,6 +874,9 @@ require __DIR__ . '/layout.php';
                                 <?php
                                     $tipAmount = (float)($row['tip_amount'] ?? 0);
                                     $boostAmount = (float)($row['boost_amount'] ?? 0);
+                                    $platformFee = (float)($row['platform_fee_amount'] ?? 0);
+                                    $stripeFee = (float)($row['stripe_fee_amount'] ?? 0);
+                                    $netToDj = (float)($row['net_to_dj_amount'] ?? ($tipAmount + $boostAmount));
                                 ?>
                                 <tr>
                                     <td><?php echo e(strtoupper((string)$row['currency'])); ?></td>
@@ -832,7 +884,9 @@ require __DIR__ . '/layout.php';
                                     <td><?php echo number_format($tipAmount, 2); ?></td>
                                     <td><?php echo (int)$row['boost_count']; ?></td>
                                     <td><?php echo number_format($boostAmount, 2); ?></td>
-                                    <td><?php echo number_format($tipAmount + $boostAmount, 2); ?></td>
+                                    <td><?php echo number_format($platformFee, 2); ?></td>
+                                    <td><?php echo number_format($stripeFee, 2); ?></td>
+                                    <td><?php echo number_format($netToDj, 2); ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>

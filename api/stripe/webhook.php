@@ -4,6 +4,8 @@ require_once __DIR__ . '/../../app/config/stripe.php';
 require_once __DIR__ . '/../../vendor/autoload.php';
 
 use Stripe\Webhook;
+use Stripe\Stripe;
+use Stripe\PaymentIntent;
 
 function ensureWebhookTables(PDO $db): void
 {
@@ -53,6 +55,35 @@ function ensureWebhookTables(PDO $db): void
             UNIQUE KEY uq_dispute_webhook_event (dispute_id, webhook_event_id),
             KEY idx_dispute_events_dispute (dispute_id),
             KEY idx_dispute_events_type (event_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS stripe_payment_ledger (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            entry_type ENUM('payment','dispute_withdrawn','dispute_reinstated') NOT NULL DEFAULT 'payment',
+            stripe_event_id VARCHAR(255) NULL,
+            payment_intent_id VARCHAR(255) NULL,
+            charge_id VARCHAR(255) NULL,
+            event_id BIGINT UNSIGNED NULL,
+            dj_user_id BIGINT UNSIGNED NULL,
+            payment_type ENUM('dj_tip','track_boost','unknown') NOT NULL DEFAULT 'unknown',
+            gross_amount_cents INT NOT NULL DEFAULT 0,
+            platform_fee_cents INT NOT NULL DEFAULT 0,
+            stripe_fee_cents INT NOT NULL DEFAULT 0,
+            net_to_dj_cents INT NOT NULL DEFAULT 0,
+            currency CHAR(3) NULL,
+            status VARCHAR(64) NULL,
+            livemode TINYINT(1) NOT NULL DEFAULT 0,
+            guest_token VARCHAR(128) NULL,
+            patron_name VARCHAR(191) NULL,
+            occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_ledger_event (stripe_event_id),
+            KEY idx_ledger_intent (payment_intent_id),
+            KEY idx_ledger_dj_created (dj_user_id, occurred_at),
+            KEY idx_ledger_event_created (event_id, occurred_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 }
@@ -108,6 +139,53 @@ function resolvePaymentByIntent(PDO $db, string $paymentIntentId): ?array
     }
 
     return null;
+}
+
+function expectedLivemodeFromSecret(): ?bool
+{
+    $key = (string)STRIPE_SECRET_KEY;
+    if (strpos($key, 'sk_live_') === 0) {
+        return true;
+    }
+    if (strpos($key, 'sk_test_') === 0) {
+        return false;
+    }
+    return null;
+}
+
+function upsertPaymentLedger(PDO $db, array $row): void
+{
+    $stmt = $db->prepare("
+        INSERT INTO stripe_payment_ledger (
+            entry_type, stripe_event_id, payment_intent_id, charge_id,
+            event_id, dj_user_id, payment_type,
+            gross_amount_cents, platform_fee_cents, stripe_fee_cents, net_to_dj_cents,
+            currency, status, livemode, guest_token, patron_name, occurred_at
+        ) VALUES (
+            :entry_type, :stripe_event_id, :payment_intent_id, :charge_id,
+            :event_id, :dj_user_id, :payment_type,
+            :gross_amount_cents, :platform_fee_cents, :stripe_fee_cents, :net_to_dj_cents,
+            :currency, :status, :livemode, :guest_token, :patron_name, :occurred_at
+        )
+        ON DUPLICATE KEY UPDATE
+            payment_intent_id = VALUES(payment_intent_id),
+            charge_id = VALUES(charge_id),
+            event_id = VALUES(event_id),
+            dj_user_id = VALUES(dj_user_id),
+            payment_type = VALUES(payment_type),
+            gross_amount_cents = VALUES(gross_amount_cents),
+            platform_fee_cents = VALUES(platform_fee_cents),
+            stripe_fee_cents = VALUES(stripe_fee_cents),
+            net_to_dj_cents = VALUES(net_to_dj_cents),
+            currency = VALUES(currency),
+            status = VALUES(status),
+            livemode = VALUES(livemode),
+            guest_token = VALUES(guest_token),
+            patron_name = VALUES(patron_name),
+            occurred_at = VALUES(occurred_at),
+            updated_at = CURRENT_TIMESTAMP
+    ");
+    $stmt->execute($row);
 }
 
 function applyDisputeAdjustment(
@@ -184,6 +262,7 @@ function handlePaymentIntentSucceeded(PDO $db, object $event): void
     $amountCents = (int)$intent->amount;
     $currency = strtoupper((string)$intent->currency);
     $createdTs = (int)$intent->created;
+    $livemode = !empty($event->livemode) ? 1 : 0;
 
     $patronName = null;
     if (!empty($intent->metadata->guest_name)) {
@@ -195,6 +274,35 @@ function handlePaymentIntentSucceeded(PDO $db, object $event): void
     if (!$djUserId || $amountCents <= 0) {
         return;
     }
+
+    // Hydrate fee details from Stripe for accurate platform + Stripe fee reporting.
+    $chargeId = null;
+    $platformFeeCents = 0;
+    $stripeFeeCents = 0;
+    try {
+        Stripe::setApiKey(STRIPE_SECRET_KEY);
+        $intentFull = PaymentIntent::retrieve(
+            (string)$intent->id,
+            ['expand' => ['latest_charge.balance_transaction']]
+        );
+        if (!empty($intentFull->latest_charge)) {
+            $chargeObj = $intentFull->latest_charge;
+            if (is_string($chargeObj)) {
+                $chargeId = $chargeObj;
+            } else {
+                $chargeId = (string)($chargeObj->id ?? '');
+                $platformFeeCents = (int)($chargeObj->application_fee_amount ?? 0);
+                if (!empty($chargeObj->balance_transaction) && !is_string($chargeObj->balance_transaction)) {
+                    $stripeFeeCents = (int)($chargeObj->balance_transaction->fee ?? 0);
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        $chargeId = null;
+        $platformFeeCents = 0;
+        $stripeFeeCents = 0;
+    }
+    $netToDjCents = $amountCents - $platformFeeCents - $stripeFeeCents;
 
     if ($paymentType === 'dj_tip') {
         $eventUuid = $metadata->event_uuid ?? null;
@@ -247,6 +355,26 @@ function handlePaymentIntentSucceeded(PDO $db, object $event): void
                 $createdTs
             );
         }
+
+        upsertPaymentLedger($db, [
+            'entry_type' => 'payment',
+            'stripe_event_id' => (string)$event->id,
+            'payment_intent_id' => (string)$intent->id,
+            'charge_id' => ($chargeId !== '' ? $chargeId : null),
+            'event_id' => $eventId,
+            'dj_user_id' => $djUserId,
+            'payment_type' => 'dj_tip',
+            'gross_amount_cents' => $amountCents,
+            'platform_fee_cents' => $platformFeeCents,
+            'stripe_fee_cents' => $stripeFeeCents,
+            'net_to_dj_cents' => $netToDjCents,
+            'currency' => $currency,
+            'status' => 'succeeded',
+            'livemode' => $livemode,
+            'guest_token' => $guestToken,
+            'patron_name' => $patronName,
+            'occurred_at' => gmdate('Y-m-d H:i:s', $createdTs > 0 ? $createdTs : time()),
+        ]);
         return;
     }
 
@@ -295,6 +423,26 @@ function handlePaymentIntentSucceeded(PDO $db, object $event): void
                 $createdTs
             );
         }
+
+        upsertPaymentLedger($db, [
+            'entry_type' => 'payment',
+            'stripe_event_id' => (string)$event->id,
+            'payment_intent_id' => (string)$intent->id,
+            'charge_id' => ($chargeId !== '' ? $chargeId : null),
+            'event_id' => $eventId,
+            'dj_user_id' => $djUserId,
+            'payment_type' => 'track_boost',
+            'gross_amount_cents' => $amountCents,
+            'platform_fee_cents' => $platformFeeCents,
+            'stripe_fee_cents' => $stripeFeeCents,
+            'net_to_dj_cents' => $netToDjCents,
+            'currency' => $currency,
+            'status' => 'succeeded',
+            'livemode' => $livemode,
+            'guest_token' => $guestToken,
+            'patron_name' => $patronName,
+            'occurred_at' => gmdate('Y-m-d H:i:s', $createdTs > 0 ? $createdTs : time()),
+        ]);
     }
 }
 
@@ -313,6 +461,7 @@ function handleDisputeEvent(PDO $db, object $event): void
     $currency = strtoupper((string)($dispute->currency ?? ''));
     $disputedAmountCents = (int)($dispute->amount ?? 0);
     $createdTs = (int)($event->created ?? time());
+    $livemode = !empty($event->livemode) ? 1 : 0;
 
     $evidenceDueBy = null;
     if (!empty($dispute->evidence_details->due_by)) {
@@ -469,6 +618,26 @@ function handleDisputeEvent(PDO $db, object $event): void
             WHERE dispute_id = ?
         ")->execute([$disputeId]);
     }
+
+    upsertPaymentLedger($db, [
+        'entry_type' => ($event->type === 'charge.dispute.funds_withdrawn') ? 'dispute_withdrawn' : 'dispute_reinstated',
+        'stripe_event_id' => (string)$event->id,
+        'payment_intent_id' => ($paymentIntentId !== '' ? $paymentIntentId : null),
+        'charge_id' => ($chargeId !== '' ? $chargeId : null),
+        'event_id' => $eventId,
+        'dj_user_id' => $djUserId,
+        'payment_type' => $paymentType,
+        'gross_amount_cents' => $adjustAmountCents,
+        'platform_fee_cents' => 0,
+        'stripe_fee_cents' => 0,
+        'net_to_dj_cents' => $adjustAmountCents,
+        'currency' => ($paymentCurrency !== '' ? $paymentCurrency : $currency),
+        'status' => $status !== '' ? $status : $event->type,
+        'livemode' => $livemode,
+        'guest_token' => null,
+        'patron_name' => null,
+        'occurred_at' => gmdate('Y-m-d H:i:s', $createdTs > 0 ? $createdTs : time()),
+    ]);
 }
 
 $payload   = file_get_contents('php://input');
@@ -493,6 +662,15 @@ file_put_contents(
 
 $db = db();
 ensureWebhookTables($db);
+
+$expectedLivemode = expectedLivemodeFromSecret();
+if ($expectedLivemode !== null) {
+    $eventLivemode = !empty($event->livemode);
+    if ($eventLivemode !== $expectedLivemode) {
+        http_response_code(200);
+        exit;
+    }
+}
 
 if (!markEventProcessed($db, (string)$event->id, (string)$event->type)) {
     http_response_code(200);

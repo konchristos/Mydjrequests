@@ -11,13 +11,70 @@ $djId = (int)$_SESSION['dj_id'];
 $userModel = new User();
 $user = $userModel->findById($djId);
 $subscription = null;
+$alphaOpenAccess = false;
+$accessLabel = 'Trial';
+$statusLabel = 'Inactive';
+$subscriptionsLabel = 'None';
+$showSubscriptionRequired = isset($_GET['subscription_required']) && $_GET['subscription_required'] === '1';
 try {
     $db = db();
-    $stmt = $db->prepare("SELECT plan, renews_at FROM subscriptions WHERE user_id = :uid ORDER BY id DESC LIMIT 1");
+    $alphaOpenAccess = mdjr_is_alpha_open_access($db);
+    $stmt = $db->prepare("SELECT plan, status, renews_at FROM subscriptions WHERE user_id = :uid ORDER BY id DESC LIMIT 1");
     $stmt->execute(['uid' => $djId]);
     $subscription = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
 } catch (Exception $e) {
     $subscription = null;
+}
+
+if ($alphaOpenAccess) {
+    $accessLabel = 'Early Access';
+    $statusLabel = 'Free during Early Access';
+    $subscriptionsLabel = 'Coming soon';
+} else {
+    $plan = strtolower((string)($subscription['plan'] ?? ($user['subscription'] ?? 'trial')));
+    if ($plan === 'free') {
+        $plan = 'trial';
+    }
+    $status = strtolower((string)($subscription['status'] ?? ($user['subscription_status'] ?? 'inactive')));
+    $renewsAtRaw = (string)($subscription['renews_at'] ?? '');
+    $renewsAtText = '';
+    if ($renewsAtRaw !== '' && strtotime($renewsAtRaw) !== false) {
+        $renewsAtText = date('d M Y', strtotime($renewsAtRaw));
+    }
+
+    if ($plan === 'premium') {
+        $accessLabel = 'Premium';
+    } elseif ($plan === 'pro') {
+        $accessLabel = 'Pro';
+    } else {
+        $accessLabel = 'Trial';
+    }
+
+    if ($plan === 'trial') {
+        $trialEndsRaw = (string)($user['trial_ends_at'] ?? '');
+        if ($trialEndsRaw !== '' && strtotime($trialEndsRaw) !== false) {
+            $trialEndsText = date('d M Y', strtotime($trialEndsRaw));
+            if (strtotime($trialEndsRaw) > time()) {
+                $statusLabel = "Trial active until {$trialEndsText}";
+            } else {
+                $statusLabel = "Trial ended on {$trialEndsText}";
+            }
+        } else {
+            $statusLabel = 'Trial';
+        }
+    } elseif ($status === 'active') {
+        $statusLabel = 'Active';
+    } else {
+        $statusLabel = $status !== '' ? ucfirst($status) : 'Inactive';
+    }
+
+    if (in_array($plan, ['pro', 'premium'], true)) {
+        $subscriptionsLabel = strtoupper($plan) . ($renewsAtText !== '' ? " · Renews {$renewsAtText}" : '');
+    } elseif ($plan === 'trial') {
+        $subscriptionsLabel = $renewsAtText !== '' ? "Trial · Renews {$renewsAtText}" : 'Trial';
+    } else {
+        $subscriptionsLabel = 'No active subscription';
+    }
 }
 
 $trustedDevices = $userModel->getTrustedDevices($djId);
@@ -127,6 +184,11 @@ require_once __DIR__ . '/../dj/layout.php';
   ========================== -->
   <section class="card">
     <h2>Account Overview</h2>
+    <?php if ($showSubscriptionRequired): ?>
+      <p class="muted" style="color:#ffb3b3;margin-top:0;">
+        Your access is currently limited. Activate or renew a subscription to unlock DJ tools.
+      </p>
+    <?php endif; ?>
 
     <div class="kv">
       <span>Email</span>
@@ -146,17 +208,17 @@ require_once __DIR__ . '/../dj/layout.php';
 
     <div class="kv">
       <span>Access</span>
-      <strong>Early Access</strong>
+      <strong><?= e($accessLabel) ?></strong>
     </div>
 
     <div class="kv">
       <span>Status</span>
-      <strong>Free during Early Access</strong>
+      <strong><?= e($statusLabel) ?></strong>
     </div>
 
     <div class="kv">
       <span>Subscriptions</span>
-      <strong>Coming soon</strong>
+      <strong><?= e($subscriptionsLabel) ?></strong>
     </div>
 
   </section>
@@ -421,5 +483,3 @@ document.addEventListener('DOMContentLoaded', function () {
 
 </body>
 </html>
-
-

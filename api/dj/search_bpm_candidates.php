@@ -62,6 +62,7 @@ if (!$req) {
 $baseTitle = trim((string)($req['song_title'] ?? ''));
 $baseArtist = trim((string)($req['artist'] ?? ''));
 $search = $q !== '' ? $q : trim($baseTitle . ' ' . $baseArtist);
+$manualMode = ($q !== '');
 
 if ($search === '') {
     echo json_encode(['ok' => true, 'rows' => []]);
@@ -98,6 +99,11 @@ function tokeniseForMatch(string $v): array
     return array_keys($out);
 }
 
+function escapeLike(string $v): string
+{
+    return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $v);
+}
+
 function similarityPercent(string $a, string $b): float
 {
     $na = normaliseForMatch($a);
@@ -112,47 +118,82 @@ function similarityPercent(string $a, string $b): float
     return (float)$pct;
 }
 
-$titleTokens = tokeniseForMatch($baseTitle);
-$artistTokens = tokeniseForMatch($baseArtist);
+$matchTitle = $manualMode ? $search : $baseTitle;
+$matchArtist = $manualMode ? $search : $baseArtist;
+
+$titleTokens = tokeniseForMatch($matchTitle);
+$artistTokens = tokeniseForMatch($matchArtist);
 $searchTokens = tokeniseForMatch($search);
-$tokens = array_values(array_unique(array_merge($titleTokens, $artistTokens, $searchTokens)));
+$tokens = $manualMode
+    ? array_values(array_unique($searchTokens))
+    : array_values(array_unique(array_merge($titleTokens, $artistTokens, $searchTokens)));
 
 $rowsById = [];
+$rawTitleNeedle = mb_strtolower($matchTitle !== '' ? $matchTitle : $search, 'UTF-8');
+$rawArtistNeedle = mb_strtolower($matchArtist, 'UTF-8');
+$normTitleNeedle = normaliseForMatch($matchTitle !== '' ? $matchTitle : $search);
+$normArtistNeedle = normaliseForMatch($matchArtist);
 
 // 1) Title-first pass (strong signal)
-$titleNeedle = normaliseForMatch($baseTitle !== '' ? $baseTitle : $search);
-if ($titleNeedle !== '') {
-    $titleLike = '%' . $titleNeedle . '%';
+$titleNeedles = array_values(array_filter(array_unique([
+    $rawTitleNeedle,
+    $normTitleNeedle,
+])));
+if ($titleNeedles) {
+    $whereTitle = [];
+    $paramsTitle = [];
+    foreach ($titleNeedles as $needle) {
+        $whereTitle[] = 'LOWER(title) LIKE ?';
+        $paramsTitle[] = '%' . escapeLike($needle) . '%';
+    }
 
     $sql1 = "
         SELECT id, title, artist, bpm, key_text, year, genre
         FROM bpm_test_tracks
-        WHERE LOWER(title) LIKE ?
+        WHERE " . implode(' OR ', $whereTitle) . "
         ORDER BY id DESC
-        LIMIT 200
+        LIMIT 600
     ";
     $st1 = $db->prepare($sql1);
-    $st1->execute([$titleLike]);
+    $st1->execute($paramsTitle);
     foreach ($st1->fetchAll(PDO::FETCH_ASSOC) as $r) {
         $rowsById[(int)$r['id']] = $r;
     }
 }
 
-// 2) Title + artist pass
-if ($baseArtist !== '') {
-    $titleLike = '%' . normaliseForMatch($baseTitle) . '%';
-    $artistLike = '%' . normaliseForMatch($baseArtist) . '%';
+// 2) Title + artist pass (skip in manual mode so free text query is not polluted by original track artist)
+if (!$manualMode && $baseArtist !== '') {
+    $titleNeedles = array_values(array_filter(array_unique([
+        mb_strtolower($baseTitle, 'UTF-8'),
+        normaliseForMatch($baseTitle),
+    ])));
+    $artistNeedles = array_values(array_filter(array_unique([
+        mb_strtolower($baseArtist, 'UTF-8'),
+        normaliseForMatch($baseArtist),
+    ])));
+    $whereTitle = [];
+    $whereArtist = [];
+    $params2 = [];
+
+    foreach ($titleNeedles as $needle) {
+        $whereTitle[] = 'LOWER(title) LIKE ?';
+        $params2[] = '%' . escapeLike($needle) . '%';
+    }
+    foreach ($artistNeedles as $needle) {
+        $whereArtist[] = 'LOWER(artist) LIKE ?';
+        $params2[] = '%' . escapeLike($needle) . '%';
+    }
 
     $sql2 = "
         SELECT id, title, artist, bpm, key_text, year, genre
         FROM bpm_test_tracks
-        WHERE LOWER(title) LIKE ?
-          AND LOWER(artist) LIKE ?
+        WHERE (" . implode(' OR ', $whereTitle ?: ['1=1']) . ")
+          AND (" . implode(' OR ', $whereArtist ?: ['1=1']) . ")
         ORDER BY id DESC
-        LIMIT 200
+        LIMIT 600
     ";
     $st2 = $db->prepare($sql2);
-    $st2->execute([$titleLike, $artistLike]);
+    $st2->execute($params2);
     foreach ($st2->fetchAll(PDO::FETCH_ASSOC) as $r) {
         $rowsById[(int)$r['id']] = $r;
     }
@@ -178,7 +219,7 @@ if (!$where) {
 $sql3 = "
     SELECT id, title, artist, bpm, key_text, year, genre
     FROM bpm_test_tracks
-    WHERE " . implode(' OR ', $where) . "
+    WHERE " . implode($manualMode ? ' AND ' : ' OR ', $where) . "
     ORDER BY id DESC
     LIMIT 300
 ";
@@ -191,12 +232,50 @@ foreach ($st3->fetchAll(PDO::FETCH_ASSOC) as $r) {
 
 $rows = array_values($rowsById);
 
-if (count($rows) < 12) {
+// 4) Broad fallback by raw title/artist when earlier passes are sparse.
+if (!$manualMode && count($rows) < 24) {
+    $where4 = [];
+    $params4 = [];
+    if ($rawTitleNeedle !== '') {
+        $where4[] = 'LOWER(title) LIKE ?';
+        $params4[] = '%' . escapeLike($rawTitleNeedle) . '%';
+    }
+    if ($rawArtistNeedle !== '') {
+        $where4[] = 'LOWER(artist) LIKE ?';
+        $params4[] = '%' . escapeLike($rawArtistNeedle) . '%';
+    }
+    if ($normTitleNeedle !== '') {
+        $where4[] = 'LOWER(title) LIKE ?';
+        $params4[] = '%' . escapeLike($normTitleNeedle) . '%';
+    }
+    if ($normArtistNeedle !== '') {
+        $where4[] = 'LOWER(artist) LIKE ?';
+        $params4[] = '%' . escapeLike($normArtistNeedle) . '%';
+    }
+
+    if ($where4) {
+        $sql4 = "
+            SELECT id, title, artist, bpm, key_text, year, genre
+            FROM bpm_test_tracks
+            WHERE " . implode(' OR ', $where4) . "
+            ORDER BY id DESC
+            LIMIT 2000
+        ";
+        $st4 = $db->prepare($sql4);
+        $st4->execute($params4);
+        foreach ($st4->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $rowsById[(int)$r['id']] = $r;
+        }
+        $rows = array_values($rowsById);
+    }
+}
+
+if (!$manualMode && count($rows) < 12) {
     $fallbackStmt = $db->query("
         SELECT id, title, artist, bpm, key_text, year, genre
         FROM bpm_test_tracks
         ORDER BY id DESC
-        LIMIT 1200
+        LIMIT 5000
     ");
     foreach ($fallbackStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
         $rowsById[(int)$r['id']] = $r;
@@ -204,16 +283,16 @@ if (count($rows) < 12) {
     $rows = array_values($rowsById);
 }
 
-$normBaseTitle = normaliseForMatch($baseTitle);
-$normBaseArtist = normaliseForMatch($baseArtist);
+$normBaseTitle = normaliseForMatch($matchTitle);
+$normBaseArtist = normaliseForMatch($matchArtist);
 
 $scored = [];
 foreach ($rows as $row) {
     $title = (string)($row['title'] ?? '');
     $artist = (string)($row['artist'] ?? '');
 
-    $titleScore = similarityPercent($baseTitle, $title);
-    $artistScore = similarityPercent($baseArtist, $artist);
+    $titleScore = similarityPercent($matchTitle, $title);
+    $artistScore = similarityPercent($matchArtist, $artist);
 
     $rowTokens = tokeniseForMatch($title . ' ' . $artist);
     $tokenHit = 0;
@@ -228,13 +307,44 @@ foreach ($rows as $row) {
     $normArtist = normaliseForMatch($artist);
     $directTitleHit = ($normBaseTitle !== '' && str_contains($normTitle, $normBaseTitle)) ? 1 : 0;
     $directArtistHit = ($normBaseArtist !== '' && str_contains($normArtist, $normBaseArtist)) ? 1 : 0;
+    $rawTitleHit = ($rawTitleNeedle !== '' && str_contains(mb_strtolower($title, 'UTF-8'), $rawTitleNeedle)) ? 1 : 0;
+    $rawArtistHit = ($rawArtistNeedle !== '' && str_contains(mb_strtolower($artist, 'UTF-8'), $rawArtistNeedle)) ? 1 : 0;
+    $exactPairHit = (
+        $rawTitleNeedle !== '' &&
+        $rawArtistNeedle !== '' &&
+        mb_strtolower(trim($title), 'UTF-8') === trim($rawTitleNeedle) &&
+        mb_strtolower(trim($artist), 'UTF-8') === trim($rawArtistNeedle)
+    ) ? 1 : 0;
 
     $combined =
-        ($titleScore * 0.50) +
+        ($titleScore * 0.45) +
         ($artistScore * 0.20) +
         ($tokenScore * 0.15) +
         ($directTitleHit * 10) +
-        ($directArtistHit * 5);
+        ($directArtistHit * 5) +
+        ($rawTitleHit * 12) +
+        ($rawArtistHit * 8) +
+        ($exactPairHit * 25);
+
+    if ($manualMode) {
+        $tokenMinHits = max(1, min(2, count($tokens)));
+        $hasStrongTokenMatch = ($tokenHit >= $tokenMinHits);
+        $hasDirectMatch = ($rawTitleHit === 1 || $directTitleHit === 1 || $directArtistHit === 1);
+        if (!$hasStrongTokenMatch && !$hasDirectMatch) {
+            continue;
+        }
+    }
+
+    // In default mode (no typed query), strongly anchor to original artist.
+    // This prevents generic title-token collisions (e.g. "got", "find", "man")
+    // from flooding results with unrelated artists.
+    if (!$manualMode && $baseArtist !== '') {
+        $artistMatched = ($rawArtistHit === 1 || $directArtistHit === 1 || $artistScore >= 70.0);
+        $veryHighTitleOnly = ($titleScore >= 92.0);
+        if (!$artistMatched && !$veryHighTitleOnly) {
+            continue;
+        }
+    }
 
     $scored[] = [
         'id' => (int)$row['id'],
@@ -250,6 +360,9 @@ foreach ($rows as $row) {
         'token_score' => round($tokenScore, 2),
         'direct_title_hit' => $directTitleHit,
         'direct_artist_hit' => $directArtistHit,
+        'raw_title_hit' => $rawTitleHit,
+        'raw_artist_hit' => $rawArtistHit,
+        'exact_pair_hit' => $exactPairHit,
     ];
 }
 
@@ -260,7 +373,7 @@ usort($scored, static function (array $a, array $b): int {
     return $b['match_score'] <=> $a['match_score'];
 });
 
-$scored = array_slice($scored, 0, 30);
+$scored = array_slice($scored, 0, $manualMode ? 40 : 100);
 
 echo json_encode([
     'ok' => true,

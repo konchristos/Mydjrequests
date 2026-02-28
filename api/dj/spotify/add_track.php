@@ -45,44 +45,14 @@ if (!$row || empty($row['spotify_playlist_id'])) {
     exit;
 }
 
-$playlistId = $row['spotify_playlist_id'];
-
-/**
- * Spotify token
- */
-$token = spotifyGetDjAccessToken($djId);
-if (!$token) {
-    echo json_encode(['ok' => false, 'error' => 'Spotify not connected']);
-    exit;
-}
-
-/**
- * Re-add track
- */
-$res = spotifyApiJson(
-    'POST',
-    'https://api.spotify.com/v1/playlists/' . rawurlencode($playlistId) . '/tracks',
-    $token,
-    [
-        'uris' => [
-            'spotify:track:' . $spotifyTrackId
-        ]
-    ]
-);
-
+$res = syncEventPlaylistFromRequests($db, $djId, $eventId);
 if (!$res['ok']) {
-    echo json_encode(['ok' => false, 'error' => $res['error']]);
+    echo json_encode(['ok' => false, 'error' => $res['error'] ?? 'Sync failed']);
     exit;
 }
 
-/**
- * 🔑 Reset sync state so future logic is consistent
- */
-$upd = $db->prepare("
-    UPDATE spotify_tracks
-    SET added_to_playlist_at = NOW()
-    WHERE spotify_track_id = ?
-");
-$upd->execute([$spotifyTrackId]);
-
-echo json_encode(['ok' => true]);
+echo json_encode([
+    'ok' => true,
+    'added' => $res['added'] ?? 0,
+    'removed' => $res['removed'] ?? 0,
+]);

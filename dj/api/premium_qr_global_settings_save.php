@@ -34,6 +34,14 @@ $gradientAngle = (int)($_POST['gradient_angle'] ?? 45);
 $obsImageSize = (int)($_POST['obs_image_size'] ?? 600);
 $posterImageSize = (int)($_POST['poster_image_size'] ?? 900);
 $mobileImageSize = (int)($_POST['mobile_image_size'] ?? 480);
+$posterShowEventName = !empty($_POST['poster_show_event_name']) ? 1 : 0;
+$posterShowLocation = !empty($_POST['poster_show_location']) ? 1 : 0;
+$posterShowDate = !empty($_POST['poster_show_date']) ? 1 : 0;
+$posterShowDjName = !empty($_POST['poster_show_dj_name']) ? 1 : 0;
+$posterOrderEventName = (int)($_POST['poster_order_event_name'] ?? 2);
+$posterOrderLocation = (int)($_POST['poster_order_location'] ?? 3);
+$posterOrderDate = (int)($_POST['poster_order_date'] ?? 4);
+$posterOrderDjName = (int)($_POST['poster_order_dj_name'] ?? 1);
 $animatedOverlay = ((string)($_POST['animated_overlay'] ?? '0') === '1');
 $obsQrScalePct = (int)($_POST['obs_qr_scale_pct'] ?? 100);
 $posterQrScalePct = (int)($_POST['poster_qr_scale_pct'] ?? 48);
@@ -75,14 +83,29 @@ $posterImageSize = max(600, min(1800, $posterImageSize));
 $mobileImageSize = max(220, min(900, $mobileImageSize));
 $obsQrScalePct = max(70, min(115, $obsQrScalePct));
 $posterQrScalePct = max(30, min(75, $posterQrScalePct));
+$posterOrderMap = [
+    'event_name' => max(1, min(4, $posterOrderEventName)),
+    'location' => max(1, min(4, $posterOrderLocation)),
+    'date' => max(1, min(4, $posterOrderDate)),
+    'dj_name' => max(1, min(4, $posterOrderDjName)),
+];
+asort($posterOrderMap, SORT_NUMERIC);
+$posterFieldOrder = mdjr_normalize_poster_field_order(implode(',', array_keys($posterOrderMap)));
 
 try {
     mdjr_ensure_premium_tables($db);
 
     $existing = mdjr_get_user_qr_settings($db, $djId) ?: [];
     $logoPath = (string)($existing['logo_path'] ?? '');
+    $posterBgPath = (string)($existing['poster_bg_path'] ?? '');
 
     if ($resetDefaults) {
+        if ($posterBgPath !== '') {
+            $existingBg = APP_ROOT . '/' . ltrim($posterBgPath, '/');
+            if (is_file($existingBg)) {
+                @unlink($existingBg);
+            }
+        }
         $fg = '#000000';
         $bg = '#FFFFFF';
         $frameText = '';
@@ -98,10 +121,16 @@ try {
         $obsImageSize = 600;
         $posterImageSize = 900;
         $mobileImageSize = 480;
+        $posterShowEventName = 1;
+        $posterShowLocation = 1;
+        $posterShowDate = 1;
+        $posterShowDjName = 1;
+        $posterFieldOrder = 'dj_name,event_name,location,date';
         $animatedOverlay = false;
         $obsQrScalePct = 100;
         $posterQrScalePct = 48;
         $logoPath = '';
+        $posterBgPath = '';
         $removeLogo = true;
     }
 
@@ -113,6 +142,16 @@ try {
             }
         }
         $logoPath = '';
+    }
+
+    if (!empty($_POST['poster_bg_remove'])) {
+        if ($posterBgPath !== '') {
+            $currentBgFile = APP_ROOT . '/' . ltrim($posterBgPath, '/');
+            if (is_file($currentBgFile)) {
+                @unlink($currentBgFile);
+            }
+        }
+        $posterBgPath = '';
     }
 
     if (!empty($_FILES['logo']['name'])) {
@@ -156,6 +195,41 @@ try {
         $logoPath = '/uploads/qr_logos/user_' . $djId . '/' . $name;
     }
 
+    if (!empty($_FILES['poster_bg_image']['name'])) {
+        $file = $_FILES['poster_bg_image'];
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            throw new RuntimeException('Poster background upload failed');
+        }
+        if (($file['size'] ?? 0) > (5 * 1024 * 1024)) {
+            throw new RuntimeException('Poster background is too large (max 5MB)');
+        }
+        $allowed = [
+            'image/png' => 'png',
+            'image/jpeg' => 'jpg',
+            'image/webp' => 'webp',
+        ];
+        $mime = mdjr_detect_upload_mime((string)$file['tmp_name']);
+        if (!isset($allowed[$mime])) {
+            throw new RuntimeException('Invalid poster background format (PNG/JPG/WEBP only)');
+        }
+        $dir = APP_ROOT . '/uploads/poster_bg/user_' . $djId;
+        if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+            throw new RuntimeException('Failed to prepare poster background folder');
+        }
+        $name = 'bg_' . $djId . '_' . time() . '.' . $allowed[$mime];
+        $dest = $dir . '/' . $name;
+        if (!move_uploaded_file((string)$file['tmp_name'], $dest)) {
+            throw new RuntimeException('Failed to save poster background');
+        }
+        if ($posterBgPath !== '') {
+            $old = APP_ROOT . '/' . ltrim($posterBgPath, '/');
+            if (is_file($old)) {
+                @unlink($old);
+            }
+        }
+        $posterBgPath = '/uploads/poster_bg/user_' . $djId . '/' . $name;
+    }
+
     mdjr_save_user_qr_settings($db, $djId, [
         'foreground_color' => $fg,
         'background_color' => $bg,
@@ -174,6 +248,12 @@ try {
         'obs_image_size' => $obsImageSize,
         'poster_image_size' => $posterImageSize,
         'mobile_image_size' => $mobileImageSize,
+        'poster_show_event_name' => $posterShowEventName,
+        'poster_show_location' => $posterShowLocation,
+        'poster_show_date' => $posterShowDate,
+        'poster_show_dj_name' => $posterShowDjName,
+        'poster_field_order' => $posterFieldOrder,
+        'poster_bg_path' => $posterBgPath !== '' ? $posterBgPath : null,
         'animated_overlay' => $animatedOverlay ? 1 : 0,
         'obs_qr_scale_pct' => $obsQrScalePct,
         'poster_qr_scale_pct' => $posterQrScalePct,
@@ -202,6 +282,12 @@ try {
             'obs_image_size' => (int)($updated['obs_image_size'] ?? $obsImageSize),
             'poster_image_size' => (int)($updated['poster_image_size'] ?? $posterImageSize),
             'mobile_image_size' => (int)($updated['mobile_image_size'] ?? $mobileImageSize),
+            'poster_show_event_name' => !empty($updated['poster_show_event_name']) ? 1 : $posterShowEventName,
+            'poster_show_location' => !empty($updated['poster_show_location']) ? 1 : $posterShowLocation,
+            'poster_show_date' => !empty($updated['poster_show_date']) ? 1 : $posterShowDate,
+            'poster_show_dj_name' => !empty($updated['poster_show_dj_name']) ? 1 : $posterShowDjName,
+            'poster_field_order' => (string)($updated['poster_field_order'] ?? $posterFieldOrder),
+            'poster_bg_path' => (string)($updated['poster_bg_path'] ?? $posterBgPath),
             'animated_overlay' => !empty($updated['animated_overlay']) ? 1 : ($animatedOverlay ? 1 : 0),
             'obs_qr_scale_pct' => (int)($updated['obs_qr_scale_pct'] ?? $obsQrScalePct),
             'poster_qr_scale_pct' => (int)($updated['poster_qr_scale_pct'] ?? $posterQrScalePct),

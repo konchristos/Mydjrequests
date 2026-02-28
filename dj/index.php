@@ -84,6 +84,41 @@ $eventTipsBoostEnabled = ($eventOverrideRaw === null || $eventOverrideRaw === ''
 $tipsBoostVisible = $platformTipsBoostEnabled && $eventTipsBoostEnabled;
 
 $pollsPremiumEnabled = mdjr_get_user_plan($db, (int)($event['user_id'] ?? 0)) === 'premium';
+
+$spotifySyncEnabled = false;
+$spotifyHasPlaylist = false;
+try {
+    $spotifyAllowedStmt = $db->prepare("
+        SELECT spotify_access_enabled
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+    ");
+    $spotifyAllowedStmt->execute([(int)$event['user_id']]);
+    $spotifyAllowed = ((int)$spotifyAllowedStmt->fetchColumn() === 1);
+
+    $spotifyTokenStmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM dj_spotify_accounts
+        WHERE dj_id = ?
+          AND expires_at > NOW()
+    ");
+    $spotifyTokenStmt->execute([(int)$event['user_id']]);
+    $spotifyConnected = ((int)$spotifyTokenStmt->fetchColumn() > 0);
+
+    $playlistStmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM event_spotify_playlists
+        WHERE event_id = ?
+    ");
+    $playlistStmt->execute([(int)$event['id']]);
+    $spotifyHasPlaylist = ((int)$playlistStmt->fetchColumn() > 0);
+
+    $spotifySyncEnabled = ($spotifyAllowed && $spotifyConnected && $spotifyHasPlaylist);
+} catch (Throwable $e) {
+    $spotifySyncEnabled = false;
+    $spotifyHasPlaylist = false;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -131,12 +166,15 @@ $pollsPremiumEnabled = mdjr_get_user_plan($db, (int)($event['user_id'] ?? 0)) ==
 
 <!-- 🔍 SEARCH ROW (NEW LINE) -->
 <div class="dj-search-row">
-  <input
-    id="djSearch"
-    type="text"
-    placeholder="Search tracks..."
-    autocomplete="off"
-  />
+  <div class="dj-search-wrap">
+    <input
+      id="djSearch"
+      type="text"
+      placeholder="Search tracks..."
+      autocomplete="off"
+    />
+    <button id="djSearchClear" class="dj-search-clear hidden" type="button" aria-label="Clear search">✕</button>
+  </div>
 </div>
 
 
@@ -328,8 +366,11 @@ window.DJ_CONFIG = {
   eventTitle: "<?= htmlspecialchars($event['title']) ?>",
   eventDate: "<?= htmlspecialchars($event['event_date'] ?? '') ?>",
   eventState: "<?= htmlspecialchars($event['event_state']) ?>",
+  isAdmin: <?= is_admin() ? 'true' : 'false' ?>,
   tipsBoostVisible: <?= $tipsBoostVisible ? 'true' : 'false' ?>,
   pollsPremiumEnabled: <?= $pollsPremiumEnabled ? 'true' : 'false' ?>,
+  spotifySyncEnabled: <?= $spotifySyncEnabled ? 'true' : 'false' ?>,
+  spotifyHasPlaylist: <?= $spotifyHasPlaylist ? 'true' : 'false' ?>,
   pollInterval: 10000
 };
 </script>
@@ -461,6 +502,29 @@ window.DJ_CONFIG = {
       <button id="closePollDetailsModal" type="button">✕</button>
     </div>
     <div id="pollDetailsBody" style="padding:14px; overflow-y:auto; max-height:70vh;"></div>
+  </div>
+</div>
+
+<div id="manualMatchModal" class="support-modal hidden">
+  <div class="support-modal-content manual-match-modal-content">
+    <div class="mood-modal-header">
+      <h3>🎯 Admin Metadata Match</h3>
+      <button id="closeManualMatchModal" type="button">✕</button>
+    </div>
+    <div class="manual-match-body">
+      <div id="manualMatchTrackMeta" class="manual-match-track-meta"></div>
+      <div class="manual-match-search-row">
+        <input
+          id="manualMatchSearchInput"
+          type="text"
+          maxlength="180"
+          placeholder="Refine search title/artist..."
+        >
+        <button id="manualMatchSearchBtn" type="button" class="reply-btn secondary">Search</button>
+      </div>
+      <div id="manualMatchStatus" class="broadcast-status"></div>
+      <div id="manualMatchResults" class="manual-match-results"></div>
+    </div>
   </div>
 </div>
 

@@ -7,8 +7,11 @@ const DJ_CONFIG = window.DJ_CONFIG || {};
 const EVENT_ID  = DJ_CONFIG.eventId || null;
 const EVENT_UUID = DJ_CONFIG.eventUuid || null;
 const POLL_MS   = DJ_CONFIG.pollInterval || 10000
+const SPOTIFY_SYNC_MS = 30000;
 const TIPS_BOOST_VISIBLE = !!DJ_CONFIG.tipsBoostVisible;
 const POLLS_PREMIUM_ENABLED = !!DJ_CONFIG.pollsPremiumEnabled;
+const IS_ADMIN = !!DJ_CONFIG.isAdmin;
+const SPOTIFY_SYNC_ENABLED = !!DJ_CONFIG.spotifySyncEnabled;
 
 if (!EVENT_ID) {
   console.error("❌ EVENT_ID missing — DJ page cannot function");
@@ -22,6 +25,7 @@ let currentSort = "popularity";
 let activeTrackKey = null;
 let firstLoad = true;
 let searchQuery = "";
+let manualMatchTrack = null;
 
 
 /* ===============================
@@ -50,9 +54,11 @@ let messagePrimaryView = "chats"; // chats | broadcasts | polls
 let broadcastCache = [];
 let pollCache = [];
 let replyGuestToken = null;
+const replyGuestNameOverrides = new Map();
 const guestStatusOverrides = new Map(); // guest_token -> active|muted|blocked
 let messageFetchSeq = 0;
 let lastAppliedMessageFetchSeq = 0;
+let spotifySyncInFlight = false;
 
 
 // ===============================
@@ -130,6 +136,249 @@ function escapeHtml(str) {
     .replaceAll("'", "&#039;");
 }
 
+function normalizeTitle(title) {
+  return (title || "")
+    .toLowerCase()
+    .replace(/\s*\(.*?\)/g, "")  // remove "(Extended Mix)"
+    .replace(/\s*-.*$/g, "")     // remove "- Remix"
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildDjGroupKey(row) {
+  return `${normalizeTitle(row.song_title || "")}::${(row.artist || "").trim().toLowerCase()}`;
+}
+
+function groupDjRows(rows) {
+  const groups = new Map();
+
+  rows.forEach((row) => {
+    const key = buildDjGroupKey(row);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        rows: [],
+        song_title: row.song_title || "",
+        artist: row.artist || "",
+        album_art: row.album_art || "",
+        popularity: 0,
+        request_count: 0,
+        vote_count: 0,
+        boost_count: 0,
+        last_requested_at: row.last_requested_at || row.created_at || null,
+      });
+    }
+
+    const group = groups.get(key);
+    group.rows.push(row);
+    group.popularity += Number(row.popularity || 0);
+    group.request_count += Number(row.request_count || 0);
+    group.vote_count += Number(row.vote_count || 0);
+    group.boost_count += Number(row.boost_count || 0);
+
+    if (!group.album_art && row.album_art) {
+      group.album_art = row.album_art;
+    }
+
+    const groupTs = group.last_requested_at ? new Date(group.last_requested_at).getTime() : 0;
+    const rowTs = row.last_requested_at ? new Date(row.last_requested_at).getTime() : 0;
+    if (rowTs > groupTs) {
+      group.last_requested_at = row.last_requested_at;
+    }
+  });
+
+  const grouped = [];
+  groups.forEach((group) => {
+    const primary = [...group.rows].sort((a, b) => {
+      const popDelta = Number(b.popularity || 0) - Number(a.popularity || 0);
+      if (popDelta !== 0) return popDelta;
+      return new Date(b.last_requested_at || 0) - new Date(a.last_requested_at || 0);
+    })[0] || group.rows[0];
+
+    const allPlayed = group.rows.every((r) => r.track_status === "played");
+    const allSkipped = group.rows.every((r) => r.track_status === "skipped");
+    const anyPlayed = group.rows.some((r) => r.track_status === "played");
+    const anySkipped = group.rows.some((r) => r.track_status === "skipped");
+
+    const merged = {
+      ...primary,
+      song_title: group.song_title || primary.song_title,
+      artist: group.artist || primary.artist,
+      album_art: group.album_art || primary.album_art,
+      popularity: group.popularity,
+      request_count: group.request_count,
+      vote_count: group.vote_count,
+      boost_count: group.boost_count,
+      last_requested_at: group.last_requested_at || primary.last_requested_at,
+      requesters: group.rows.flatMap((r) => Array.isArray(r.requesters) ? r.requesters : []),
+      voters: group.rows.flatMap((r) => Array.isArray(r.voters) ? r.voters : []),
+      boosters: group.rows.flatMap((r) => Array.isArray(r.boosters) ? r.boosters : []),
+      track_status: allPlayed ? "played" : (allSkipped ? "skipped" : "active"),
+      group_has_played: anyPlayed,
+      group_has_skipped: anySkipped,
+      __group_rows: group.rows,
+    };
+
+    grouped.push(merged);
+  });
+
+  return grouped;
+}
+
+function getGroupTrackKeys(track) {
+  const groupRows = Array.isArray(track?.__group_rows) ? track.__group_rows : null;
+  if (groupRows && groupRows.length) {
+    return [...new Set(groupRows.map((r) => r.track_key).filter(Boolean))];
+  }
+  return track?.track_key ? [track.track_key] : [];
+}
+
+function findGroupedRowByTrackKey(trackKey) {
+  if (!trackKey) return null;
+  const grouped = groupDjRows(djRequestsCache);
+  return grouped.find((g) =>
+    g.track_key === trackKey ||
+    (Array.isArray(g.__group_rows) && g.__group_rows.some((r) => r.track_key === trackKey))
+  ) || null;
+}
+
+function formatManualMatchRow(row) {
+  const bpmVal = (row?.bpm !== null && row?.bpm !== undefined && row?.bpm !== '')
+    ? String(row.bpm)
+    : '—';
+  const keyVal = row?.key_text ? String(row.key_text).trim() : '—';
+  const yearVal = row?.year ? String(row.year) : '—';
+  return `${bpmVal} BPM • ${keyVal} • ${yearVal}`;
+}
+
+function closeManualMatchModal() {
+  const modal = document.getElementById("manualMatchModal");
+  if (modal) modal.classList.add("hidden");
+  manualMatchTrack = null;
+}
+
+async function loadManualMatchCandidates(track, query = "") {
+  const statusEl = document.getElementById("manualMatchStatus");
+  const resultsEl = document.getElementById("manualMatchResults");
+  if (!statusEl || !resultsEl) return;
+
+  statusEl.textContent = "Searching candidates...";
+  resultsEl.innerHTML = "";
+
+  const url = new URL("/api/dj/search_bpm_candidates.php", window.location.origin);
+  url.searchParams.set("event_uuid", EVENT_UUID || "");
+  url.searchParams.set("track_key", track.track_key || "");
+  if (query.trim() !== "") {
+    url.searchParams.set("q", query.trim());
+  }
+
+  try {
+    const res = await fetch(url.toString());
+    const data = await res.json();
+    if (!data.ok) {
+      throw new Error(data.error || "Search failed");
+    }
+
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    if (!rows.length) {
+      statusEl.textContent = "No candidates found.";
+      return;
+    }
+
+    statusEl.textContent = `${rows.length} candidates found`;
+    resultsEl.innerHTML = rows.map((row) => `
+      <div class="manual-match-item">
+        <div class="manual-match-item-main">
+          <div class="manual-match-title">${escapeHtml(row.title || "Unknown title")}</div>
+          <div class="manual-match-artist">${escapeHtml(row.artist || "Unknown artist")}</div>
+          <div class="manual-match-meta">${escapeHtml(formatManualMatchRow(row))}</div>
+          <div class="manual-match-score">Score: ${Number(row.match_score || 0).toFixed(2)}</div>
+        </div>
+        <button
+          type="button"
+          class="reply-btn primary manual-match-apply-btn"
+          data-bpm-id="${Number(row.id || 0)}"
+        >
+          Apply
+        </button>
+      </div>
+    `).join("");
+  } catch (err) {
+    statusEl.textContent = err.message || "Failed to search candidates.";
+  }
+}
+
+async function applyManualMatch(bpmTrackId) {
+  if (!manualMatchTrack) return;
+
+  const statusEl = document.getElementById("manualMatchStatus");
+  if (!statusEl) return;
+  statusEl.textContent = "Applying metadata match...";
+
+  try {
+    const body = new URLSearchParams({
+      event_uuid: EVENT_UUID || "",
+      track_key: manualMatchTrack.track_key || "",
+      spotify_track_id: manualMatchTrack.spotify_track_id || "",
+      bpm_track_id: String(Number(bpmTrackId || 0)),
+    });
+    const res = await fetch("/api/dj/apply_manual_bpm_match.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      throw new Error(data.error || "Failed to apply metadata");
+    }
+
+    const applied = data.applied || {};
+    djRequestsCache = djRequestsCache.map((r) => {
+      if (r.track_key !== manualMatchTrack.track_key) return r;
+      return {
+        ...r,
+        bpm: applied.bpm ?? r.bpm,
+        musical_key: applied.musical_key ?? r.musical_key,
+        release_year: applied.release_year ?? r.release_year,
+      };
+    });
+
+    renderDjRequests();
+    const updatedTrack = djRequestsCache.find((r) => r.track_key === manualMatchTrack.track_key);
+    if (updatedTrack && activeTrackKey === updatedTrack.track_key) {
+      loadTrackPanel(updatedTrack);
+    }
+
+    showToast("Metadata applied", "success");
+    closeManualMatchModal();
+  } catch (err) {
+    statusEl.textContent = err.message || "Failed to apply metadata.";
+  }
+}
+
+function openManualMatchModal(track) {
+  if (!IS_ADMIN) return;
+
+  const modal = document.getElementById("manualMatchModal");
+  const metaEl = document.getElementById("manualMatchTrackMeta");
+  const searchEl = document.getElementById("manualMatchSearchInput");
+  const statusEl = document.getElementById("manualMatchStatus");
+  const resultsEl = document.getElementById("manualMatchResults");
+  if (!modal || !metaEl || !searchEl || !statusEl || !resultsEl) return;
+
+  manualMatchTrack = track;
+  metaEl.innerHTML = `
+    <strong>${escapeHtml(track.song_title || "Unknown title")}</strong>
+    <span> · ${escapeHtml(track.artist || "Unknown artist")}</span>
+  `;
+  searchEl.value = "";
+  statusEl.textContent = "";
+  resultsEl.innerHTML = "";
+  modal.classList.remove("hidden");
+
+  loadManualMatchCandidates(track, "");
+}
+
 function formatThreadTime(ts) {
   if (!ts) return "";
   const d = new Date(ts.replace(" ", "T") + "Z");
@@ -148,24 +397,12 @@ function formatThreadTime(ts) {
 // ===============================
 function updateRequestTabCounts() {
   const counts = {
-    all: djRequestsCache.length,
-    active: 0,
-    played: 0,
-    skipped: 0,
-    boost: 0   // ✅ NEW
+    all: groupDjRows(djRequestsCache).length,
+    active: groupDjRows(djRequestsCache.filter((r) => r.track_status === "active")).length,
+    played: groupDjRows(djRequestsCache.filter((r) => r.track_status === "played")).length,
+    skipped: groupDjRows(djRequestsCache.filter((r) => r.track_status === "skipped")).length,
+    boost: groupDjRows(djRequestsCache.filter((r) => (r.boost_count || 0) > 0)).length
   };
-
-  djRequestsCache.forEach(r => {
-    // existing lifecycle counts
-    if (r.track_status && counts[r.track_status] !== undefined) {
-      counts[r.track_status]++;
-    }
-
-    // 🔥 BOOST count (any boost on this track)
-    if ((r.boost_count || 0) > 0) {
-      counts.boost++;
-    }
-  });
 
   document.querySelectorAll(".dj-tab").forEach(tab => {
     const status = tab.dataset.status;
@@ -595,6 +832,39 @@ case "unblock":
   setDjThreadOpen(false);
   switchMessagePrimaryView("chats");
 
+  if (IS_ADMIN) {
+    const manualMatchModal = document.getElementById("manualMatchModal");
+    const closeManualMatchBtn = document.getElementById("closeManualMatchModal");
+    const manualMatchSearchBtn = document.getElementById("manualMatchSearchBtn");
+    const manualMatchSearchInput = document.getElementById("manualMatchSearchInput");
+    const manualMatchResults = document.getElementById("manualMatchResults");
+
+    closeManualMatchBtn?.addEventListener("click", closeManualMatchModal);
+    manualMatchModal?.addEventListener("click", (e) => {
+      if (e.target === manualMatchModal) closeManualMatchModal();
+    });
+
+    manualMatchSearchBtn?.addEventListener("click", () => {
+      if (!manualMatchTrack) return;
+      loadManualMatchCandidates(manualMatchTrack, manualMatchSearchInput?.value || "");
+    });
+
+    manualMatchSearchInput?.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (!manualMatchTrack) return;
+      loadManualMatchCandidates(manualMatchTrack, manualMatchSearchInput.value || "");
+    });
+
+    manualMatchResults?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".manual-match-apply-btn");
+      if (!btn) return;
+      const bpmId = Number(btn.dataset.bpmId || 0);
+      if (!bpmId) return;
+      applyManualMatch(bpmId);
+    });
+  }
+
 });
 
 
@@ -664,12 +934,50 @@ document.addEventListener("DOMContentLoaded", () => {
      SEARCH INPUT
   ============================== */
   const searchInput = document.getElementById("djSearch");
+  let searchClearBtn = document.getElementById("djSearchClear");
+
+  // Backward-compatible: create clear button if older HTML is deployed.
+  if (searchInput && !searchClearBtn) {
+    const wrap = searchInput.closest(".dj-search-wrap") || searchInput.parentElement;
+    if (wrap) {
+      if (!wrap.classList.contains("dj-search-wrap")) {
+        wrap.classList.add("dj-search-wrap");
+      }
+      searchClearBtn = document.createElement("button");
+      searchClearBtn.id = "djSearchClear";
+      searchClearBtn.type = "button";
+      searchClearBtn.className = "dj-search-clear hidden";
+      searchClearBtn.setAttribute("aria-label", "Clear search");
+      searchClearBtn.textContent = "✕";
+      wrap.appendChild(searchClearBtn);
+    }
+  }
 
   if (searchInput) {
+    const syncSearchClear = () => {
+      if (!searchClearBtn) return;
+      const hasText = searchInput.value.trim().length > 0;
+      searchClearBtn.classList.toggle("hidden", !hasText);
+    };
+
     searchInput.addEventListener("input", e => {
       searchQuery = e.target.value.trim().toLowerCase();
       firstLoad = false;          // 👈 don’t auto-select first row while searching
+      syncSearchClear();
       renderDjRequests();
+    });
+
+    syncSearchClear();
+  }
+
+  if (searchInput && searchClearBtn) {
+    searchClearBtn.addEventListener("click", () => {
+      searchInput.value = "";
+      searchQuery = "";
+      firstLoad = false;
+      searchClearBtn.classList.add("hidden");
+      renderDjRequests();
+      searchInput.focus();
     });
   }
 
@@ -710,6 +1018,9 @@ if (requestStatusFilter !== "all") {
       );
     });
   }
+
+  // Group same songs (ignoring version text) before sort/render.
+  rows = groupDjRows(rows);
 
   /* SORT (existing) */
 
@@ -753,23 +1064,29 @@ switch (currentSort) {
   rows.forEach((row, index) => {
 const el = document.createElement("div");
 el.className = "request-row";
+const isPlayed = row.track_status === "played" || row.group_has_played === true;
+const isSkipped = row.track_status === "skipped" || row.group_has_skipped === true;
+const variants = Array.isArray(row.__group_rows) ? row.__group_rows : [];
+const expandable = variants.length > 1;
 
 // ✅ BOOSTED TRACK
 if ((row.boost_count || 0) > 0) {
   el.classList.add("boosted");
 }
     
-if (row.track_status === "played") {
+if (isPlayed) {
   el.classList.add("played");
 }
 
-if (row.track_status === "skipped") {
+if (isSkipped) {
   el.classList.add("skipped");
 }
 
 const trackKey = row.track_key;
 
-    if (trackKey === activeTrackKey) el.classList.add("active");
+    if (trackKey === activeTrackKey || (row.__group_rows || []).some((r) => r.track_key === activeTrackKey)) {
+      el.classList.add("active");
+    }
 
     el.innerHTML = `
       ${row.album_art ? `<img src="${row.album_art}" alt="">` : ``}
@@ -786,9 +1103,12 @@ const trackKey = row.track_key;
       
       
       
-<span class="req-count">
-${row.popularity}
+<span class="req-count-wrap">
+  ${isPlayed ? `<span class="request-played-pill">Played</span>` : ``}
+  ${isSkipped ? `<span class="request-skipped-pill">Skipped</span>` : ``}
+  <span class="req-count">${row.popularity}</span>
 </span>
+${expandable ? `<button type="button" class="request-expand-btn" aria-label="Show versions">+</button>` : ``}
       
       
     
@@ -801,7 +1121,63 @@ ${row.popularity}
       loadTrackPanel(row);
     };
 
+    if (IS_ADMIN) {
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        document.querySelectorAll(".request-row").forEach(r => r.classList.remove("active"));
+        el.classList.add("active");
+        activeTrackKey = trackKey;
+        loadTrackPanel(row);
+        openManualMatchModal(row);
+      });
+    }
+
     listEl.appendChild(el);
+
+    if (expandable) {
+      const variantsWrap = document.createElement("div");
+      variantsWrap.className = "request-variants hidden";
+
+      const sortedVariants = [...variants].sort((a, b) => {
+        const popDelta = Number(b.popularity || 0) - Number(a.popularity || 0);
+        if (popDelta !== 0) return popDelta;
+        return new Date(b.last_requested_at || 0) - new Date(a.last_requested_at || 0);
+      });
+
+      variantsWrap.innerHTML = sortedVariants.map((v) => `
+        <button type="button" class="request-variant-row" data-track-key="${escapeHtml(v.track_key || "")}">
+          <span class="request-variant-title">${escapeHtml(v.song_title || "")}</span>
+          <span class="request-variant-count">×${Number(v.popularity || 0)}</span>
+        </button>
+      `).join("");
+
+      variantsWrap.addEventListener("click", (e) => {
+        const btn = e.target.closest(".request-variant-row");
+        if (!btn) return;
+        const variantKey = btn.dataset.trackKey || "";
+        const selected = variants.find((v) => (v.track_key || "") === variantKey);
+        if (!selected) return;
+
+        document.querySelectorAll(".request-row").forEach(r => r.classList.remove("active"));
+        el.classList.add("active");
+        activeTrackKey = selected.track_key;
+        loadTrackPanel(selected);
+      });
+
+      const expandBtn = el.querySelector(".request-expand-btn");
+      if (expandBtn) {
+        expandBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const open = !variantsWrap.classList.contains("hidden");
+          variantsWrap.classList.toggle("hidden", open);
+          expandBtn.textContent = open ? "+" : "–";
+          el.classList.toggle("expanded", !open);
+        });
+      }
+
+      listEl.appendChild(variantsWrap);
+    }
 
     if (firstLoad && index === 0) {
       activeTrackKey = trackKey;
@@ -1031,34 +1407,27 @@ if (markPlayingBtn) {
   markPlayingBtn.onclick = async () => {
     try {
       const currentFilter = requestStatusFilter; // remember tab
+      const targetKeys = getGroupTrackKeys(track);
+      if (!targetKeys.length) return;
 
-      // 1️⃣ Mark played in DB (authoritative)
-      await fetch("/api/dj/mark_played.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          event_id: EVENT_ID,
-          track_key: track.track_key
-        })
-      });
+      for (const key of targetKeys) {
+        // 1️⃣ Mark played in DB (authoritative)
+        await fetch("/api/dj/mark_played.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            event_id: EVENT_ID,
+            track_key: key
+          })
+        });
 
-      // 2️⃣ Remove from Spotify playlist (fire & forget)
-        const isSpotifyTrack = /^[A-Za-z0-9]{22}$/.test(track.track_key);
-        
-        if (isSpotifyTrack) {
-          fetch("/api/dj/spotify/remove_track.php", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-              event_id: EVENT_ID,
-              spotify_track_id: track.track_key
-            })
-          }).catch(() => {});
-        }
+        // 2️⃣ Remove from Spotify playlist
+        await syncSpotifyTrackMutation(key, "remove");
+      }
 
       // 3️⃣ Update cache
       djRequestsCache.forEach(r => {
-        if (r.track_key === track.track_key) {
+        if (targetKeys.includes(r.track_key)) {
           r.track_status = "played";
         }
       });
@@ -1070,9 +1439,7 @@ if (markPlayingBtn) {
       renderDjRequests();
 
       // Reload panel
-      const updatedTrack = djRequestsCache.find(
-        r => r.track_key === track.track_key
-      );
+      const updatedTrack = findGroupedRowByTrackKey(activeTrackKey || track.track_key);
       if (updatedTrack) {
         loadTrackPanel(updatedTrack);
       }
@@ -1092,34 +1459,27 @@ if (markActiveBtn) {
   markActiveBtn.onclick = async () => {
     try {
       const currentFilter = requestStatusFilter; // remember tab
+      const targetKeys = getGroupTrackKeys(track);
+      if (!targetKeys.length) return;
 
-      // 1️⃣ Mark active in DB (authoritative)
-      await fetch("/api/dj/mark_active.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          event_id: EVENT_ID,
-          track_key: track.track_key
-        })
-      });
+      for (const key of targetKeys) {
+        // 1️⃣ Mark active in DB (authoritative)
+        await fetch("/api/dj/mark_active.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            event_id: EVENT_ID,
+            track_key: key
+          })
+        });
 
-      // 2️⃣ Re-add to Spotify playlist (ONLY if Spotify-backed)
-        const isSpotifyTrack = /^[A-Za-z0-9]{22}$/.test(track.track_key);
-        
-        if (isSpotifyTrack) {
-          fetch("/api/dj/spotify/add_track.php", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-              event_id: EVENT_ID,
-              spotify_track_id: track.track_key
-            })
-          }).catch(() => {});
-        }
+        // 2️⃣ Re-add to Spotify playlist (ONLY if Spotify-backed)
+        await syncSpotifyTrackMutation(key, "add");
+      }
 
       // 3️⃣ Update cache
       djRequestsCache.forEach(r => {
-        if (r.track_key === track.track_key) {
+        if (targetKeys.includes(r.track_key)) {
           r.track_status = "active";
         }
       });
@@ -1130,9 +1490,7 @@ if (markActiveBtn) {
       updateRequestTabCounts();
       renderDjRequests();
 
-      const updatedTrack = djRequestsCache.find(
-        r => r.track_key === track.track_key
-      );
+      const updatedTrack = findGroupedRowByTrackKey(activeTrackKey || track.track_key);
       if (updatedTrack) {
         loadTrackPanel(updatedTrack);
       }
@@ -1152,34 +1510,27 @@ const skipBtn = document.getElementById("skipBtn");
 if (skipBtn) {
   skipBtn.onclick = async () => {
     try {
+      const targetKeys = getGroupTrackKeys(track);
+      if (!targetKeys.length) return;
+
       // 1️⃣ Mark skipped in DB (authoritative)
-      await fetch("/api/dj/mark_skipped.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          event_id: EVENT_ID,
-          track_key: track.track_key
-        })
-      });
+      for (const key of targetKeys) {
+        await fetch("/api/dj/mark_skipped.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            event_id: EVENT_ID,
+            track_key: key
+          })
+        });
 
-      // 2️⃣ Remove from Spotify playlist (fire & forget)
-      // No await needed — skipping should never fail because Spotify did
-const isSpotifyTrack = /^[A-Za-z0-9]{22}$/.test(track.track_key);
-
-if (isSpotifyTrack) {
-  fetch("/api/dj/spotify/remove_track.php", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      event_id: EVENT_ID,
-      spotify_track_id: track.track_key
-    })
-  }).catch(() => {});
-}
+        // 2️⃣ Remove from Spotify playlist
+        await syncSpotifyTrackMutation(key, "remove");
+      }
 
       // 3️⃣ Optimistic UI update
       djRequestsCache.forEach(r => {
-        if (r.track_key === track.track_key) {
+        if (targetKeys.includes(r.track_key)) {
           r.track_status = "skipped";
         }
       });
@@ -1187,9 +1538,7 @@ if (isSpotifyTrack) {
       updateRequestTabCounts();
       renderDjRequests();
 
-      const updatedTrack = djRequestsCache.find(
-        r => r.track_key === track.track_key
-      );
+      const updatedTrack = findGroupedRowByTrackKey(activeTrackKey || track.track_key);
 
       if (updatedTrack) {
         loadTrackPanel(updatedTrack);
@@ -1280,7 +1629,8 @@ function updateReplyTargetLabel() {
   }
 
   const latest = messageCache.find(m => m.guest_token === replyGuestToken);
-  const name = latest?.patron_name || "Guest";
+  const overrideName = replyGuestNameOverrides.get(replyGuestToken) || "";
+  const name = latest?.patron_name || overrideName || "Guest";
   labelEl.textContent = `Reply target: ${name}`;
 }
 
@@ -1301,6 +1651,9 @@ function setDjThreadOpen(open) {
 function closeReplyThread() {
   const input = document.getElementById("djReplyText");
   if (input) input.value = "";
+  if (replyGuestToken) {
+    replyGuestNameOverrides.delete(replyGuestToken);
+  }
   replyGuestToken = null;
   activeGuestToken = null;
   filterByGuest = false;
@@ -1309,6 +1662,30 @@ function closeReplyThread() {
   updateReplyTargetLabel();
   showToast("Reply target cleared", "info");
   renderMessages();
+}
+
+async function startReplyToGuest(guestToken, patronName = "Guest") {
+  const token = String(guestToken || "").trim();
+  if (!token) return;
+
+  replyGuestToken = token;
+  activeGuestToken = token;
+  filterByGuest = true;
+  if (patronName && patronName !== "Guest") {
+    replyGuestNameOverrides.set(token, String(patronName));
+  }
+
+  switchMessagePrimaryView("chats");
+  setReplyBoxOpen(true);
+  setDjThreadOpen(true);
+  updateReplyTargetLabel();
+  await loadDjMessageThreadForGuest(token);
+
+  const input = document.getElementById("djReplyText");
+  if (input) input.focus();
+
+  document.getElementById('connectedPatronsModal')?.classList.add('hidden');
+  document.getElementById('topPatronsModal')?.classList.add('hidden');
 }
 
 function renderDjThread(rows) {
@@ -1904,6 +2281,82 @@ async function toggleEventState(eventId, currentState) {
   }
 }
 
+async function syncSpotifyPlaylist(manual = false) {
+  if (!SPOTIFY_SYNC_ENABLED || !EVENT_ID) return;
+  if (spotifySyncInFlight) return;
+
+  spotifySyncInFlight = true;
+  const syncBtn = document.getElementById("djSpotifySyncBtn");
+  const originalLabel = syncBtn ? syncBtn.textContent : "";
+
+  if (manual && syncBtn) {
+    syncBtn.disabled = true;
+    syncBtn.textContent = "Syncing...";
+  }
+
+  try {
+    const res = await fetch("/api/dj/spotify/sync_event_playlist.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ event_id: String(EVENT_ID) })
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      throw new Error(data.error || "Spotify sync failed");
+    }
+
+    if (manual) {
+      showToast(
+        `Spotify synced (added ${Number(data.added || 0)}, removed ${Number(data.removed || 0)})`,
+        "success"
+      );
+    }
+  } catch (err) {
+    if (manual) {
+      showToast(err?.message || "Spotify sync failed", "error");
+    }
+  } finally {
+    spotifySyncInFlight = false;
+    if (manual && syncBtn) {
+      syncBtn.disabled = false;
+      syncBtn.textContent = originalLabel || "🔄 Sync Spotify";
+    }
+  }
+}
+
+function isSpotifyTrackKey(trackKey) {
+  return /^[A-Za-z0-9]{22}$/.test(String(trackKey || ""));
+}
+
+async function syncSpotifyTrackMutation(trackKey, mode) {
+  if (!isSpotifyTrackKey(trackKey) || !EVENT_ID) return;
+
+  const endpoint = mode === "add"
+    ? "/api/dj/spotify/add_track.php"
+    : "/api/dj/spotify/remove_track.php";
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      event_id: String(EVENT_ID),
+      spotify_track_id: String(trackKey)
+    })
+  });
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+
+  if (!res.ok || !data?.ok) {
+    await syncSpotifyPlaylist(false);
+    throw new Error(data?.error || "Spotify update failed");
+  }
+}
+
 /* =========================================
    SORT CONTROLS
 ========================================= */
@@ -1927,7 +2380,8 @@ function renderConnectedPatronsList(items) {
   }
 
   listEl.innerHTML = items.map((item, idx) => {
-    const label = escapeHtml(item.patron_name || 'Guest');
+    const rawName = String(item.patron_name || 'Guest');
+    const label = escapeHtml(rawName);
     const token = String(item.guest_token || '');
     const shortToken = token ? token.slice(0, 8) + '...' : '—';
     const seen = item.last_seen_at ? formatThreadTime(item.last_seen_at) : '—';
@@ -1939,7 +2393,10 @@ function renderConnectedPatronsList(items) {
           <div class="top-patron-name">${label}</div>
           <div class="top-patron-meta">Token: ${escapeHtml(shortToken)}</div>
         </div>
-        <div class="top-patron-total">${seen}</div>
+        <div class="top-patron-right">
+          <button type="button" class="top-patron-message-btn" data-guest-token="${escapeHtml(token)}" data-patron-name="${escapeHtml(rawName)}" title="Send direct message">Message</button>
+          <div class="top-patron-total">${seen}</div>
+        </div>
       </div>
       <div class="top-patron-divider"></div>
     `;
@@ -2182,6 +2639,14 @@ if (POLLS_PREMIUM_ENABLED) {
 setInterval(loadDjInsights, POLL_MS);
 setInterval(loadDjMood, 15000);
 
+if (SPOTIFY_SYNC_ENABLED) {
+  setInterval(() => {
+    if (window.DJ_CONFIG?.eventState !== "live") return;
+    if (document.visibilityState !== "visible") return;
+    syncSpotifyPlaylist(false);
+  }, SPOTIFY_SYNC_MS);
+}
+
 
 /* ===============================
    MOOD MODAL — SPLIT RENDER
@@ -2392,6 +2857,18 @@ document.addEventListener('click', (e) => {
   /* 🏆 TOP PATRONS TILE */
   if (e.target.closest('#djTopPatronsTile')) {
     document.getElementById('topPatronsModal')?.classList.remove('hidden');
+    return;
+  }
+
+  const connectedMessageBtn = e.target.closest('.top-patron-message-btn');
+  if (connectedMessageBtn) {
+    const token = String(connectedMessageBtn.dataset.guestToken || '');
+    const name = String(connectedMessageBtn.dataset.patronName || 'Guest');
+    if (!token) {
+      showToast('Unable to open chat for this patron.', 'error');
+      return;
+    }
+    startReplyToGuest(token, name);
     return;
   }
 

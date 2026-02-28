@@ -2,16 +2,6 @@
 declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
-
-
-echo json_encode([
-  'ok' => false,
-  'error' => 'Auto sync disabled (Model B)'
-]);
-exit;
-
-
-
 // Never leak PHP warnings into JSON
 ini_set('display_errors', '0');
 error_reporting(E_ALL);

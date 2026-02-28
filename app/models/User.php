@@ -42,6 +42,7 @@ public function create(
             country_code,
             city,
             subscription,
+            subscription_status,
             trial_ends_at
         ) VALUES (
             :uuid,
@@ -51,7 +52,8 @@ public function create(
             :dj_name,
             :country_code,
             :city,
-            "free",
+            "trial",
+            "trial",
             :trial_ends_at
         )
     ');

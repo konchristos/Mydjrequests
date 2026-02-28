@@ -523,6 +523,51 @@ require __DIR__ . '/layout.php';
     object-fit: contain;
     display: block;
 }
+.poster-editor-tiles {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+.poster-editor-tile {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 10px;
+    border: 1px solid #2b2d3b;
+    border-radius: 8px;
+    background: #13141d;
+    cursor: grab;
+    user-select: none;
+}
+.poster-editor-tile label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #d8dbe8;
+    font-size: 13px;
+    font-weight: 600;
+}
+.poster-editor-tile .drag-handle {
+    color: #a7adbe;
+    font-size: 14px;
+}
+.poster-editor-tile.dragging {
+    opacity: 0.55;
+    border-color: #ff2fd2;
+}
+.poster-studio-layout {
+    display: grid;
+    grid-template-columns: minmax(260px, 320px) minmax(280px, 1fr);
+    gap: 14px;
+    align-items: start;
+}
+.poster-studio-controls {
+    min-width: 0;
+}
+@media (max-width: 720px) {
+    .poster-studio-layout { grid-template-columns: 1fr; }
+}
 #premium-qr-style .qr-tab-pane {
     gap: 14px !important;
     margin-top: 4px;
@@ -918,7 +963,17 @@ require __DIR__ . '/layout.php';
                     </div>
 
                     <div class="preview-tab-pane" data-preview-pane="poster" style="display:none;">
-                        <div style="display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:10px;margin-bottom:10px;">
+                        <?php
+                            $posterFieldOrderRaw = (string)($globalQrSettings['poster_field_order'] ?? 'dj_name,event_name,location,date');
+                            $posterOrderParts = mdjr_parse_poster_field_order($posterFieldOrderRaw);
+                            $posterOrderIndex = array_flip($posterOrderParts);
+                            $posterOrderEventName = (int)(($posterOrderIndex['event_name'] ?? 1) + 1);
+                            $posterOrderLocation = (int)(($posterOrderIndex['location'] ?? 2) + 1);
+                            $posterOrderDate = (int)(($posterOrderIndex['date'] ?? 3) + 1);
+                            $posterOrderDjName = (int)(($posterOrderIndex['dj_name'] ?? 0) + 1);
+                            $posterBgPathVal = trim((string)($globalQrSettings['poster_bg_path'] ?? ''));
+                        ?>
+                        <div style="display:grid;grid-template-columns:repeat(2,minmax(180px,1fr));gap:10px;margin-bottom:12px;">
                             <label style="display:flex;flex-direction:column;gap:6px;">
                                 <span style="font-size:12px;color:#aaa;">Poster QR Size (render px, 600-1800)</span>
                                 <input id="poster_image_size_proxy" type="number" min="600" max="1800" class="settings-input" value="<?php echo (int)($globalQrSettings['poster_image_size'] ?? 900); ?>">
@@ -931,33 +986,91 @@ require __DIR__ . '/layout.php';
                                 Poster QR Size sets output resolution used in A4 poster export (allowed <code>600-1800</code>, recommended <code>900-1200</code>). Poster QR Fill Scale controls how much poster width the QR occupies (allowed <code>30-75%</code>, recommended <code>45-55%</code>).
                             </div>
                         </div>
-                        <div style="padding:8px;border:1px solid #2a2a3a;border-radius:10px;background:#10111a;display:inline-block;">
-                            <?php if ($previewHasLiveEvent && $previewEventUuid !== ''): ?>
-                                <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">A4 Poster LIVE Preview (actual output)</div>
-                                <div class="poster-live-preview-frame">
-                                    <div id="posterLivePreviewLoader" class="qr-preview-loader" aria-hidden="true">
-                                        <div class="qr-preview-spinner"></div>
+
+                        <div class="poster-studio-layout">
+                            <div style="padding:8px;border:1px solid #2a2a3a;border-radius:10px;background:#10111a;display:inline-block;">
+                                <?php if ($previewHasLiveEvent && $previewEventUuid !== ''): ?>
+                                    <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">A4 Poster LIVE Preview (actual output)</div>
+                                    <div class="poster-live-preview-frame">
+                                        <div id="posterLivePreviewLoader" class="qr-preview-loader" aria-hidden="true">
+                                            <div class="qr-preview-spinner"></div>
+                                        </div>
+                                        <img
+                                            id="posterLivePreviewImg"
+                                            src="<?php echo e(url('qr_poster.php?uuid=' . urlencode($previewEventUuid) . '&t=' . time())); ?>"
+                                            alt="Live A4 poster preview"
+                                            loading="lazy"
+                                        >
                                     </div>
-                                    <img
-                                        id="posterLivePreviewImg"
-                                        src="<?php echo e(url('qr_poster.php?uuid=' . urlencode($previewEventUuid) . '&t=' . time())); ?>"
-                                        alt="Live A4 poster preview"
-                                        loading="lazy"
-                                    >
+                                    <div class="settings-help" style="margin-top:6px;max-width:320px;">
+                                        Showing actual poster output for your current LIVE event.
+                                    </div>
+                                <?php else: ?>
+                                    <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">A4 Poster QR Fill Preview</div>
+                                    <div style="width:120px;height:170px;border-radius:6px;background:#fff;border:1px solid #cfd3df;position:relative;overflow:hidden;">
+                                        <div id="posterSizePreviewBox" style="position:absolute;left:50%;top:38px;transform:translateX(-50%);width:48%;aspect-ratio:1/1;border-radius:4px;background:#dedede;border:1px solid #999;"></div>
+                                    </div>
+                                    <div class="settings-help" style="margin-top:6px;max-width:320px;">
+                                        No LIVE event right now, so showing fallback poster fill preview.
+                                    </div>
+                                <?php endif; ?>
+                                <div id="posterSizePreviewMeta" style="font-size:10px;color:#9ba2b3;margin-top:6px;">Render 900px, Fill 48%</div>
+                            </div>
+
+                            <div class="poster-studio-controls">
+                                <div style="font-size:12px;color:#aaa;margin-bottom:6px;">Poster Details (drag tiles to reorder, check to show)</div>
+                                <div id="posterEditorTiles" class="poster-editor-tiles">
+                                    <div class="poster-editor-tile" data-field="event_name" draggable="true">
+                                        <label>
+                                            <input type="checkbox" name="poster_show_event_name" value="1" <?php echo !isset($globalQrSettings['poster_show_event_name']) || !empty($globalQrSettings['poster_show_event_name']) ? 'checked' : ''; ?>>
+                                            Event Name
+                                        </label>
+                                        <span class="drag-handle" title="Drag to reorder">↕</span>
+                                    </div>
+                                    <div class="poster-editor-tile" data-field="location" draggable="true">
+                                        <label>
+                                            <input type="checkbox" name="poster_show_location" value="1" <?php echo !isset($globalQrSettings['poster_show_location']) || !empty($globalQrSettings['poster_show_location']) ? 'checked' : ''; ?>>
+                                            Location
+                                        </label>
+                                        <span class="drag-handle" title="Drag to reorder">↕</span>
+                                    </div>
+                                    <div class="poster-editor-tile" data-field="date" draggable="true">
+                                        <label>
+                                            <input type="checkbox" name="poster_show_date" value="1" <?php echo !isset($globalQrSettings['poster_show_date']) || !empty($globalQrSettings['poster_show_date']) ? 'checked' : ''; ?>>
+                                            Date
+                                        </label>
+                                        <span class="drag-handle" title="Drag to reorder">↕</span>
+                                    </div>
+                                    <div class="poster-editor-tile" data-field="dj_name" draggable="true">
+                                        <label>
+                                            <input type="checkbox" name="poster_show_dj_name" value="1" <?php echo !isset($globalQrSettings['poster_show_dj_name']) || !empty($globalQrSettings['poster_show_dj_name']) ? 'checked' : ''; ?>>
+                                            DJ Name
+                                        </label>
+                                        <span class="drag-handle" title="Drag to reorder">↕</span>
+                                    </div>
                                 </div>
-                                <div class="settings-help" style="margin-top:6px;max-width:280px;">
-                                    Showing actual poster output for your current LIVE event.
+                                <input type="hidden" name="poster_order_event_name" value="<?php echo $posterOrderEventName; ?>">
+                                <input type="hidden" name="poster_order_location" value="<?php echo $posterOrderLocation; ?>">
+                                <input type="hidden" name="poster_order_date" value="<?php echo $posterOrderDate; ?>">
+                                <input type="hidden" name="poster_order_dj_name" value="<?php echo $posterOrderDjName; ?>">
+
+                                <label style="display:flex;flex-direction:column;gap:6px;margin-top:10px;">
+                                    <span style="font-size:12px;color:#aaa;">Poster Background Image (PNG/JPG/WEBP, max 5MB)</span>
+                                    <input name="poster_bg_image" type="file" accept="image/png,image/jpeg,image/webp" class="settings-input">
+                                    <?php if ($posterBgPathVal !== ''): ?>
+                                        <span style="font-size:12px;color:#8f95a3;">Current background: <code><?php echo e(basename($posterBgPathVal)); ?></code></span>
+                                    <?php else: ?>
+                                        <span style="font-size:12px;color:#8f95a3;">No background image uploaded.</span>
+                                    <?php endif; ?>
+                                </label>
+                                <label style="display:flex;align-items:center;gap:8px;color:#ddd;margin-top:8px;">
+                                    <input type="checkbox" name="poster_bg_remove" value="1">
+                                    Remove poster background image
+                                </label>
+                                <div style="font-size:12px;color:#8f95a3;line-height:1.4;margin-top:8px;">
+                                    Premium poster editor: you can hide/show Event Name, Location, Date, DJ Name and set their display order. MyDJRequests logo, QR code, SCAN ME, and footer branding remain fixed.
                                 </div>
-                            <?php else: ?>
-                                <div style="font-size:11px;color:#aeb4c3;margin-bottom:6px;">A4 Poster QR Fill Preview</div>
-                                <div style="width:120px;height:170px;border-radius:6px;background:#fff;border:1px solid #cfd3df;position:relative;overflow:hidden;">
-                                    <div id="posterSizePreviewBox" style="position:absolute;left:50%;top:38px;transform:translateX(-50%);width:48%;aspect-ratio:1/1;border-radius:4px;background:#dedede;border:1px solid #999;"></div>
-                                </div>
-                                <div class="settings-help" style="margin-top:6px;max-width:260px;">
-                                    No LIVE event right now, so showing fallback poster fill preview.
-                                </div>
-                            <?php endif; ?>
-                            <div id="posterSizePreviewMeta" style="font-size:10px;color:#9ba2b3;margin-top:6px;">Render 900px, Fill 48%</div>
+                            </div>
                         </div>
                     </div>
                 <?php else: ?>
@@ -1226,6 +1339,7 @@ require __DIR__ . '/layout.php';
     const posterScaleProxy = document.getElementById('poster_qr_scale_pct_proxy');
     const posterLivePreviewImg = document.getElementById('posterLivePreviewImg');
     const posterLivePreviewLoader = document.getElementById('posterLivePreviewLoader');
+    const posterEditorTiles = document.getElementById('posterEditorTiles');
     const qrPresetSlot = document.getElementById('qrPresetSlot');
     const saveQrPresetBtn = document.getElementById('saveQrPresetBtn');
     const loadQrPresetBtn = document.getElementById('loadQrPresetBtn');
@@ -1233,6 +1347,73 @@ require __DIR__ . '/layout.php';
     if (!form || !statusEl || !saveBtn) return;
 
     let isContrastBlocked = false;
+    let posterDraggingTile = null;
+
+    function getPosterOrderInputName(fieldKey) {
+        if (fieldKey === 'event_name') return 'poster_order_event_name';
+        if (fieldKey === 'location') return 'poster_order_location';
+        if (fieldKey === 'date') return 'poster_order_date';
+        if (fieldKey === 'dj_name') return 'poster_order_dj_name';
+        return '';
+    }
+
+    function syncPosterOrderInputsFromTiles() {
+        if (!posterEditorTiles) return;
+        const tiles = Array.from(posterEditorTiles.querySelectorAll('.poster-editor-tile'));
+        tiles.forEach((tile, idx) => {
+            const fieldKey = tile.getAttribute('data-field') || '';
+            const inputName = getPosterOrderInputName(fieldKey);
+            if (!inputName) return;
+            const input = form.querySelector('input[name="' + inputName + '"]');
+            if (input) input.value = String(idx + 1);
+        });
+    }
+
+    function reorderPosterTilesByInputs() {
+        if (!posterEditorTiles) return;
+        const tiles = Array.from(posterEditorTiles.querySelectorAll('.poster-editor-tile'));
+        if (!tiles.length) return;
+        tiles.sort((a, b) => {
+            const aInputName = getPosterOrderInputName(a.getAttribute('data-field') || '');
+            const bInputName = getPosterOrderInputName(b.getAttribute('data-field') || '');
+            const aVal = parseInt(form.querySelector('input[name="' + aInputName + '"]')?.value || '99', 10);
+            const bVal = parseInt(form.querySelector('input[name="' + bInputName + '"]')?.value || '99', 10);
+            return aVal - bVal;
+        });
+        tiles.forEach((tile) => posterEditorTiles.appendChild(tile));
+        syncPosterOrderInputsFromTiles();
+    }
+
+    function initPosterTileDnD() {
+        if (!posterEditorTiles) return;
+        const tiles = Array.from(posterEditorTiles.querySelectorAll('.poster-editor-tile'));
+        tiles.forEach((tile) => {
+            tile.addEventListener('dragstart', () => {
+                posterDraggingTile = tile;
+                tile.classList.add('dragging');
+            });
+            tile.addEventListener('dragend', () => {
+                tile.classList.remove('dragging');
+                posterDraggingTile = null;
+                syncPosterOrderInputsFromTiles();
+                updatePreview();
+            });
+            tile.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (!posterDraggingTile || posterDraggingTile === tile) return;
+                const rect = tile.getBoundingClientRect();
+                const insertAfter = (e.clientY - rect.top) > (rect.height / 2);
+                if (insertAfter) {
+                    posterEditorTiles.insertBefore(posterDraggingTile, tile.nextSibling);
+                } else {
+                    posterEditorTiles.insertBefore(posterDraggingTile, tile);
+                }
+            });
+            tile.addEventListener('drop', (e) => {
+                e.preventDefault();
+            });
+        });
+    }
 
     function hexToRgb(hex) {
         const raw = String(hex || '').replace('#', '').trim();
@@ -1485,11 +1666,34 @@ require __DIR__ . '/layout.php';
 
     function applySavedPreset(preset) {
         if (!preset || typeof preset !== 'object') return;
+        const applyPosterOrder = (rawOrder) => {
+            const allowed = ['dj_name', 'event_name', 'location', 'date'];
+            const order = String(rawOrder || '').toLowerCase().split(',').map((v) => v.trim()).filter((v) => allowed.includes(v));
+            const normalized = [];
+            order.forEach((key) => {
+                if (!normalized.includes(key)) normalized.push(key);
+            });
+            allowed.forEach((key) => {
+                if (!normalized.includes(key)) normalized.push(key);
+            });
+            const setOrder = (name, key) => {
+                const el = form.querySelector('input[name="' + name + '"]');
+                if (!el) return;
+                const idx = normalized.indexOf(key);
+                el.value = idx >= 0 ? String(idx + 1) : '1';
+            };
+            setOrder('poster_order_event_name', 'event_name');
+            setOrder('poster_order_location', 'location');
+            setOrder('poster_order_date', 'date');
+            setOrder('poster_order_dj_name', 'dj_name');
+            reorderPosterTilesByInputs();
+        };
         const set = (selector, value) => {
             const el = form.querySelector(selector);
             if (!el || value === undefined || value === null) return;
             if (el.type === 'checkbox') {
-                el.checked = !!value;
+                const boolValue = (value === true || value === 1 || value === '1' || value === 'true');
+                el.checked = boolValue;
             } else {
                 el.value = String(value);
             }
@@ -1510,14 +1714,19 @@ require __DIR__ . '/layout.php';
         set('input[name="mobile_image_size"]', preset.mobile_image_size);
         set('input[name="obs_qr_scale_pct"]', preset.obs_qr_scale_pct);
         set('input[name="poster_qr_scale_pct"]', preset.poster_qr_scale_pct);
-        set('input[name="animated_overlay"]', !!preset.animated_overlay);
+        set('input[name="animated_overlay"]', preset.animated_overlay);
+        set('input[name="poster_show_event_name"]', preset.poster_show_event_name);
+        set('input[name="poster_show_location"]', preset.poster_show_location);
+        set('input[name="poster_show_date"]', preset.poster_show_date);
+        set('input[name="poster_show_dj_name"]', preset.poster_show_dj_name);
+        applyPosterOrder(preset.poster_field_order || '');
         syncGradientVisibility();
         syncOutputSizePreviews();
         updatePreview();
     }
 
     let previewTimer = null;
-    form.querySelectorAll('input[name="foreground_color"], input[name="background_color"], input[name="logo_scale_pct"], input[name="image_size"], input[name="obs_image_size"], input[name="poster_image_size"], input[name="mobile_image_size"], input[name="obs_qr_scale_pct"], input[name="poster_qr_scale_pct"], input[name="gradient_start"], input[name="gradient_end"], input[name="gradient_angle"], select[name="dot_style"], select[name="eye_outer_style"], select[name="eye_inner_style"], select[name="fill_mode"]').forEach((el) => {
+    form.querySelectorAll('input[name="foreground_color"], input[name="background_color"], input[name="logo_scale_pct"], input[name="image_size"], input[name="obs_image_size"], input[name="poster_image_size"], input[name="mobile_image_size"], input[name="obs_qr_scale_pct"], input[name="poster_qr_scale_pct"], input[name="gradient_start"], input[name="gradient_end"], input[name="gradient_angle"], input[name="poster_show_event_name"], input[name="poster_show_location"], input[name="poster_show_date"], input[name="poster_show_dj_name"], input[name="poster_order_event_name"], input[name="poster_order_location"], input[name="poster_order_date"], input[name="poster_order_dj_name"], select[name="dot_style"], select[name="eye_outer_style"], select[name="eye_inner_style"], select[name="fill_mode"]').forEach((el) => {
         const handler = () => {
             clearTimeout(previewTimer);
             previewTimer = setTimeout(updatePreview, 180);
@@ -1544,6 +1753,8 @@ require __DIR__ . '/layout.php';
         });
     });
     setActiveTab('style');
+    initPosterTileDnD();
+    reorderPosterTilesByInputs();
     if (previewTabButtons.length) {
         previewTabButtons[0].click();
     }
@@ -1574,6 +1785,7 @@ require __DIR__ . '/layout.php';
 
     if (saveQrPresetBtn && qrPresetSlot) {
         saveQrPresetBtn.addEventListener('click', async () => {
+            syncPosterOrderInputsFromTiles();
             const fd = new FormData(form);
             fd.set('action', 'save');
             fd.set('slot', qrPresetSlot.value || '1');
@@ -1625,6 +1837,7 @@ require __DIR__ . '/layout.php';
         statusEl.textContent = 'Saving global style...';
 
         try {
+            syncPosterOrderInputsFromTiles();
             const fd = new FormData(form);
             const res = await fetch('/dj/api/premium_qr_global_settings_save.php', {
                 method: 'POST',
@@ -1638,6 +1851,8 @@ require __DIR__ . '/layout.php';
                 const logoInput = form.querySelector('input[name="logo"]');
                 if (logoInput) logoInput.value = '';
             }
+            const posterBgRemove = form.querySelector('input[name="poster_bg_remove"]');
+            if (posterBgRemove) posterBgRemove.checked = false;
 
             statusEl.textContent = 'Global QR style saved.';
             updatePreview();
@@ -1673,6 +1888,23 @@ require __DIR__ . '/layout.php';
                 form.querySelector('input[name="mobile_image_size"]').value = '480';
                 form.querySelector('input[name="obs_qr_scale_pct"]').value = '100';
                 form.querySelector('input[name="poster_qr_scale_pct"]').value = '48';
+                const posterShowEventName = form.querySelector('input[name="poster_show_event_name"]');
+                const posterShowLocation = form.querySelector('input[name="poster_show_location"]');
+                const posterShowDate = form.querySelector('input[name="poster_show_date"]');
+                const posterShowDjName = form.querySelector('input[name="poster_show_dj_name"]');
+                if (posterShowEventName) posterShowEventName.checked = true;
+                if (posterShowLocation) posterShowLocation.checked = true;
+                if (posterShowDate) posterShowDate.checked = true;
+                if (posterShowDjName) posterShowDjName.checked = true;
+                const posterOrderEventName = form.querySelector('input[name="poster_order_event_name"]');
+                const posterOrderLocation = form.querySelector('input[name="poster_order_location"]');
+                const posterOrderDate = form.querySelector('input[name="poster_order_date"]');
+                const posterOrderDjName = form.querySelector('input[name="poster_order_dj_name"]');
+                if (posterOrderEventName) posterOrderEventName.value = '2';
+                if (posterOrderLocation) posterOrderLocation.value = '3';
+                if (posterOrderDate) posterOrderDate.value = '4';
+                if (posterOrderDjName) posterOrderDjName.value = '1';
+                reorderPosterTilesByInputs();
                 form.querySelector('select[name="dot_style"]').value = 'square';
                 form.querySelector('select[name="eye_outer_style"]').value = 'square';
                 form.querySelector('select[name="eye_inner_style"]').value = 'square';
@@ -1684,8 +1916,12 @@ require __DIR__ . '/layout.php';
                 if (animatedOverlay) animatedOverlay.checked = false;
                 const removeLogo = form.querySelector('input[name="remove_logo"]');
                 if (removeLogo) removeLogo.checked = false;
+                const removePosterBg = form.querySelector('input[name="poster_bg_remove"]');
+                if (removePosterBg) removePosterBg.checked = false;
                 const logoInput = form.querySelector('input[name="logo"]');
                 if (logoInput) logoInput.value = '';
+                const posterBgInput = form.querySelector('input[name="poster_bg_image"]');
+                if (posterBgInput) posterBgInput.value = '';
                 syncGradientVisibility();
                 syncOutputSizePreviews();
                 setActiveTab('style');

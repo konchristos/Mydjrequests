@@ -151,17 +151,68 @@ function require_dj_login(): void
         exit;
     }
 
+    // Admins should never be blocked by subscription gating.
+    if (!empty($user['is_admin'])) {
+        return;
+    }
+
     $configPath = APP_ROOT . '/app/config/subscriptions.php';
     $config = file_exists($configPath) ? require $configPath : [];
     $currentPath = current_path();
 
-    // ✅ Auto-renew free access using subscriptions table
-    if (!empty($config['auto_renew_trial'])) {
+    $isAlphaOpenAccess = false;
+    try {
+        $isAlphaOpenAccess = mdjr_is_alpha_open_access(db());
+    } catch (Throwable $e) {
+        $isAlphaOpenAccess = false;
+    }
+
+    // During alpha, keep trial refreshed for frictionless testing.
+    if ($isAlphaOpenAccess && !empty($config['auto_renew_trial'])) {
         $autoDays = (int)($config['auto_renew_days'] ?? 30);
         $autoDays = $autoDays > 0 ? $autoDays : 30;
 
         $subscriptionModel = new Subscription();
         $subscriptionModel->ensureFreeActive($userId, $autoDays);
+    }
+
+    // After alpha closes, block non-subscribed users from product pages.
+    if (!$isAlphaOpenAccess) {
+        $allowedPaths = [
+            '/account/index.php',
+            '/account/subscription_locked.php',
+            '/account/update_email.php',
+            '/account/change_password.php',
+            '/account/recovery_codes.php',
+            '/account/revoke_device.php',
+            '/account/revoke_all_devices.php',
+            '/dj/logout.php',
+            '/dj/terms.php',
+        ];
+
+        $isApiPath = (strpos($currentPath, '/api/') === 0) || (strpos($currentPath, '/dj/api/') === 0);
+        $hasPlatformAccess = false;
+        try {
+            $hasPlatformAccess = mdjr_user_has_platform_access(db(), $userId);
+        } catch (Throwable $e) {
+            $hasPlatformAccess = false;
+        }
+
+        if (!$hasPlatformAccess && !$isApiPath && !in_array($currentPath, $allowedPaths, true)) {
+            header('Location: /account/subscription_locked.php');
+            exit;
+        }
+
+        if (!$hasPlatformAccess && $isApiPath) {
+            http_response_code(402);
+            header('Content-Type: application/json');
+            echo json_encode([
+                'ok' => false,
+                'error' => 'Active trial or subscription required.',
+                'code' => 'SUBSCRIPTION_REQUIRED',
+            ]);
+            exit;
+        }
     }
 
     // ✅ Terms acceptance gate (optional)

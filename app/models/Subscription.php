@@ -20,10 +20,10 @@ class Subscription extends BaseModel
 
     public function createFree(int $userId, int $days): void
     {
-        // Anchor renews_at to user registration date (same day next month)
+        // Anchor trial renewal to user registration date (same day next month)
         $stmt = $this->db->prepare("
             INSERT INTO subscriptions (user_id, plan, status, renews_at, created_at)
-            SELECT id, 'free', 'active', DATE_ADD(created_at, INTERVAL 1 MONTH), UTC_TIMESTAMP()
+            SELECT id, 'trial', 'active', DATE_ADD(created_at, INTERVAL 1 MONTH), UTC_TIMESTAMP()
             FROM users
             WHERE id = :uid
         ");
@@ -37,7 +37,7 @@ class Subscription extends BaseModel
         $stmt = $this->db->prepare("
             UPDATE subscriptions
             SET
-                plan = 'free',
+                plan = 'trial',
                 status = 'active',
                 renews_at = DATE_ADD(:renews_at, INTERVAL 1 MONTH)
             WHERE id = :id
@@ -61,9 +61,9 @@ class Subscription extends BaseModel
         $status = strtolower((string)($row['status'] ?? ''));
         $isActive = ($status === 'active');
 
-        if (empty($renewsAt) || !$isActive || ($row['plan'] ?? '') !== 'free') {
+        if (empty($renewsAt) || !$isActive || ($row['plan'] ?? '') !== 'trial') {
             // If renews_at missing or inactive, reset to next month from NOW as fallback
-            $this->db->prepare("UPDATE subscriptions SET renews_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 MONTH), status='active', plan='free' WHERE id = ?")
+            $this->db->prepare("UPDATE subscriptions SET renews_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 MONTH), status='active', plan='trial' WHERE id = ?")
                 ->execute([(int)$row['id']]);
             return;
         }
@@ -80,7 +80,7 @@ class Subscription extends BaseModel
 
             $stmt = $this->db->prepare("
                 UPDATE subscriptions
-                SET renews_at = :renews_at, status = 'active', plan = 'free'
+                SET renews_at = :renews_at, status = 'active', plan = 'trial'
                 WHERE id = :id
             ");
             $stmt->execute([

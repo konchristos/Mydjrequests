@@ -1,5 +1,22 @@
 <?php
 
+function mdjr_get_app_setting(PDO $db, string $key, string $default = '0'): string
+{
+    try {
+        $stmt = $db->prepare("SELECT `value` FROM app_settings WHERE `key` = :k LIMIT 1");
+        $stmt->execute(['k' => $key]);
+        $val = $stmt->fetchColumn();
+        return $val === false ? $default : (string)$val;
+    } catch (Throwable $e) {
+        return $default;
+    }
+}
+
+function mdjr_is_alpha_open_access(PDO $db): bool
+{
+    return mdjr_get_app_setting($db, 'alpha_open_access', '0') === '1';
+}
+
 function mdjr_get_user_plan_base(PDO $db, int $userId): string
 {
     if ($userId <= 0) {
@@ -16,6 +33,9 @@ function mdjr_get_user_plan_base(PDO $db, int $userId): string
         ');
         $stmt->execute(['uid' => $userId]);
         $plan = strtolower((string)($stmt->fetchColumn() ?: ''));
+        if ($plan === 'free') {
+            $plan = 'trial';
+        }
         if ($plan !== '') {
             return $plan;
         }
@@ -27,6 +47,9 @@ function mdjr_get_user_plan_base(PDO $db, int $userId): string
         $stmt = $db->prepare('SELECT subscription FROM users WHERE id = :uid LIMIT 1');
         $stmt->execute(['uid' => $userId]);
         $fallback = strtolower((string)($stmt->fetchColumn() ?: ''));
+        if ($fallback === 'free') {
+            $fallback = 'trial';
+        }
         if ($fallback !== '') {
             return $fallback;
         }
@@ -109,6 +132,10 @@ function mdjr_set_admin_plan_simulation(PDO $db, int $userId, ?string $plan, int
 
 function mdjr_get_user_plan(PDO $db, int $userId): string
 {
+    if (mdjr_is_alpha_open_access($db)) {
+        return 'premium';
+    }
+
     $basePlan = mdjr_get_user_plan_base($db, $userId);
     $sim = mdjr_get_admin_plan_simulation($db, $userId);
     if ($sim !== null) {
@@ -121,6 +148,73 @@ function mdjr_get_user_plan(PDO $db, int $userId): string
 function mdjr_user_has_premium(PDO $db, int $userId): bool
 {
     return mdjr_get_user_plan($db, $userId) === 'premium';
+}
+
+function mdjr_user_has_platform_access(PDO $db, int $userId): bool
+{
+    if ($userId <= 0) {
+        return false;
+    }
+
+    try {
+        $adminStmt = $db->prepare('SELECT is_admin FROM users WHERE id = :uid LIMIT 1');
+        $adminStmt->execute(['uid' => $userId]);
+        if ((int)($adminStmt->fetchColumn() ?: 0) === 1) {
+            return true;
+        }
+    } catch (Throwable $e) {
+        // Continue with standard checks.
+    }
+
+    if (mdjr_is_alpha_open_access($db)) {
+        return true;
+    }
+
+    try {
+        $stmt = $db->prepare('
+            SELECT plan, status, renews_at
+            FROM subscriptions
+            WHERE user_id = :uid
+            ORDER BY id DESC
+            LIMIT 1
+        ');
+        $stmt->execute(['uid' => $userId]);
+        $sub = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    } catch (Throwable $e) {
+        $sub = null;
+    }
+
+    if ($sub) {
+        $plan = strtolower((string)($sub['plan'] ?? ''));
+        if ($plan === 'free') {
+            $plan = 'trial';
+        }
+        $status = strtolower((string)($sub['status'] ?? ''));
+        $renewsAt = (string)($sub['renews_at'] ?? '');
+        $now = gmdate('Y-m-d H:i:s');
+
+        if (in_array($plan, ['pro', 'premium'], true) && $status === 'active') {
+            if ($renewsAt === '' || $renewsAt > $now) {
+                return true;
+            }
+        }
+
+        if ($plan === 'trial') {
+            try {
+                $trialStmt = $db->prepare('SELECT trial_ends_at FROM users WHERE id = :uid LIMIT 1');
+                $trialStmt->execute(['uid' => $userId]);
+                $trialEndsAt = (string)($trialStmt->fetchColumn() ?: '');
+                if ($trialEndsAt !== '' && $trialEndsAt > $now) {
+                    return true;
+                }
+            } catch (Throwable $e) {
+                return false;
+            }
+        }
+    }
+
+    $fallbackPlan = mdjr_get_user_plan_base($db, $userId);
+    return in_array($fallbackPlan, ['pro', 'premium'], true);
 }
 
 function mdjr_ensure_premium_tables(PDO $db): void
@@ -184,6 +278,12 @@ function mdjr_ensure_premium_tables(PDO $db): void
             obs_image_size INT UNSIGNED NOT NULL DEFAULT 600,
             poster_image_size INT UNSIGNED NOT NULL DEFAULT 900,
             mobile_image_size INT UNSIGNED NOT NULL DEFAULT 480,
+            poster_show_event_name TINYINT(1) NOT NULL DEFAULT 1,
+            poster_show_location TINYINT(1) NOT NULL DEFAULT 1,
+            poster_show_date TINYINT(1) NOT NULL DEFAULT 1,
+            poster_show_dj_name TINYINT(1) NOT NULL DEFAULT 1,
+            poster_field_order VARCHAR(80) NOT NULL DEFAULT 'dj_name,event_name,location,date',
+            poster_bg_path VARCHAR(255) NULL,
             animated_overlay TINYINT(1) NOT NULL DEFAULT 0,
             obs_qr_scale_pct TINYINT UNSIGNED NOT NULL DEFAULT 100,
             poster_qr_scale_pct TINYINT UNSIGNED NOT NULL DEFAULT 48,
@@ -205,6 +305,12 @@ function mdjr_ensure_premium_tables(PDO $db): void
         'obs_image_size' => "ALTER TABLE premium_user_qr_settings ADD COLUMN obs_image_size INT UNSIGNED NOT NULL DEFAULT 600",
         'poster_image_size' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_image_size INT UNSIGNED NOT NULL DEFAULT 900",
         'mobile_image_size' => "ALTER TABLE premium_user_qr_settings ADD COLUMN mobile_image_size INT UNSIGNED NOT NULL DEFAULT 480",
+        'poster_show_event_name' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_show_event_name TINYINT(1) NOT NULL DEFAULT 1",
+        'poster_show_location' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_show_location TINYINT(1) NOT NULL DEFAULT 1",
+        'poster_show_date' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_show_date TINYINT(1) NOT NULL DEFAULT 1",
+        'poster_show_dj_name' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_show_dj_name TINYINT(1) NOT NULL DEFAULT 1",
+        'poster_field_order' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_field_order VARCHAR(80) NOT NULL DEFAULT 'dj_name,event_name,location,date'",
+        'poster_bg_path' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_bg_path VARCHAR(255) NULL",
         'animated_overlay' => "ALTER TABLE premium_user_qr_settings ADD COLUMN animated_overlay TINYINT(1) NOT NULL DEFAULT 0",
         'obs_qr_scale_pct' => "ALTER TABLE premium_user_qr_settings ADD COLUMN obs_qr_scale_pct TINYINT UNSIGNED NOT NULL DEFAULT 100",
         'poster_qr_scale_pct' => "ALTER TABLE premium_user_qr_settings ADD COLUMN poster_qr_scale_pct TINYINT UNSIGNED NOT NULL DEFAULT 48",
@@ -246,6 +352,25 @@ function mdjr_ensure_premium_tables(PDO $db): void
             KEY idx_premium_event_link_hits_user (user_id),
             KEY idx_premium_event_link_hits_source (source),
             KEY idx_premium_event_link_hits_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS premium_event_poster_overrides (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            event_id INT UNSIGNED NOT NULL,
+            user_id INT UNSIGNED NOT NULL,
+            use_override TINYINT(1) NOT NULL DEFAULT 0,
+            poster_show_event_name TINYINT(1) NOT NULL DEFAULT 1,
+            poster_show_location TINYINT(1) NOT NULL DEFAULT 1,
+            poster_show_date TINYINT(1) NOT NULL DEFAULT 1,
+            poster_show_dj_name TINYINT(1) NOT NULL DEFAULT 1,
+            poster_field_order VARCHAR(80) NOT NULL DEFAULT 'dj_name,event_name,location,date',
+            poster_bg_path VARCHAR(255) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_premium_event_poster_override_event (event_id),
+            KEY idx_premium_event_poster_override_user (user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 
@@ -456,6 +581,12 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
     $obsImageSize = (int)($data['obs_image_size'] ?? 600);
     $posterImageSize = (int)($data['poster_image_size'] ?? 900);
     $mobileImageSize = (int)($data['mobile_image_size'] ?? 480);
+    $posterShowEventName = !empty($data['poster_show_event_name']) ? 1 : 0;
+    $posterShowLocation = !empty($data['poster_show_location']) ? 1 : 0;
+    $posterShowDate = !empty($data['poster_show_date']) ? 1 : 0;
+    $posterShowDjName = !empty($data['poster_show_dj_name']) ? 1 : 0;
+    $posterFieldOrder = mdjr_normalize_poster_field_order((string)($data['poster_field_order'] ?? ''));
+    $posterBgPath = isset($data['poster_bg_path']) ? trim((string)$data['poster_bg_path']) : null;
     $animatedOverlay = !empty($data['animated_overlay']) ? 1 : 0;
     $obsQrScalePct = (int)($data['obs_qr_scale_pct'] ?? 100);
     $posterQrScalePct = (int)($data['poster_qr_scale_pct'] ?? 48);
@@ -466,14 +597,18 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
             frame_text, logo_path, logo_scale_pct, image_size, error_correction,
             dot_style, eye_outer_style, eye_inner_style,
             fill_mode, gradient_start, gradient_end, gradient_angle,
-            obs_image_size, poster_image_size, mobile_image_size, animated_overlay,
+            obs_image_size, poster_image_size, mobile_image_size,
+            poster_show_event_name, poster_show_location, poster_show_date, poster_show_dj_name,
+            poster_field_order, poster_bg_path, animated_overlay,
             obs_qr_scale_pct, poster_qr_scale_pct
         ) VALUES (
             :user_id, :foreground_color, :background_color,
             :frame_text, :logo_path, :logo_scale_pct, :image_size, :error_correction,
             :dot_style, :eye_outer_style, :eye_inner_style,
             :fill_mode, :gradient_start, :gradient_end, :gradient_angle,
-            :obs_image_size, :poster_image_size, :mobile_image_size, :animated_overlay,
+            :obs_image_size, :poster_image_size, :mobile_image_size,
+            :poster_show_event_name, :poster_show_location, :poster_show_date, :poster_show_dj_name,
+            :poster_field_order, :poster_bg_path, :animated_overlay,
             :obs_qr_scale_pct, :poster_qr_scale_pct
         )
         ON DUPLICATE KEY UPDATE
@@ -494,6 +629,12 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
             obs_image_size = VALUES(obs_image_size),
             poster_image_size = VALUES(poster_image_size),
             mobile_image_size = VALUES(mobile_image_size),
+            poster_show_event_name = VALUES(poster_show_event_name),
+            poster_show_location = VALUES(poster_show_location),
+            poster_show_date = VALUES(poster_show_date),
+            poster_show_dj_name = VALUES(poster_show_dj_name),
+            poster_field_order = VALUES(poster_field_order),
+            poster_bg_path = VALUES(poster_bg_path),
             animated_overlay = VALUES(animated_overlay),
             obs_qr_scale_pct = VALUES(obs_qr_scale_pct),
             poster_qr_scale_pct = VALUES(poster_qr_scale_pct),
@@ -519,6 +660,12 @@ function mdjr_save_user_qr_settings(PDO $db, int $userId, array $data): void
         'obs_image_size' => $obsImageSize,
         'poster_image_size' => $posterImageSize,
         'mobile_image_size' => $mobileImageSize,
+        'poster_show_event_name' => $posterShowEventName,
+        'poster_show_location' => $posterShowLocation,
+        'poster_show_date' => $posterShowDate,
+        'poster_show_dj_name' => $posterShowDjName,
+        'poster_field_order' => $posterFieldOrder,
+        'poster_bg_path' => ($posterBgPath !== '' ? $posterBgPath : null),
         'animated_overlay' => $animatedOverlay,
         'obs_qr_scale_pct' => $obsQrScalePct,
         'poster_qr_scale_pct' => $posterQrScalePct,
@@ -542,6 +689,11 @@ function mdjr_normalize_user_qr_preset(array $settings): array
     $norm['obs_image_size'] = (int)($settings['obs_image_size'] ?? 600);
     $norm['poster_image_size'] = (int)($settings['poster_image_size'] ?? 900);
     $norm['mobile_image_size'] = (int)($settings['mobile_image_size'] ?? 480);
+    $norm['poster_show_event_name'] = !empty($settings['poster_show_event_name']) ? 1 : 0;
+    $norm['poster_show_location'] = !empty($settings['poster_show_location']) ? 1 : 0;
+    $norm['poster_show_date'] = !empty($settings['poster_show_date']) ? 1 : 0;
+    $norm['poster_show_dj_name'] = !empty($settings['poster_show_dj_name']) ? 1 : 0;
+    $norm['poster_field_order'] = mdjr_normalize_poster_field_order((string)($settings['poster_field_order'] ?? ''));
     $norm['obs_qr_scale_pct'] = (int)($settings['obs_qr_scale_pct'] ?? 100);
     $norm['poster_qr_scale_pct'] = (int)($settings['poster_qr_scale_pct'] ?? 48);
     $norm['animated_overlay'] = !empty($settings['animated_overlay']) ? 1 : 0;
@@ -582,6 +734,88 @@ function mdjr_normalize_user_qr_preset(array $settings): array
     $norm['poster_qr_scale_pct'] = max(30, min(75, $norm['poster_qr_scale_pct']));
 
     return $norm;
+}
+
+function mdjr_normalize_poster_field_order(string $rawOrder): string
+{
+    $allowed = ['dj_name', 'event_name', 'location', 'date'];
+    $parts = array_values(array_filter(array_map('trim', explode(',', strtolower($rawOrder)))));
+    $out = [];
+    foreach ($parts as $p) {
+        if (in_array($p, $allowed, true) && !in_array($p, $out, true)) {
+            $out[] = $p;
+        }
+    }
+    foreach ($allowed as $p) {
+        if (!in_array($p, $out, true)) {
+            $out[] = $p;
+        }
+    }
+    return implode(',', $out);
+}
+
+function mdjr_parse_poster_field_order(string $rawOrder): array
+{
+    return explode(',', mdjr_normalize_poster_field_order($rawOrder));
+}
+
+function mdjr_get_event_poster_override(PDO $db, int $eventId, int $userId): ?array
+{
+    $stmt = $db->prepare('
+        SELECT *
+        FROM premium_event_poster_overrides
+        WHERE event_id = :event_id AND user_id = :user_id
+        LIMIT 1
+    ');
+    $stmt->execute([
+        'event_id' => $eventId,
+        'user_id' => $userId,
+    ]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row ?: null;
+}
+
+function mdjr_save_event_poster_override(PDO $db, int $eventId, int $userId, array $data): void
+{
+    $useOverride = !empty($data['use_override']) ? 1 : 0;
+    $showEventName = !empty($data['poster_show_event_name']) ? 1 : 0;
+    $showLocation = !empty($data['poster_show_location']) ? 1 : 0;
+    $showDate = !empty($data['poster_show_date']) ? 1 : 0;
+    $showDjName = !empty($data['poster_show_dj_name']) ? 1 : 0;
+    $fieldOrder = mdjr_normalize_poster_field_order((string)($data['poster_field_order'] ?? ''));
+    $bgPath = isset($data['poster_bg_path']) ? trim((string)$data['poster_bg_path']) : null;
+
+    $stmt = $db->prepare('
+        INSERT INTO premium_event_poster_overrides (
+            event_id, user_id, use_override,
+            poster_show_event_name, poster_show_location, poster_show_date, poster_show_dj_name,
+            poster_field_order, poster_bg_path
+        ) VALUES (
+            :event_id, :user_id, :use_override,
+            :show_event_name, :show_location, :show_date, :show_dj_name,
+            :field_order, :bg_path
+        )
+        ON DUPLICATE KEY UPDATE
+            use_override = VALUES(use_override),
+            poster_show_event_name = VALUES(poster_show_event_name),
+            poster_show_location = VALUES(poster_show_location),
+            poster_show_date = VALUES(poster_show_date),
+            poster_show_dj_name = VALUES(poster_show_dj_name),
+            poster_field_order = VALUES(poster_field_order),
+            poster_bg_path = VALUES(poster_bg_path),
+            updated_at = CURRENT_TIMESTAMP
+    ');
+    $stmt->execute([
+        'event_id' => $eventId,
+        'user_id' => $userId,
+        'use_override' => $useOverride,
+        'show_event_name' => $showEventName,
+        'show_location' => $showLocation,
+        'show_date' => $showDate,
+        'show_dj_name' => $showDjName,
+        'field_order' => $fieldOrder,
+        'bg_path' => ($bgPath !== '' ? $bgPath : null),
+    ]);
 }
 
 function mdjr_save_user_qr_preset(PDO $db, int $userId, int $slot, array $settings): void

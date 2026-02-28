@@ -15,6 +15,22 @@ use Stripe\PaymentIntent;
 
 Stripe::setApiKey(STRIPE_SECRET_KEY);
 
+function getPlatformFeeBps(PDO $db): int
+{
+    $fallback = max(0, (int)STRIPE_PLATFORM_FEE_BPS);
+    try {
+        $stmt = $db->prepare("SELECT `value` FROM app_settings WHERE `key` = 'platform_fee_bps' LIMIT 1");
+        $stmt->execute();
+        $raw = $stmt->fetchColumn();
+        if ($raw === false || $raw === null || $raw === '') {
+            return $fallback;
+        }
+        return max(0, min(10000, (int)$raw));
+    } catch (Throwable $e) {
+        return $fallback;
+    }
+}
+
 // --------------------
 // Inputs
 // --------------------
@@ -35,14 +51,7 @@ $guestName = trim($_POST['guest_name'] ?? '');
 
 if (!$eventUuid || !$guestToken || $amount < 500) {
     http_response_code(400);
-    echo json_encode([
-        'error' => 'INVALID_REQUEST',
-        'debug' => [
-            'event_uuid' => $eventUuid,
-            'guest_token_present' => !!$guestToken,
-            'amount' => $amount,
-        ]
-    ]);
+    echo json_encode(['error' => 'INVALID_REQUEST']);
     exit;
 }
 
@@ -70,6 +79,7 @@ if ($eventState !== 'live') {
 // --------------------
 $userModel = new User();
 $dj = $userModel->findById($event['user_id']);
+$db = db();
 
 if (
     empty($dj['stripe_connect_account_id']) ||
@@ -100,7 +110,10 @@ try {
         $metadata['guest_name'] = $guestName;
     }
 
-    $intent = PaymentIntent::create([
+    $platformFeeBps = getPlatformFeeBps($db);
+    $applicationFeeAmount = (int)floor(($amount * $platformFeeBps) / 10000);
+
+    $payload = [
         'amount'   => $amount,
         'currency' => 'aud',
 
@@ -113,7 +126,15 @@ try {
             'Voluntary, non-refundable DJ tip during a live event',
 
         'metadata' => $metadata,
-    ]);
+        'transfer_data' => [
+            'destination' => (string)$dj['stripe_connect_account_id'],
+        ],
+    ];
+    if ($applicationFeeAmount > 0) {
+        $payload['application_fee_amount'] = $applicationFeeAmount;
+    }
+
+    $intent = PaymentIntent::create($payload);
 
     echo json_encode([
         'client_secret' => $intent->client_secret
@@ -122,7 +143,6 @@ try {
 } catch (Throwable $e) {
     http_response_code(500);
     echo json_encode([
-        'error'   => 'STRIPE_INTENT_FAILED',
-        'message' => $e->getMessage(),
+        'error'   => 'STRIPE_INTENT_FAILED'
     ]);
 }
