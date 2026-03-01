@@ -4,6 +4,7 @@ ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
 require_once __DIR__ . '/../app/bootstrap.php';
+require_once __DIR__ . '/../app/config/stripe.php';
 // Ensure PHP uses local / configured timezone
 date_default_timezone_set(date_default_timezone_get());
 require_dj_login();
@@ -200,6 +201,25 @@ $stmt = $db->prepare("
 ");
 $stmt->execute([$djId]);
 $stripeOnboarded = (bool)$stmt->fetchColumn();
+
+$platformFeeBps = defined('STRIPE_PLATFORM_FEE_BPS')
+    ? max(0, (int)STRIPE_PLATFORM_FEE_BPS)
+    : 0;
+try {
+    $feeStmt = $db->prepare("SELECT `value` FROM app_settings WHERE `key` = 'platform_fee_bps' LIMIT 1");
+    $feeStmt->execute();
+    $feeRaw = $feeStmt->fetchColumn();
+    if ($feeRaw !== false && $feeRaw !== null && $feeRaw !== '') {
+        $platformFeeBps = max(0, min(10000, (int)$feeRaw));
+    }
+} catch (Throwable $e) {
+    // Keep env/secret fallback when app_settings read fails.
+}
+$platformFeePercent = number_format($platformFeeBps / 100, 2, '.', '');
+$platformFeePercent = rtrim(rtrim($platformFeePercent, '0'), '.');
+if ($platformFeePercent === '') {
+    $platformFeePercent = '0';
+}
 
 // -----------------------------
 
@@ -1132,6 +1152,15 @@ $monthAmount    = (float)($monthlyByCurrency[$currency]['month_amount'] ?? 0);
                 <?php echo $voteEngagementRate; ?>% of requests get votes
             </small>
         <?php endif; ?>
+    </div>
+
+    <!-- PLATFORM FEE -->
+    <div class="card-box">
+        <h2><?php echo e($platformFeePercent); ?>%</h2>
+        <p>Platform Fee</p>
+        <small style="color:#8e91a3;">
+            Applies to tips &amp; boosts and covers payment processing fees
+        </small>
     </div>
         
     
