@@ -36,14 +36,18 @@ $links = [
     'SoundCloud' => $profile['social_soundcloud'] ?? null,
 ];
 $links = array_filter($links);
+$linkIcons = [
+    'Website'    => 'fa-solid fa-globe',
+    'Spotify'    => 'fa-brands fa-spotify',
+    'Instagram'  => 'fa-brands fa-instagram',
+    'Facebook'   => 'fa-brands fa-facebook',
+    'TikTok'     => 'fa-brands fa-tiktok',
+    'YouTube'    => 'fa-brands fa-youtube',
+    'SoundCloud' => 'fa-brands fa-soundcloud',
+];
 
 $hasEmail = !empty($profile['public_email']);
 $hasPhone = !empty($profile['phone']);
-$galleryItems = isset($galleryItems) && is_array($galleryItems) ? $galleryItems : [];
-$galleryItems = array_values(array_filter($galleryItems, static function ($item): bool {
-    return !empty($item['image_url']);
-}));
-$hasGallery = !empty($galleryItems);
 ?>
 
 <!doctype html>
@@ -56,6 +60,7 @@ $hasGallery = !empty($galleryItems);
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 
 <style>
 :root {
@@ -240,8 +245,9 @@ body {
 
 .social-link {
   display: inline-flex;
-  justify-content: center;
   align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
   text-decoration: none;
   color: #f5f5ff;
   font-weight: 600;
@@ -258,6 +264,11 @@ body {
   background: color-mix(in srgb, var(--accent) 20%, rgba(255, 255, 255, 0.04));
 }
 
+.social-link i {
+  color: #ff2fd2;
+  font-size: 16px;
+}
+
 .contact-list {
   display: grid;
   gap: 9px;
@@ -268,6 +279,12 @@ body {
   gap: 10px;
   align-items: center;
   color: #e9e9f8;
+}
+
+.contact-row i {
+  color: #ff2fd2;
+  width: 16px;
+  text-align: center;
 }
 
 .contact-label {
@@ -282,34 +299,6 @@ body {
   color: color-mix(in srgb, var(--accent) 84%, white 16%);
   text-decoration: none;
   word-break: break-all;
-}
-
-.gallery-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.gallery-item {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.gallery-item img {
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  display: block;
-}
-
-.gallery-caption {
-  margin: 0;
-  padding: 10px;
-  font-size: 13px;
-  color: #d7d8eb;
-  border-top: 1px solid var(--line);
 }
 
 .empty-note {
@@ -352,16 +341,6 @@ body {
   }
 
   .social-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .gallery-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 460px) {
-  .gallery-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -427,35 +406,13 @@ body {
       </div>
     </section>
 
-    <?php if ($hasGallery): ?>
-      <section class="card section">
-        <h2>Gallery</h2>
-        <div class="gallery-grid">
-          <?php foreach ($galleryItems as $gItem): ?>
-            <figure class="gallery-item">
-              <img
-                src="<?= htmlspecialchars((string)$gItem['image_url']); ?>"
-                alt="<?= htmlspecialchars($displayName); ?> gallery image"
-                loading="lazy"
-                referrerpolicy="no-referrer"
-              >
-              <?php if (!empty($gItem['caption'])): ?>
-                <figcaption class="gallery-caption">
-                  <?= htmlspecialchars((string)$gItem['caption']); ?>
-                </figcaption>
-              <?php endif; ?>
-            </figure>
-          <?php endforeach; ?>
-        </div>
-      </section>
-    <?php endif; ?>
-
     <section class="card section">
       <h2>Connect</h2>
       <?php if ($links): ?>
         <div class="social-grid">
           <?php foreach ($links as $label => $url): ?>
             <a class="social-link" href="<?= htmlspecialchars($url); ?>" target="_blank" rel="noopener">
+              <i class="<?= htmlspecialchars($linkIcons[$label] ?? 'fa-solid fa-link'); ?>" aria-hidden="true"></i>
               <?= htmlspecialchars($label); ?>
             </a>
           <?php endforeach; ?>
@@ -471,6 +428,7 @@ body {
         <div class="contact-list">
           <?php if ($hasEmail): ?>
             <div class="contact-row">
+              <i class="fa-solid fa-envelope" aria-hidden="true"></i>
               <span class="contact-label">Email</span>
               <a href="mailto:<?= htmlspecialchars($profile['public_email']); ?>">
                 <?= htmlspecialchars($profile['public_email']); ?>
@@ -480,6 +438,7 @@ body {
 
           <?php if ($hasPhone): ?>
             <div class="contact-row">
+              <i class="fa-solid fa-phone" aria-hidden="true"></i>
               <span class="contact-label">Phone</span>
               <a href="tel:<?= htmlspecialchars(preg_replace('/\s+/', '', $profile['phone'])); ?>">
                 <?= htmlspecialchars($profile['phone']); ?>

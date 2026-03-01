@@ -14,6 +14,12 @@ if ($djId <= 0) {
 
 $profileModel = new DjProfile();
 $profile = $profileModel->findByUserId($djId);
+$logoUrl = trim((string)($profile['logo_url'] ?? ''));
+$showLogoPublicProfile = !isset($profile['show_logo_public_profile']) || (int)$profile['show_logo_public_profile'] === 1;
+$hasPublicProfileImage = ($logoUrl !== '' && $showLogoPublicProfile);
+$logoFocusX = isset($profile['logo_focus_x']) ? max(0, min(100, (float)$profile['logo_focus_x'])) : 50.0;
+$logoFocusY = isset($profile['logo_focus_y']) ? max(0, min(100, (float)$profile['logo_focus_y'])) : 50.0;
+$logoZoomPct = isset($profile['logo_zoom_pct']) ? max(100, min(220, (int)$profile['logo_zoom_pct'])) : 100;
 
 echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">';
 ?>
@@ -64,6 +70,23 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
     margin-bottom: 14px;
 }
 
+.public-profile-image {
+    margin: 10px 0 14px;
+    width: 100%;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.public-profile-image img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    transform-origin: center center;
+}
+
 /* Contact lines */
 .preview-contact-line {
     font-size: 14px;
@@ -100,20 +123,6 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
 }
 
 /* Save to contacts button */
-.save-contact-btn {
-    display: block;
-    text-align: center;
-    margin-top: 20px;
-    padding: 12px;
-    border-radius: 10px;
-    background: #ff2fd2;
-    color: white;
-    text-decoration: none;
-    font-weight: 600;
-}
-.save-contact-btn:hover {
-    background: #ff4ae0;
-}
 </style>
 
 <div class="preview-container">
@@ -129,6 +138,18 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
             <?php if (!empty($profile['display_name'])): ?>
                 <div class="dj-name">
                     <?= htmlspecialchars($profile['display_name'], ENT_QUOTES, 'UTF-8') ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($hasPublicProfileImage): ?>
+                <div class="public-profile-image">
+                    <img
+                        src="<?= htmlspecialchars($logoUrl, ENT_QUOTES, 'UTF-8') ?>"
+                        alt="<?= htmlspecialchars(($profile['display_name'] ?? 'DJ'), ENT_QUOTES, 'UTF-8') ?> profile image"
+                        loading="lazy"
+                        referrerpolicy="no-referrer"
+                        style="object-position: <?= number_format($logoFocusX, 2, '.', '') ?>% <?= number_format($logoFocusY, 2, '.', '') ?>%; transform: scale(<?= number_format($logoZoomPct / 100, 2, '.', '') ?>);"
+                    >
                 </div>
             <?php endif; ?>
 
@@ -197,11 +218,6 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
                 <?php endif; ?>
 
             </div>
-
-            <a href="/api/public/dj_vcard.php?dj=<?= (int)$djId; ?>"
-               class="save-contact-btn">
-                + Save to Contacts
-            </a>
 
         <?php else: ?>
 

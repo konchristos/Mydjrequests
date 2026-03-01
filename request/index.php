@@ -649,6 +649,15 @@ button.send-btn:hover {
     border-color: rgba(255,47,210,0.4);
 }
 
+.dj-contact-line {
+    margin-bottom: 4px;
+}
+
+.dj-contact-line i {
+    color: #ff2fd2;
+    margin-right: 6px;
+}
+
 
 /* ===========================================
    My Requests
@@ -1690,11 +1699,11 @@ if ($djHasPremiumPlan && $djProfile && !empty($djProfile['logo_url'])) {
     <?php endif; ?>
 
 <?php if (!empty($djProfile['phone'])): ?>
-    <div><i class="fa-solid fa-phone"></i> <?= e($djProfile['phone']) ?></div>
+    <div class="dj-contact-line"><i class="fa-solid fa-phone"></i> <?= e($djProfile['phone']) ?></div>
 <?php endif; ?>
 
 <?php if (!empty($djProfile['public_email'])): ?>
-    <div><i class="fa-solid fa-envelope"></i> <?= e($djProfile['public_email']) ?></div>
+    <div class="dj-contact-line"><i class="fa-solid fa-envelope"></i> <?= e($djProfile['public_email']) ?></div>
 <?php endif; ?>
 
    <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">

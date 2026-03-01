@@ -74,12 +74,6 @@ function slugify(string $text): string {
 $profileLogoFocusX = isset($profile['logo_focus_x']) ? max(0, min(100, (float)$profile['logo_focus_x'])) : 50.0;
 $profileLogoFocusY = isset($profile['logo_focus_y']) ? max(0, min(100, (float)$profile['logo_focus_y'])) : 50.0;
 $profileLogoZoomPct = isset($profile['logo_zoom_pct']) ? max(100, min(220, (int)$profile['logo_zoom_pct'])) : 100;
-$galleryItems = [];
-try {
-    $galleryItems = $profileModel->getGalleryByUserId($djId, true);
-} catch (Throwable $e) {
-    $galleryItems = [];
-}
 
 
 
@@ -325,61 +319,6 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
     text-align: right;
     color: #c8c9d8;
     font-size: 12px;
-}
-.gallery-list {
-    display: grid;
-    gap: 10px;
-    margin-top: 10px;
-}
-.gallery-item {
-    border: 1px solid #333647;
-    border-radius: 12px;
-    padding: 12px;
-    background: #181824;
-}
-.gallery-item-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-}
-.gallery-item-label {
-    font-size: 12px;
-    color: #b8b9cb;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-.gallery-remove-btn {
-    border: 1px solid #4a4e66;
-    background: #23263a;
-    color: #ff9fbe;
-    border-radius: 8px;
-    padding: 6px 10px;
-    font-size: 12px;
-    cursor: pointer;
-}
-.gallery-remove-btn:hover {
-    border-color: #ff6f9f;
-}
-.gallery-add-btn {
-    margin-top: 10px;
-    background: #23263a;
-    color: #dce0ff;
-    border: 1px solid #4a4e66;
-    border-radius: 10px;
-    padding: 10px 12px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-}
-.gallery-add-btn:hover {
-    border-color: #7b84b8;
-}
-.gallery-limit-note {
-    font-size: 12px;
-    color: #9a9ab0;
-    margin-top: 8px;
 }
 
 /* BIG Back + Preview + Save buttons bar */
@@ -683,56 +622,6 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
             </p>
         <?php endif; ?>
 
-        <label>
-            Public Profile Gallery
-            <span class="premium-badge">Premium</span>
-        </label>
-        <?php if ($isPremiumPlan): ?>
-            <p class="small-help">
-                Add up to 5 images for your public profile. You can upload images directly and/or use image URLs.
-            </p>
-            <input
-                type="file"
-                name="gallery_files[]"
-                id="gallery_files"
-                accept="image/png,image/jpeg,image/webp"
-                multiple
-            >
-            <p class="small-help">
-                Upload up to 5 images total (PNG/JPG/WEBP, max 2MB each).
-            </p>
-            <div id="galleryList" class="gallery-list">
-                <?php foreach ($galleryItems as $idx => $gItem): ?>
-                    <div class="gallery-item" data-gallery-item>
-                        <div class="gallery-item-head">
-                            <span class="gallery-item-label">Image <?= (int)$idx + 1 ?></span>
-                            <button type="button" class="gallery-remove-btn" data-gallery-remove>Remove</button>
-                        </div>
-                        <input
-                            type="url"
-                            name="gallery_url[]"
-                            placeholder="https://example.com/your-image.jpg"
-                            value="<?= h($gItem['image_url'] ?? '') ?>"
-                            maxlength="255"
-                        >
-                        <input
-                            type="text"
-                            name="gallery_caption[]"
-                            placeholder="Optional caption"
-                            value="<?= h($gItem['caption'] ?? '') ?>"
-                            maxlength="160"
-                        >
-                    </div>
-                <?php endforeach; ?>
-            </div>
-            <button type="button" id="galleryAddBtn" class="gallery-add-btn">+ Add Gallery Image</button>
-            <div class="gallery-limit-note">Maximum 5 images.</div>
-        <?php else: ?>
-            <p class="small-help">
-                Gallery is available on Premium.
-            </p>
-        <?php endif; ?>
-
         <!-- SOCIAL LINKS -->
         <div class="section-head">Links & Social</div>
 
@@ -974,8 +863,6 @@ $profileUrl = "https://mydjrequests.com/dj/" . h($profile['page_slug']);
 <script>
 const form = document.getElementById('djProfileForm');
 const statusEl = document.getElementById('status');
-const galleryListEl = document.getElementById('galleryList');
-const galleryAddBtnEl = document.getElementById('galleryAddBtn');
 
 // Clear buttons for socials + logo
 document.querySelectorAll('.social-clear-btn').forEach(btn => {
@@ -985,71 +872,6 @@ document.querySelectorAll('.social-clear-btn').forEach(btn => {
         if (input) input.value = '';
     });
 });
-
-(() => {
-  if (!galleryListEl || !galleryAddBtnEl) return;
-  const MAX_GALLERY = 5;
-
-  const updateGalleryLabels = () => {
-    const items = galleryListEl.querySelectorAll('[data-gallery-item]');
-    items.forEach((item, idx) => {
-      const label = item.querySelector('.gallery-item-label');
-      if (label) label.textContent = 'Image ' + (idx + 1);
-    });
-    galleryAddBtnEl.disabled = items.length >= MAX_GALLERY;
-    galleryAddBtnEl.style.opacity = items.length >= MAX_GALLERY ? '0.5' : '1';
-    galleryAddBtnEl.style.cursor = items.length >= MAX_GALLERY ? 'not-allowed' : 'pointer';
-  };
-
-  const bindRemove = (scope) => {
-    scope.querySelectorAll('[data-gallery-remove]').forEach((btn) => {
-      if (btn.dataset.bound === '1') return;
-      btn.dataset.bound = '1';
-      btn.addEventListener('click', () => {
-        const row = btn.closest('[data-gallery-item]');
-        if (row) row.remove();
-        updateGalleryLabels();
-      });
-    });
-  };
-
-  galleryAddBtnEl.addEventListener('click', () => {
-    const currentCount = galleryListEl.querySelectorAll('[data-gallery-item]').length;
-    if (currentCount >= MAX_GALLERY) return;
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'gallery-item';
-    wrapper.setAttribute('data-gallery-item', '');
-    wrapper.innerHTML = `
-      <div class="gallery-item-head">
-        <span class="gallery-item-label">Image ${currentCount + 1}</span>
-        <button type="button" class="gallery-remove-btn" data-gallery-remove>Remove</button>
-      </div>
-      <input
-        type="url"
-        name="gallery_url[]"
-        placeholder="https://example.com/your-image.jpg"
-        value=""
-        maxlength="255"
-      >
-      <input
-        type="text"
-        name="gallery_caption[]"
-        placeholder="Optional caption"
-        value=""
-        maxlength="160"
-      >
-    `;
-    galleryListEl.appendChild(wrapper);
-    bindRemove(wrapper);
-    updateGalleryLabels();
-  });
-
-  bindRemove(galleryListEl);
-  updateGalleryLabels();
-})();
-
-
 
 // Save profile
 form.addEventListener('submit', async (e) => {
