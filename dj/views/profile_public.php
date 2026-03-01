@@ -39,6 +39,11 @@ $links = array_filter($links);
 
 $hasEmail = !empty($profile['public_email']);
 $hasPhone = !empty($profile['phone']);
+$galleryItems = isset($galleryItems) && is_array($galleryItems) ? $galleryItems : [];
+$galleryItems = array_values(array_filter($galleryItems, static function ($item): bool {
+    return !empty($item['image_url']);
+}));
+$hasGallery = !empty($galleryItems);
 ?>
 
 <!doctype html>
@@ -279,6 +284,34 @@ body {
   word-break: break-all;
 }
 
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.gallery-item {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gallery-item img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+}
+
+.gallery-caption {
+  margin: 0;
+  padding: 10px;
+  font-size: 13px;
+  color: #d7d8eb;
+  border-top: 1px solid var(--line);
+}
+
 .empty-note {
   margin: 0;
   color: #9ea0bc;
@@ -319,6 +352,16 @@ body {
   }
 
   .social-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 460px) {
+  .gallery-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -383,6 +426,29 @@ body {
             : 'Live music specialist available for private events, venues, and celebrations.'; ?>
       </div>
     </section>
+
+    <?php if ($hasGallery): ?>
+      <section class="card section">
+        <h2>Gallery</h2>
+        <div class="gallery-grid">
+          <?php foreach ($galleryItems as $gItem): ?>
+            <figure class="gallery-item">
+              <img
+                src="<?= htmlspecialchars((string)$gItem['image_url']); ?>"
+                alt="<?= htmlspecialchars($displayName); ?> gallery image"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+              >
+              <?php if (!empty($gItem['caption'])): ?>
+                <figcaption class="gallery-caption">
+                  <?= htmlspecialchars((string)$gItem['caption']); ?>
+                </figcaption>
+              <?php endif; ?>
+            </figure>
+          <?php endforeach; ?>
+        </div>
+      </section>
+    <?php endif; ?>
 
     <section class="card section">
       <h2>Connect</h2>

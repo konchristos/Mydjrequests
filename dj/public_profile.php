@@ -86,9 +86,25 @@ if ($isPreview) {
     }
 }
 
+$isPremiumPlan = false;
+$galleryItems = [];
+try {
+    $isPremiumPlan = mdjr_user_has_premium(db(), (int)$profile['user_id']);
+} catch (Throwable $e) {
+    $isPremiumPlan = false;
+}
+
+if ($isPremiumPlan) {
+    try {
+        $profileModel = new DjProfile();
+        $galleryItems = $profileModel->getGalleryByUserId((int)$profile['user_id'], true);
+    } catch (Throwable $e) {
+        $galleryItems = [];
+    }
+}
+
 /* ---------------------------------------
    PUBLIC / PREVIEW PROFILE
 ---------------------------------------- */
 require __DIR__ . '/views/profile_public.php';
-
 

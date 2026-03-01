@@ -204,6 +204,7 @@ include APP_ROOT . '/dj/layout.php';
 .admin-section-copy { color:#b8b8c8; margin: 0 0 12px; font-size:14px; }
 .error { color:#ff8080; margin: 8px 0 12px; }
 .success { color:#7be87f; margin: 8px 0 12px; }
+.admin-controls-row { margin-top:16px; }
 .admin-count { color:#ff2fd2; font-weight:700; }
 .admin-new-badge {
     display:inline-block;
@@ -297,6 +298,7 @@ include APP_ROOT . '/dj/layout.php';
     <div class="admin-section">
         <h2>Platform Controls</h2>
         <p class="admin-section-copy">Performance and monetization switches.</p>
+
         <div class="admin-dashboard">
             <a href="/admin/schema_audit.php" class="admin-card">
                 <h3>Schema Audit</h3>
@@ -312,7 +314,9 @@ include APP_ROOT . '/dj/layout.php';
                 <h3>Performance</h3>
                 <p>Queue pending: <?php echo (int)$enrichmentPending; ?> · toggles and indexes</p>
             </a>
+        </div>
 
+        <div class="admin-dashboard admin-controls-row">
             <div class="admin-card" style="cursor:default;">
                 <h3>
                     Tipping & Boosts (Production)
@@ -352,7 +356,9 @@ include APP_ROOT . '/dj/layout.php';
                 </form>
                 <div class="admin-note">Current fee: <strong><?php echo number_format($platformFeeBps / 100, 2); ?>%</strong> (100 bps = 1%).</div>
             </div>
+        </div>
 
+        <div class="admin-dashboard admin-controls-row">
             <div class="admin-card" style="cursor:default;">
                 <h3>
                     Alpha Open Access

@@ -471,6 +471,33 @@ require __DIR__ . '/layout.php';
     display:flex;
     flex-direction:column;
 }
+.settings-feature-separator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin: 14px 0 16px;
+    padding: 8px 12px;
+    border: 1px solid #2b2d3d;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+    color: #c8ccdf;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+}
+.settings-feature-separator::before,
+.settings-feature-separator::after {
+    content: "";
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, rgba(255,47,210,.75), rgba(106,227,255,.55));
+    flex: 1 1 auto;
+}
+.settings-order-profile .settings-card + .settings-card {
+    margin-top: 22px;
+}
 .settings-order-admin { order: 10; }
 .settings-order-profile { order: 20; }
 .settings-order-platform { order: 30; }
@@ -611,6 +638,7 @@ require __DIR__ . '/layout.php';
     </div>
     <?php endif; ?>
 
+    <div class="settings-feature-separator settings-order-platform"><span>Platform</span></div>
     <div class="settings-card settings-order-platform">
         <h3>Platform Status</h3>
         <div class="settings-row">
@@ -626,6 +654,7 @@ require __DIR__ . '/layout.php';
         </div>
     </div>
 
+    <div class="settings-feature-separator settings-order-dynamic"><span>Premium Links</span></div>
     <div class="settings-card settings-order-dynamic" id="dynamic-qr-link">
         <h3>
             Dynamic Event Links (Set &amp; Forget)
@@ -709,6 +738,7 @@ require __DIR__ . '/layout.php';
         <?php endif; ?>
     </div>
 
+    <div class="settings-feature-separator settings-order-qr"><span>Premium QR Studio</span></div>
     <div class="settings-card settings-order-qr" id="premium-qr-style">
         <h3>
             Global QR Style
@@ -1066,6 +1096,7 @@ require __DIR__ . '/layout.php';
         <?php endif; ?>
     </div>
 
+    <div class="settings-feature-separator settings-order-profile"><span>Profile Defaults</span></div>
     <form method="POST" class="settings-order-profile">
         <?php echo csrf_field(); ?>
 
@@ -1191,6 +1222,7 @@ require __DIR__ . '/layout.php';
         <button type="submit" class="settings-btn" style="margin-bottom:16px;">Save Settings</button>
     </form>
 
+    <div class="settings-feature-separator settings-order-messages"><span>System Messages</span></div>
     <div class="settings-card settings-after-save-gap settings-order-messages" id="message-statuses">
         <h3>Default Platform Messages to Patron (Home Tab)</h3>
         <div class="settings-help" style="margin-top:0;">

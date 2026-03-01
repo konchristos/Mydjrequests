@@ -74,6 +74,12 @@ function slugify(string $text): string {
 $profileLogoFocusX = isset($profile['logo_focus_x']) ? max(0, min(100, (float)$profile['logo_focus_x'])) : 50.0;
 $profileLogoFocusY = isset($profile['logo_focus_y']) ? max(0, min(100, (float)$profile['logo_focus_y'])) : 50.0;
 $profileLogoZoomPct = isset($profile['logo_zoom_pct']) ? max(100, min(220, (int)$profile['logo_zoom_pct'])) : 100;
+$galleryItems = [];
+try {
+    $galleryItems = $profileModel->getGalleryByUserId($djId, true);
+} catch (Throwable $e) {
+    $galleryItems = [];
+}
 
 
 
@@ -112,13 +118,28 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
 
 /* Section headings */
 .section-head {
-    margin-top: 20px;
-    margin-bottom: 6px;
-    font-weight: 600;
-    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin: 24px 0 14px;
+    padding: 8px 12px;
+    border: 1px solid #2b2d3d;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+    font-weight: 800;
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: #9f9fb5;
+    letter-spacing: 0.1em;
+    color: #c8ccdf;
+}
+.section-head::before,
+.section-head::after {
+    content: "";
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, rgba(255,47,210,.75), rgba(106,227,255,.55));
+    flex: 1 1 auto;
 }
 
 /* Inputs */
@@ -304,6 +325,61 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
     text-align: right;
     color: #c8c9d8;
     font-size: 12px;
+}
+.gallery-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+}
+.gallery-item {
+    border: 1px solid #333647;
+    border-radius: 12px;
+    padding: 12px;
+    background: #181824;
+}
+.gallery-item-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+.gallery-item-label {
+    font-size: 12px;
+    color: #b8b9cb;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.gallery-remove-btn {
+    border: 1px solid #4a4e66;
+    background: #23263a;
+    color: #ff9fbe;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.gallery-remove-btn:hover {
+    border-color: #ff6f9f;
+}
+.gallery-add-btn {
+    margin-top: 10px;
+    background: #23263a;
+    color: #dce0ff;
+    border: 1px solid #4a4e66;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.gallery-add-btn:hover {
+    border-color: #7b84b8;
+}
+.gallery-limit-note {
+    font-size: 12px;
+    color: #9a9ab0;
+    margin-top: 8px;
 }
 
 /* BIG Back + Preview + Save buttons bar */
@@ -607,6 +683,56 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
             </p>
         <?php endif; ?>
 
+        <label>
+            Public Profile Gallery
+            <span class="premium-badge">Premium</span>
+        </label>
+        <?php if ($isPremiumPlan): ?>
+            <p class="small-help">
+                Add up to 5 images for your public profile. You can upload images directly and/or use image URLs.
+            </p>
+            <input
+                type="file"
+                name="gallery_files[]"
+                id="gallery_files"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+            >
+            <p class="small-help">
+                Upload up to 5 images total (PNG/JPG/WEBP, max 2MB each).
+            </p>
+            <div id="galleryList" class="gallery-list">
+                <?php foreach ($galleryItems as $idx => $gItem): ?>
+                    <div class="gallery-item" data-gallery-item>
+                        <div class="gallery-item-head">
+                            <span class="gallery-item-label">Image <?= (int)$idx + 1 ?></span>
+                            <button type="button" class="gallery-remove-btn" data-gallery-remove>Remove</button>
+                        </div>
+                        <input
+                            type="url"
+                            name="gallery_url[]"
+                            placeholder="https://example.com/your-image.jpg"
+                            value="<?= h($gItem['image_url'] ?? '') ?>"
+                            maxlength="255"
+                        >
+                        <input
+                            type="text"
+                            name="gallery_caption[]"
+                            placeholder="Optional caption"
+                            value="<?= h($gItem['caption'] ?? '') ?>"
+                            maxlength="160"
+                        >
+                    </div>
+                <?php endforeach; ?>
+            </div>
+            <button type="button" id="galleryAddBtn" class="gallery-add-btn">+ Add Gallery Image</button>
+            <div class="gallery-limit-note">Maximum 5 images.</div>
+        <?php else: ?>
+            <p class="small-help">
+                Gallery is available on Premium.
+            </p>
+        <?php endif; ?>
+
         <!-- SOCIAL LINKS -->
         <div class="section-head">Links & Social</div>
 
@@ -848,6 +974,8 @@ $profileUrl = "https://mydjrequests.com/dj/" . h($profile['page_slug']);
 <script>
 const form = document.getElementById('djProfileForm');
 const statusEl = document.getElementById('status');
+const galleryListEl = document.getElementById('galleryList');
+const galleryAddBtnEl = document.getElementById('galleryAddBtn');
 
 // Clear buttons for socials + logo
 document.querySelectorAll('.social-clear-btn').forEach(btn => {
@@ -857,6 +985,69 @@ document.querySelectorAll('.social-clear-btn').forEach(btn => {
         if (input) input.value = '';
     });
 });
+
+(() => {
+  if (!galleryListEl || !galleryAddBtnEl) return;
+  const MAX_GALLERY = 5;
+
+  const updateGalleryLabels = () => {
+    const items = galleryListEl.querySelectorAll('[data-gallery-item]');
+    items.forEach((item, idx) => {
+      const label = item.querySelector('.gallery-item-label');
+      if (label) label.textContent = 'Image ' + (idx + 1);
+    });
+    galleryAddBtnEl.disabled = items.length >= MAX_GALLERY;
+    galleryAddBtnEl.style.opacity = items.length >= MAX_GALLERY ? '0.5' : '1';
+    galleryAddBtnEl.style.cursor = items.length >= MAX_GALLERY ? 'not-allowed' : 'pointer';
+  };
+
+  const bindRemove = (scope) => {
+    scope.querySelectorAll('[data-gallery-remove]').forEach((btn) => {
+      if (btn.dataset.bound === '1') return;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', () => {
+        const row = btn.closest('[data-gallery-item]');
+        if (row) row.remove();
+        updateGalleryLabels();
+      });
+    });
+  };
+
+  galleryAddBtnEl.addEventListener('click', () => {
+    const currentCount = galleryListEl.querySelectorAll('[data-gallery-item]').length;
+    if (currentCount >= MAX_GALLERY) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'gallery-item';
+    wrapper.setAttribute('data-gallery-item', '');
+    wrapper.innerHTML = `
+      <div class="gallery-item-head">
+        <span class="gallery-item-label">Image ${currentCount + 1}</span>
+        <button type="button" class="gallery-remove-btn" data-gallery-remove>Remove</button>
+      </div>
+      <input
+        type="url"
+        name="gallery_url[]"
+        placeholder="https://example.com/your-image.jpg"
+        value=""
+        maxlength="255"
+      >
+      <input
+        type="text"
+        name="gallery_caption[]"
+        placeholder="Optional caption"
+        value=""
+        maxlength="160"
+      >
+    `;
+    galleryListEl.appendChild(wrapper);
+    bindRemove(wrapper);
+    updateGalleryLabels();
+  });
+
+  bindRemove(galleryListEl);
+  updateGalleryLabels();
+})();
 
 
 
@@ -913,6 +1104,17 @@ form.addEventListener('submit', async (e) => {
   if (!imgEl || !xEl || !yEl || !zEl || !previewWrapEl) return;
 
   let dragState = null;
+  let activePointerId = null;
+
+  const getPoint = (event) => {
+    if (event.touches && event.touches[0]) {
+      return { x: event.touches[0].clientX, y: event.touches[0].clientY };
+    }
+    if (event.changedTouches && event.changedTouches[0]) {
+      return { x: event.changedTouches[0].clientX, y: event.changedTouches[0].clientY };
+    }
+    return { x: event.clientX, y: event.clientY };
+  };
 
   const update = () => {
     const x = Math.max(0, Math.min(100, parseFloat(xEl.value || '50') || 50));
@@ -923,41 +1125,87 @@ form.addEventListener('submit', async (e) => {
     if (zValEl) zValEl.textContent = z + '%';
   };
 
+  const stopDrag = () => {
+    dragState = null;
+    activePointerId = null;
+    previewWrapEl.classList.remove('dragging');
+  };
+
   const updateFromDrag = (event) => {
     if (!dragState) return;
+    if (event.cancelable) event.preventDefault();
+
     const rect = previewWrapEl.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
-    const dx = event.clientX - dragState.startX;
-    const dy = event.clientY - dragState.startY;
-    const nextX = Math.max(0, Math.min(100, dragState.startFocusX + ((dx / rect.width) * 100)));
-    const nextY = Math.max(0, Math.min(100, dragState.startFocusY + ((dy / rect.height) * 100)));
+
+    const point = getPoint(event);
+    const dx = point.x - dragState.startX;
+    const dy = point.y - dragState.startY;
+
+    // Invert movement so dragging feels like moving the image itself.
+    const nextX = Math.max(0, Math.min(100, dragState.startFocusX - ((dx / rect.width) * 100)));
+    const nextY = Math.max(0, Math.min(100, dragState.startFocusY - ((dy / rect.height) * 100)));
     xEl.value = String(Math.round(nextX));
     yEl.value = String(Math.round(nextY));
     update();
   };
 
-  previewWrapEl.addEventListener('pointerdown', (event) => {
+  const startDrag = (event) => {
+    if (event.cancelable) event.preventDefault();
+    const point = getPoint(event);
     dragState = {
-      startX: event.clientX,
-      startY: event.clientY,
+      startX: point.x,
+      startY: point.y,
       startFocusX: Math.max(0, Math.min(100, parseFloat(xEl.value || '50') || 50)),
       startFocusY: Math.max(0, Math.min(100, parseFloat(yEl.value || '50') || 50)),
     };
-    previewWrapEl.classList.add('dragging');
-    previewWrapEl.setPointerCapture(event.pointerId);
-  });
-  previewWrapEl.addEventListener('pointermove', updateFromDrag);
-  previewWrapEl.addEventListener('pointerup', (event) => {
-    dragState = null;
-    previewWrapEl.classList.remove('dragging');
-    if (previewWrapEl.hasPointerCapture(event.pointerId)) {
-      previewWrapEl.releasePointerCapture(event.pointerId);
+    if (typeof event.pointerId === 'number') {
+      activePointerId = event.pointerId;
     }
+    previewWrapEl.classList.add('dragging');
+    if (typeof event.pointerId === 'number') {
+      try {
+        previewWrapEl.setPointerCapture(event.pointerId);
+      } catch (err) {}
+    }
+  };
+
+  previewWrapEl.addEventListener('dragstart', (event) => event.preventDefault());
+  imgEl.draggable = false;
+
+  previewWrapEl.addEventListener('pointerdown', (event) => {
+    startDrag(event);
+  });
+  previewWrapEl.addEventListener('pointermove', (event) => {
+    if (!dragState) return;
+    if (activePointerId !== null && event.pointerId !== activePointerId) return;
+    updateFromDrag(event);
+  });
+  previewWrapEl.addEventListener('pointerup', (event) => {
+    if (activePointerId !== null && event.pointerId !== activePointerId) return;
+    if (typeof event.pointerId === 'number') {
+      try {
+        if (previewWrapEl.hasPointerCapture(event.pointerId)) {
+          previewWrapEl.releasePointerCapture(event.pointerId);
+        }
+      } catch (err) {}
+    }
+    stopDrag();
   });
   previewWrapEl.addEventListener('pointercancel', () => {
-    dragState = null;
-    previewWrapEl.classList.remove('dragging');
+    stopDrag();
   });
+
+  if (!window.PointerEvent) {
+    previewWrapEl.addEventListener('mousedown', startDrag);
+    window.addEventListener('mousemove', updateFromDrag, { passive: false });
+    window.addEventListener('mouseup', stopDrag);
+
+    previewWrapEl.addEventListener('touchstart', startDrag, { passive: false });
+    window.addEventListener('touchmove', updateFromDrag, { passive: false });
+    window.addEventListener('touchend', stopDrag);
+    window.addEventListener('touchcancel', stopDrag);
+  }
 
   if (logoUrlEl) {
     logoUrlEl.addEventListener('input', () => {

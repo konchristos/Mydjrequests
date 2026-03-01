@@ -43,6 +43,18 @@ function mdjr_safe_unlink_local_logo(string $logoUrl): void
     }
 }
 
+function mdjr_safe_unlink_local_gallery(string $imageUrl): void
+{
+    $imageUrl = trim($imageUrl);
+    if ($imageUrl === '' || strpos($imageUrl, '/uploads/dj_profile/') !== 0) {
+        return;
+    }
+    $file = APP_ROOT . '/' . ltrim($imageUrl, '/');
+    if (is_file($file)) {
+        @unlink($file);
+    }
+}
+
 function mdjr_ensure_profile_image_controls_columns(PDO $db): void
 {
     $columns = [
@@ -68,6 +80,135 @@ function mdjr_ensure_profile_image_controls_columns(PDO $db): void
             // Non-fatal.
         }
     }
+}
+
+function mdjr_normalize_gallery_url(string $raw): string
+{
+    $url = trim($raw);
+    if ($url === '') {
+        return '';
+    }
+    if (strpos($url, '/uploads/') === 0) {
+        return $url;
+    }
+    if (!filter_var($url, FILTER_VALIDATE_URL)) {
+        return '';
+    }
+    $scheme = strtolower((string)parse_url($url, PHP_URL_SCHEME));
+    if (!in_array($scheme, ['http', 'https'], true)) {
+        return '';
+    }
+    return $url;
+}
+
+function mdjr_parse_gallery_items_from_post(): array
+{
+    $urls = $_POST['gallery_url'] ?? [];
+    $captions = $_POST['gallery_caption'] ?? [];
+
+    if (!is_array($urls)) {
+        $urls = [];
+    }
+    if (!is_array($captions)) {
+        $captions = [];
+    }
+
+    $items = [];
+    $invalidCount = 0;
+    $limit = min(count($urls), 50);
+    for ($i = 0; $i < $limit; $i++) {
+        $rawUrl = trim((string)($urls[$i] ?? ''));
+        $url = mdjr_normalize_gallery_url($rawUrl);
+        $caption = trim((string)($captions[$i] ?? ''));
+        if ($rawUrl !== '' && $url === '') {
+            $invalidCount++;
+        }
+        if ($url === '') {
+            continue;
+        }
+        if (mb_strlen($caption) > 160) {
+            $caption = mb_substr($caption, 0, 160);
+        }
+        $items[] = [
+            'image_url' => $url,
+            'caption' => $caption,
+        ];
+    }
+
+    return [
+        'items' => $items,
+        'invalid_count' => $invalidCount,
+    ];
+}
+
+function mdjr_parse_gallery_upload_items(array $files, int $djId): array
+{
+    $items = [];
+    $errors = [];
+
+    if (empty($files) || !array_key_exists('name', $files)) {
+        return ['items' => [], 'errors' => []];
+    }
+
+    $names = $files['name'] ?? [];
+    $tmpNames = $files['tmp_name'] ?? [];
+    $sizes = $files['size'] ?? [];
+    $uploadErrors = $files['error'] ?? [];
+
+    if (!is_array($names) || !is_array($tmpNames) || !is_array($sizes) || !is_array($uploadErrors)) {
+        return ['items' => [], 'errors' => ['Invalid gallery upload payload.']];
+    }
+
+    $allowed = [
+        'image/png' => 'png',
+        'image/jpeg' => 'jpg',
+        'image/webp' => 'webp',
+    ];
+
+    $dir = APP_ROOT . '/uploads/dj_profile/user_' . $djId;
+    if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+        return ['items' => [], 'errors' => ['Failed to prepare gallery upload directory.']];
+    }
+
+    $total = min(count($names), 20);
+    for ($i = 0; $i < $total; $i++) {
+        $name = trim((string)($names[$i] ?? ''));
+        $tmp = (string)($tmpNames[$i] ?? '');
+        $size = (int)($sizes[$i] ?? 0);
+        $err = (int)($uploadErrors[$i] ?? UPLOAD_ERR_NO_FILE);
+
+        if ($err === UPLOAD_ERR_NO_FILE || $name === '') {
+            continue;
+        }
+        if ($err !== UPLOAD_ERR_OK) {
+            $errors[] = 'One or more gallery images failed to upload.';
+            continue;
+        }
+        if ($size > (2 * 1024 * 1024)) {
+            $errors[] = 'Gallery images must be 2MB or smaller.';
+            continue;
+        }
+
+        $mime = mdjr_detect_mime($tmp);
+        if (!isset($allowed[$mime])) {
+            $errors[] = 'Gallery images must be PNG, JPG, or WEBP.';
+            continue;
+        }
+
+        $filename = 'gallery_' . $djId . '_' . time() . '_' . $i . '_' . bin2hex(random_bytes(3)) . '.' . $allowed[$mime];
+        $dest = $dir . '/' . $filename;
+        if (!move_uploaded_file($tmp, $dest)) {
+            $errors[] = 'Failed to save one or more gallery images.';
+            continue;
+        }
+
+        $items[] = [
+            'image_url' => '/uploads/dj_profile/user_' . $djId . '/' . $filename,
+            'caption' => '',
+        ];
+    }
+
+    return ['items' => $items, 'errors' => $errors];
 }
 
 
@@ -242,6 +383,37 @@ $data['is_public'] = isset($_POST['is_public']) ? 1 : 0;
         $data['logo_url'] = '/uploads/dj_profile/user_' . $djId . '/' . $filename;
     }
 
+    $galleryItems = [];
+    $existingGallery = [];
+    if ($isPremiumPlan) {
+        $existingGallery = $profileModel->getGalleryByUserId($djId, false);
+        $galleryParsed = mdjr_parse_gallery_items_from_post();
+        $galleryItems = $galleryParsed['items'];
+        if ((int)($galleryParsed['invalid_count'] ?? 0) > 0) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'One or more gallery image URLs are invalid. Use https:// links.'
+            ]);
+            exit;
+        }
+        $uploadParsed = mdjr_parse_gallery_upload_items((array)($_FILES['gallery_files'] ?? []), $djId);
+        if (!empty($uploadParsed['errors'])) {
+            echo json_encode([
+                'success' => false,
+                'message' => (string)$uploadParsed['errors'][0]
+            ]);
+            exit;
+        }
+        $galleryItems = array_merge($galleryItems, $uploadParsed['items']);
+        if (count($galleryItems) > 5) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Gallery supports up to 5 images total (uploads + URLs).'
+            ]);
+            exit;
+        }
+    }
+
     // Save profile
     try {
     $ok = $profileModel->update($profile['id'], $data);
@@ -255,6 +427,24 @@ $data['is_public'] = isset($_POST['is_public']) ? 1 : 0;
     }
     throw $e;
 }
+
+    if ($ok && $isPremiumPlan) {
+        $profileModel->replaceGalleryForUser($djId, $galleryItems);
+
+        $newUrls = [];
+        foreach ($galleryItems as $item) {
+            $url = trim((string)($item['image_url'] ?? ''));
+            if ($url !== '') {
+                $newUrls[$url] = true;
+            }
+        }
+        foreach ($existingGallery as $oldItem) {
+            $oldUrl = trim((string)($oldItem['image_url'] ?? ''));
+            if ($oldUrl !== '' && !isset($newUrls[$oldUrl])) {
+                mdjr_safe_unlink_local_gallery($oldUrl);
+            }
+        }
+    }
 
     echo json_encode([
         "success" => (bool)$ok,
