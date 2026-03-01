@@ -2,12 +2,11 @@
 // app/config/subscriptions.php
 
 return [
-    // Initial trial length on registration
-    'trial_days' => 30,
+    // Initial trial length on registration (calendar-month based)
+    'trial_months' => 1,
 
-    // Auto-renew trial when expired (free access until subscriptions launch)
+    // Auto-renew trial when expired (calendar month cadence, same day-of-month)
     'auto_renew_trial' => true,
-    'auto_renew_days'  => 30,
 
     // Require Terms acceptance before accessing the DJ area
     'require_terms' => true,

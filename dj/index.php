@@ -428,7 +428,7 @@ window.DJ_CONFIG = {
 </div>
 
 <div id="connectedPatronsModal" class="support-modal hidden">
-  <div class="support-modal-content insights-modal-content">
+  <div class="support-modal-content insights-modal-content connected-patrons-modal-content">
     <div class="mood-modal-header">
       <h3>👥 Connected Patrons</h3>
       <button id="closeConnectedPatronsModal" type="button">✕</button>

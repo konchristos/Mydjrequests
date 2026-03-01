@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/helpers/ip_geo.php';
 require_dj_login();
 
 header('Content-Type: application/json; charset=utf-8');
@@ -31,26 +32,66 @@ if (!$event) {
 
 $eventId = (int)$event['id'];
 
+function tableHasColumn(PDO $db, string $table, string $column): bool
+{
+    try {
+        $stmt = $db->prepare('
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = ?
+        ');
+        $stmt->execute([$table, $column]);
+        return ((int)$stmt->fetchColumn()) > 0;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
 $connectedGuests = [];
 $connectedPatrons = 0;
 $connectedTokens = [];
 $connectedSource = 'page_views';
 
 try {
-    $connectedGuestsStmt = $db->prepare('
+    $hasCountryCodeCol = tableHasColumn($db, 'event_page_views', 'country_code');
+    $hasIpAddressCol = tableHasColumn($db, 'event_page_views', 'ip_address');
+    $countrySelect = $hasCountryCodeCol
+        ? "MAX(NULLIF(UPPER(TRIM(epv.country_code)), '')) AS country_code"
+        : "NULL AS country_code";
+    $ipSelect = $hasIpAddressCol
+        ? "MAX(NULLIF(TRIM(epv.ip_address), '')) AS ip_address"
+        : "NULL AS ip_address";
+
+    $connectedGuestsStmt = $db->prepare("
         SELECT
             epv.guest_token,
-            MAX(epv.last_seen_at) AS last_seen_at
+            MAX(epv.last_seen_at) AS last_seen_at,
+            {$ipSelect},
+            {$countrySelect}
         FROM event_page_views epv
         WHERE epv.event_id = ?
           AND epv.guest_token IS NOT NULL
-          AND epv.guest_token <> ""
+          AND epv.guest_token <> ''
         GROUP BY epv.guest_token
         ORDER BY MAX(epv.last_seen_at) DESC
         LIMIT 200
-    ');
+    ");
     $connectedGuestsStmt->execute([$eventId]);
     $connectedGuests = $connectedGuestsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $countryUpdateStmt = null;
+    if ($hasCountryCodeCol) {
+        $countryUpdateStmt = $db->prepare('
+            UPDATE event_page_views
+            SET country_code = :country_code
+            WHERE event_id = :event_id
+              AND guest_token = :guest_token
+              AND (country_code IS NULL OR country_code = "")
+        ');
+    }
+    $lookupBudget = 3;
 
     foreach ($connectedGuests as &$cg) {
         $token = (string)($cg['guest_token'] ?? '');
@@ -59,6 +100,35 @@ try {
         }
         $connectedTokens[$token] = true;
         $cg['patron_name'] = 'Guest';
+        $cc = strtoupper(trim((string)($cg['country_code'] ?? '')));
+        if (!preg_match('/^[A-Z]{2}$/', $cc)) {
+            $cc = '';
+        }
+
+        if ($cc === '' && $lookupBudget > 0 && $hasCountryCodeCol && $hasIpAddressCol) {
+            $ip = trim((string)($cg['ip_address'] ?? ''));
+            if ($ip !== '') {
+                $resolved = mdjr_ip_country_code($ip);
+                if (is_string($resolved) && preg_match('/^[A-Z]{2}$/', strtoupper($resolved))) {
+                    $cc = strtoupper($resolved);
+                    if ($countryUpdateStmt) {
+                        try {
+                            $countryUpdateStmt->execute([
+                                ':country_code' => $cc,
+                                ':event_id' => $eventId,
+                                ':guest_token' => $token,
+                            ]);
+                        } catch (Throwable $e) {
+                            // no-op: keep response country even if persistence fails
+                        }
+                    }
+                }
+                $lookupBudget--;
+            }
+        }
+
+        $cg['country_code'] = ($cc !== '' ? $cc : null);
+        unset($cg['ip_address']);
     }
     unset($cg);
 
@@ -296,6 +366,7 @@ if ($connectedSource === 'activity' || $connectedPatrons === 0) {
             'guest_token' => $token,
             'patron_name' => (string)($patron['patron_name'] ?? 'Guest'),
             'last_seen_at' => null,
+            'country_code' => null,
         ];
     }
 
@@ -343,7 +414,10 @@ usort($topPatrons, static function (array $a, array $b): int {
     return strcasecmp($a['patron_name'], $b['patron_name']);
 });
 
-$topPatrons = array_slice($topPatrons, 0, 25);
+// Top Patrons modal should only include guests with actual request/vote activity.
+$topPatrons = array_values(array_filter($topPatrons, static function (array $p): bool {
+    return ((int)($p['total_actions'] ?? 0)) > 0;
+}));
 
 echo json_encode([
     'ok' => true,

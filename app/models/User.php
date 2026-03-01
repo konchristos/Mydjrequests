@@ -411,13 +411,18 @@ public function resetLoginFailures(int $userId): void
 
 public function renewTrial(int $userId, int $days): void
 {
-    $days = max(1, (int)$days);
-
-    // Use UTC to keep it consistent with other timestamps
+    // Keep legacy signature for compatibility; renew on a calendar-month cadence.
     $sql = "
         UPDATE users
         SET
-            trial_ends_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL {$days} DAY),
+            trial_ends_at = DATE_ADD(
+                CASE
+                    WHEN trial_ends_at IS NOT NULL AND trial_ends_at > UTC_TIMESTAMP()
+                    THEN trial_ends_at
+                    ELSE UTC_TIMESTAMP()
+                END,
+                INTERVAL 1 MONTH
+            ),
             subscription_status = 'trial'
         WHERE id = :id
     ";

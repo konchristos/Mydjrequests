@@ -23,7 +23,6 @@ $djDisplay = trim((string)($userRow['dj_name'] ?? '')) !== ''
     ? (string)$userRow['dj_name']
     : (string)($userRow['name'] ?? '');
 $dynamicObsUrl = $djUuid !== '' ? url('qr/live_embed.php?dj=' . urlencode($djUuid) . '&t=init') : '';
-$dynamicObsImageUrl = $djUuid !== '' ? url('qr/live.php?dj=' . urlencode($djUuid) . '&t=init') : '';
 $isAdminUser = is_admin();
 $basePlan = mdjr_get_user_plan_base($db, $djId);
 $activeSimulation = mdjr_get_admin_plan_simulation($db, $djId);
@@ -666,39 +665,6 @@ require __DIR__ . '/layout.php';
                 <?php else: ?>
                     <div class="settings-help">
                         Available on <strong>Premium</strong>. Unlock dynamic OBS overlays that auto-follow your LIVE event.
-                    </div>
-                <?php endif; ?>
-            </div>
-
-            <div class="settings-row">
-                <label class="settings-label" for="dynamic_obs_image_url">
-                    Live OBS QR Image URL (Direct PNG)
-                    <span class="premium-badge">Premium</span>
-                    <?php if (!$isPremiumPlan): ?>
-                        <span class="premium-lock-tip" title="Locked for Pro. Requires Premium subscription.">🔒</span>
-                    <?php endif; ?>
-                </label>
-                <?php if ($isPremiumPlan): ?>
-                    <div class="settings-copy-row">
-                        <input
-                            class="settings-input"
-                            id="dynamic_obs_image_url"
-                            type="text"
-                            readonly
-                            value="<?php echo e($dynamicObsImageUrl); ?>"
-                        >
-                        <button type="button" class="settings-btn copy-btn" data-target="dynamic_obs_image_url" data-feedback="dynamicObsImageFeedback">Copy</button>
-                    </div>
-                    <div id="dynamicObsImageFeedback" class="settings-copy-feedback">Copied OBS image URL.</div>
-                    <div class="settings-help">
-                        Direct PNG endpoint for scripts/embeds. It updates automatically to your current LIVE event.
-                    </div>
-                    <div class="settings-help" style="margin-top:8px;">
-                        Preview for this output is shown in <strong>Global QR Style → Preview Studio</strong>.
-                    </div>
-                <?php else: ?>
-                    <div class="settings-help">
-                        Available on <strong>Premium</strong>. Unlock direct OBS QR image endpoint for scripts and external embeds.
                     </div>
                 <?php endif; ?>
             </div>

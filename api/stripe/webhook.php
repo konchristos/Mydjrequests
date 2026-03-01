@@ -6,6 +6,8 @@ require_once __DIR__ . '/../../vendor/autoload.php';
 use Stripe\Webhook;
 use Stripe\Stripe;
 use Stripe\PaymentIntent;
+use Stripe\Charge;
+use Stripe\BalanceTransaction;
 
 function ensureWebhookTables(PDO $db): void
 {
@@ -283,18 +285,31 @@ function handlePaymentIntentSucceeded(PDO $db, object $event): void
         Stripe::setApiKey(STRIPE_SECRET_KEY);
         $intentFull = PaymentIntent::retrieve(
             (string)$intent->id,
-            ['expand' => ['latest_charge.balance_transaction']]
+            ['expand' => ['latest_charge', 'latest_charge.balance_transaction']]
         );
-        if (!empty($intentFull->latest_charge)) {
-            $chargeObj = $intentFull->latest_charge;
-            if (is_string($chargeObj)) {
-                $chargeId = $chargeObj;
-            } else {
-                $chargeId = (string)($chargeObj->id ?? '');
-                $platformFeeCents = (int)($chargeObj->application_fee_amount ?? 0);
-                if (!empty($chargeObj->balance_transaction) && !is_string($chargeObj->balance_transaction)) {
-                    $stripeFeeCents = (int)($chargeObj->balance_transaction->fee ?? 0);
-                }
+
+        // Fallback to the PaymentIntent-level field when available.
+        $platformFeeCents = (int)($intentFull->application_fee_amount ?? 0);
+
+        $chargeObj = $intentFull->latest_charge ?? null;
+        if (is_string($chargeObj) && $chargeObj !== '') {
+            $chargeObj = Charge::retrieve(
+                $chargeObj,
+                ['expand' => ['balance_transaction']]
+            );
+        }
+
+        if (is_object($chargeObj)) {
+            $chargeId = (string)($chargeObj->id ?? '');
+            $platformFeeFromCharge = (int)($chargeObj->application_fee_amount ?? 0);
+            if ($platformFeeFromCharge > 0) {
+                $platformFeeCents = $platformFeeFromCharge;
+            }
+            if (!empty($chargeObj->balance_transaction) && !is_string($chargeObj->balance_transaction)) {
+                $stripeFeeCents = (int)($chargeObj->balance_transaction->fee ?? 0);
+            } elseif (!empty($chargeObj->balance_transaction) && is_string($chargeObj->balance_transaction)) {
+                $bt = BalanceTransaction::retrieve((string)$chargeObj->balance_transaction);
+                $stripeFeeCents = (int)($bt->fee ?? 0);
             }
         }
     } catch (Throwable $e) {
@@ -302,7 +317,8 @@ function handlePaymentIntentSucceeded(PDO $db, object $event): void
         $platformFeeCents = 0;
         $stripeFeeCents = 0;
     }
-    $netToDjCents = $amountCents - $platformFeeCents - $stripeFeeCents;
+    // Stripe processing fees are borne by the platform, not deducted from DJ payout.
+    $netToDjCents = $amountCents - $platformFeeCents;
 
     if ($paymentType === 'dj_tip') {
         $eventUuid = $metadata->event_uuid ?? null;
@@ -444,6 +460,96 @@ function handlePaymentIntentSucceeded(PDO $db, object $event): void
             'occurred_at' => gmdate('Y-m-d H:i:s', $createdTs > 0 ? $createdTs : time()),
         ]);
     }
+}
+
+function handleChargeSucceeded(PDO $db, object $event): void
+{
+    $charge = $event->data->object ?? null;
+    if (!$charge) {
+        return;
+    }
+
+    $paymentIntentId = (string)($charge->payment_intent ?? '');
+    if ($paymentIntentId === '') {
+        return;
+    }
+
+    $stripeFeeCents = 0;
+    $applicationFeeFromCharge = (int)($charge->application_fee_amount ?? 0);
+    if (!empty($charge->balance_transaction) && !is_string($charge->balance_transaction)) {
+        $stripeFeeCents = (int)($charge->balance_transaction->fee ?? 0);
+    } elseif (!empty($charge->balance_transaction) && is_string($charge->balance_transaction)) {
+        try {
+            Stripe::setApiKey(STRIPE_SECRET_KEY);
+            $bt = BalanceTransaction::retrieve((string)$charge->balance_transaction);
+            $stripeFeeCents = (int)($bt->fee ?? 0);
+        } catch (Throwable $e) {
+            $stripeFeeCents = 0;
+        }
+    }
+
+    // In some flows, charge.succeeded arrives before balance_transaction is attached.
+    if ($stripeFeeCents <= 0 && !empty($charge->id)) {
+        try {
+            Stripe::setApiKey(STRIPE_SECRET_KEY);
+            $freshCharge = Charge::retrieve((string)$charge->id, ['expand' => ['balance_transaction']]);
+            $applicationFeeFromCharge = (int)($freshCharge->application_fee_amount ?? $applicationFeeFromCharge);
+            if (!empty($freshCharge->balance_transaction) && !is_string($freshCharge->balance_transaction)) {
+                $stripeFeeCents = (int)($freshCharge->balance_transaction->fee ?? 0);
+            } elseif (!empty($freshCharge->balance_transaction) && is_string($freshCharge->balance_transaction)) {
+                $bt = BalanceTransaction::retrieve((string)$freshCharge->balance_transaction);
+                $stripeFeeCents = (int)($bt->fee ?? 0);
+            }
+        } catch (Throwable $e) {
+            // Keep best-effort behavior; another later charge.updated can still fill this in.
+        }
+    }
+
+    if ($stripeFeeCents <= 0) {
+        return;
+    }
+
+    $stmt = $db->prepare("
+        SELECT id, gross_amount_cents, platform_fee_cents
+        FROM stripe_payment_ledger
+        WHERE payment_intent_id = ?
+          AND entry_type = 'payment'
+        ORDER BY id DESC
+        LIMIT 1
+    ");
+    $stmt->execute([$paymentIntentId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$row) {
+        return;
+    }
+
+    $platformFeeCents = (int)($row['platform_fee_cents'] ?? 0);
+    $platformFeeFromCharge = $applicationFeeFromCharge;
+    if ($platformFeeFromCharge > 0) {
+        $platformFeeCents = $platformFeeFromCharge;
+    }
+
+    $grossAmountCents = (int)($row['gross_amount_cents'] ?? 0);
+    // Keep DJ net aligned with payout model: gross minus platform fee only.
+    $netToDjCents = $grossAmountCents - $platformFeeCents;
+
+    $update = $db->prepare("
+        UPDATE stripe_payment_ledger
+        SET charge_id = :charge_id,
+            platform_fee_cents = :platform_fee_cents,
+            stripe_fee_cents = :stripe_fee_cents,
+            net_to_dj_cents = :net_to_dj_cents,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = :id
+        LIMIT 1
+    ");
+    $update->execute([
+        ':charge_id' => (string)($charge->id ?? ''),
+        ':platform_fee_cents' => $platformFeeCents,
+        ':stripe_fee_cents' => $stripeFeeCents,
+        ':net_to_dj_cents' => $netToDjCents,
+        ':id' => (int)$row['id'],
+    ]);
 }
 
 function handleDisputeEvent(PDO $db, object $event): void
@@ -679,6 +785,18 @@ if (!markEventProcessed($db, (string)$event->id, (string)$event->type)) {
 
 if ($event->type === 'payment_intent.succeeded') {
     handlePaymentIntentSucceeded($db, $event);
+    http_response_code(200);
+    exit;
+}
+
+if ($event->type === 'charge.succeeded') {
+    handleChargeSucceeded($db, $event);
+    http_response_code(200);
+    exit;
+}
+
+if ($event->type === 'charge.updated') {
+    handleChargeSucceeded($db, $event);
     http_response_code(200);
     exit;
 }

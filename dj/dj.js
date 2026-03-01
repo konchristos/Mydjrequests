@@ -42,6 +42,7 @@ const moodEl = document.getElementById("djMood");
 
 let insightsCache = null;
 const patronActivityCache = new Map();
+let topPatronExpandedToken = null;
 
 /* ===============================
    MESSAGE STATE
@@ -134,6 +135,13 @@ function escapeHtml(str) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function countryCodeToFlagEmoji(code) {
+  const cc = String(code || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(cc)) return "";
+  const OFFSET = 127397;
+  return String.fromCodePoint(cc.charCodeAt(0) + OFFSET, cc.charCodeAt(1) + OFFSET);
 }
 
 function normalizeTitle(title) {
@@ -2382,16 +2390,23 @@ function renderConnectedPatronsList(items) {
   listEl.innerHTML = items.map((item, idx) => {
     const rawName = String(item.patron_name || 'Guest');
     const label = escapeHtml(rawName);
+    const countryCode = String(item.country_code || '').trim().toUpperCase();
+    const flag = countryCodeToFlagEmoji(countryCode);
+    const flagHtml = flag
+      ? `<span class="patron-flag" title="${escapeHtml(countryCode)}">${flag}</span>`
+      : (countryCode
+          ? `<span class="patron-flag-code" title="${escapeHtml(countryCode)}">${escapeHtml(countryCode)}</span>`
+          : `<span class="patron-flag patron-flag-unknown" title="Unknown location">🌐</span>`);
     const token = String(item.guest_token || '');
-    const shortToken = token ? token.slice(0, 8) + '...' : '—';
+    const fullToken = token ? escapeHtml(token) : '—';
     const seen = item.last_seen_at ? formatThreadTime(item.last_seen_at) : '—';
 
     return `
       <div class="top-patron-row">
         <div class="top-patron-rank">${idx + 1}</div>
         <div>
-          <div class="top-patron-name">${label}</div>
-          <div class="top-patron-meta">Token: ${escapeHtml(shortToken)}</div>
+          <div class="top-patron-name">${flagHtml}${label}</div>
+          <div class="top-patron-meta">Token: <span class="top-patron-token">${fullToken}</span></div>
         </div>
         <div class="top-patron-right">
           <button type="button" class="top-patron-message-btn" data-guest-token="${escapeHtml(token)}" data-patron-name="${escapeHtml(rawName)}" title="Send direct message">Message</button>
@@ -2472,6 +2487,7 @@ function setupTopPatronExpand() {
       if (!detailEl) return;
       detailEl.classList.add('visible');
       itemEl.classList.add('expanded');
+      topPatronExpandedToken = guestToken || null;
       const icon = itemEl.querySelector('.top-patron-expand-indicator');
       if (icon) icon.textContent = '−';
 
@@ -2491,6 +2507,9 @@ function setupTopPatronExpand() {
       if (!detailEl) return;
       detailEl.classList.remove('visible');
       itemEl.classList.remove('expanded');
+      if ((topPatronExpandedToken || '') === (guestToken || '')) {
+        topPatronExpandedToken = null;
+      }
       const icon = itemEl.querySelector('.top-patron-expand-indicator');
       if (icon) icon.textContent = '+';
     };
@@ -2520,12 +2539,14 @@ function renderTopPatronsList(items) {
   const listEl = document.getElementById('topPatronsList');
   if (!listEl) return;
 
-  if (!items.length) {
+  const ranked = (Array.isArray(items) ? items : []).filter((item) => Number(item?.total_actions || 0) > 0);
+
+  if (!ranked.length) {
     listEl.innerHTML = '<div class="top-patrons-empty">No patron activity yet for this event.</div>';
     return;
   }
 
-  listEl.innerHTML = items.map((item, idx) => {
+  listEl.innerHTML = ranked.map((item, idx) => {
     const token = String(item.guest_token || '');
 
     return `
@@ -2548,6 +2569,14 @@ function renderTopPatronsList(items) {
   }).join('');
 
   setupTopPatronExpand();
+
+  // Keep expanded patron detail open across periodic insights refreshes.
+  if (topPatronExpandedToken) {
+    const targetItem = Array.from(listEl.querySelectorAll('.top-patron-item'))
+      .find((el) => (el.dataset.guestToken || '') === topPatronExpandedToken);
+    const rowBtn = targetItem?.querySelector('.top-patron-row-btn');
+    rowBtn?.click();
+  }
 }
 
 function renderDjInsights(data) {

@@ -2126,6 +2126,10 @@ $tz = new DateTimeZone(date_default_timezone_get());
 
 </div>
 
+<div style="margin-top:8px;color:#9ea0af;font-size:12px;">
+  Tip/boost totals shown here are gross amounts before platform fee.
+</div>
+
     <!-- EXPANDED VIEW (HIDDEN) -->
     <div
         class="tip-history hidden"

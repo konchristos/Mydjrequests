@@ -4,8 +4,31 @@ header('Content-Type: text/html; charset=UTF-8');
 
 require_once __DIR__ . '/../app/bootstrap_public.php';
 require_once __DIR__ . '/../app/config/stripe.php';
+require_once __DIR__ . '/../app/helpers/ip_geo.php';
 
 $ENABLE_PATRON_PAYMENTS = false;
+
+function mdjr_client_ip_address(): ?string
+{
+    $candidates = [
+        $_SERVER['HTTP_CF_CONNECTING_IP'] ?? null,
+        $_SERVER['HTTP_X_FORWARDED_FOR'] ?? null,
+        $_SERVER['REMOTE_ADDR'] ?? null,
+    ];
+
+    foreach ($candidates as $raw) {
+        if (!is_string($raw) || trim($raw) === '') {
+            continue;
+        }
+        $parts = array_map('trim', explode(',', $raw));
+        foreach ($parts as $ip) {
+            if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP)) {
+                return $ip;
+            }
+        }
+    }
+    return null;
+}
 
 
 // -------------------------
@@ -114,20 +137,60 @@ if (!$guestToken) {
 // -------------------------
 // 4. Log unique page view
 // -------------------------
-$stmt = $db->prepare("
-    INSERT INTO event_page_views
-        (event_id, guest_token, ip_address, user_agent, first_seen_at, last_seen_at)
-    VALUES (?, ?, ?, ?, NOW(), NOW())
-    ON DUPLICATE KEY UPDATE
-        last_seen_at = NOW()
-");
+$hasPageViewCountryCode = false;
+try {
+    $colStmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'event_page_views'
+          AND COLUMN_NAME = 'country_code'
+    ");
+    $colStmt->execute();
+    $hasPageViewCountryCode = ((int)$colStmt->fetchColumn()) > 0;
+} catch (Throwable $e) {
+    $hasPageViewCountryCode = false;
+}
 
-$stmt->execute([
-    $event['id'],
-    $guestToken,
-    $_SERVER['REMOTE_ADDR'] ?? null,
-    substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255)
-]);
+$ipAddress = mdjr_client_ip_address();
+$userAgent = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
+$countryCode = null;
+if ($hasPageViewCountryCode && is_string($ipAddress) && $ipAddress !== '') {
+    $countryCode = mdjr_ip_country_code($ipAddress);
+}
+
+if ($hasPageViewCountryCode) {
+    $stmt = $db->prepare("
+        INSERT INTO event_page_views
+            (event_id, guest_token, ip_address, user_agent, country_code, first_seen_at, last_seen_at)
+        VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            last_seen_at = NOW(),
+            country_code = COALESCE(NULLIF(country_code, ''), VALUES(country_code))
+    ");
+    $stmt->execute([
+        $event['id'],
+        $guestToken,
+        $ipAddress,
+        $userAgent,
+        $countryCode,
+    ]);
+} else {
+    $stmt = $db->prepare("
+        INSERT INTO event_page_views
+            (event_id, guest_token, ip_address, user_agent, first_seen_at, last_seen_at)
+        VALUES (?, ?, ?, ?, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            last_seen_at = NOW()
+    ");
+
+    $stmt->execute([
+        $event['id'],
+        $guestToken,
+        $ipAddress,
+        $userAgent,
+    ]);
+}
 
 ?>
 <!DOCTYPE html>

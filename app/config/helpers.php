@@ -169,11 +169,8 @@ function require_dj_login(): void
 
     // During alpha, keep trial refreshed for frictionless testing.
     if ($isAlphaOpenAccess && !empty($config['auto_renew_trial'])) {
-        $autoDays = (int)($config['auto_renew_days'] ?? 30);
-        $autoDays = $autoDays > 0 ? $autoDays : 30;
-
         $subscriptionModel = new Subscription();
-        $subscriptionModel->ensureFreeActive($userId, $autoDays);
+        $subscriptionModel->ensureFreeActive($userId);
     }
 
     // After alpha closes, block non-subscribed users from product pages.

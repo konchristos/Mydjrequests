@@ -1180,6 +1180,12 @@ $monthAmount    = (float)($monthlyByCurrency[$currency]['month_amount'] ?? 0);
     
     <?php endif; ?>
     
+    <?php if ($stripeOnboarded): ?>
+        <small style="color:#8e91a3;">
+            Gross amount before platform fee
+        </small>
+    <?php endif; ?>
+
     </div>
     
     <!-- LIFETIME BOOSTS -->
@@ -1233,6 +1239,12 @@ $monthAmount    = (float)($monthlyByCurrency[$currency]['month_amount'] ?? 0);
     
     <?php endif; ?>
     
+    <?php if ($stripeOnboarded): ?>
+        <small style="color:#8e91a3;">
+            Gross amount before platform fee
+        </small>
+    <?php endif; ?>
+
     </div>
     
    

@@ -46,10 +46,15 @@ public function register(array $data): array
 
     // Trial config
     $config = require __DIR__ . '/../config/subscriptions.php';
-    $trialDays = (int)($config['trial_days'] ?? 30);
+    $trialMonths = (int)($config['trial_months'] ?? 1);
+    if ($trialMonths <= 0) {
+        // Backward-compatible fallback for older config keys.
+        $trialDays = (int)($config['trial_days'] ?? 30);
+        $trialMonths = $trialDays > 0 ? max(1, (int)round($trialDays / 30)) : 1;
+    }
 
-    $trialEndsAt = (new DateTime())
-        ->modify("+{$trialDays} days")
+    $trialEndsAt = (new DateTime('now', new DateTimeZone('UTC')))
+        ->modify("+{$trialMonths} month")
         ->format('Y-m-d H:i:s');
 
     // Create user (UNVERIFIED)
@@ -75,7 +80,7 @@ public function register(array $data): array
 
     // Create initial trial subscription record.
     $subscriptionModel = new Subscription();
-    $subscriptionModel->createFree($userId, $trialDays);
+    $subscriptionModel->createFree($userId);
 
     // Generate email verification token
     $rawToken = $this->userModel->createEmailVerificationToken($userId);

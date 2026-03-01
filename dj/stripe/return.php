@@ -1,10 +1,13 @@
 <?php
 require_once __DIR__ . '/../../app/bootstrap.php';
 require_once __DIR__ . '/../../app/config/stripe.php';
+require_once __DIR__ . '/../../vendor/autoload.php';
 
 use Stripe\Account;
+use Stripe\Stripe;
 
 require_dj_login();
+Stripe::setApiKey(STRIPE_SECRET_KEY);
 
 if (empty($_SESSION['dj_id'])) {
     exit('DJ session missing');

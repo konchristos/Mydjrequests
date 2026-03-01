@@ -3,6 +3,28 @@
 
 class Subscription extends BaseModel
 {
+    private function syncTrialEndsAtToLatestRenewsAt(int $userId): void
+    {
+        $stmt = $this->db->prepare("
+            UPDATE users u
+            JOIN (
+                SELECT user_id, renews_at
+                FROM subscriptions
+                WHERE user_id = :uid
+                ORDER BY id DESC
+                LIMIT 1
+            ) s ON s.user_id = u.id
+            SET
+                u.trial_ends_at = s.renews_at
+            WHERE u.id = :uid2
+        ");
+
+        $stmt->execute([
+            'uid' => $userId,
+            'uid2' => $userId,
+        ]);
+    }
+
     public function findLatestByUserId(int $userId): ?array
     {
         $stmt = $this->db->prepare("
@@ -18,7 +40,7 @@ class Subscription extends BaseModel
         return $row ?: null;
     }
 
-    public function createFree(int $userId, int $days): void
+    public function createFree(int $userId): void
     {
         // Anchor trial renewal to user registration date (same day next month)
         $stmt = $this->db->prepare("
@@ -29,6 +51,7 @@ class Subscription extends BaseModel
         ");
 
         $stmt->execute(['uid' => $userId]);
+        $this->syncTrialEndsAtToLatestRenewsAt($userId);
     }
 
     public function renewFree(int $subscriptionId, string $currentRenewsAt): void
@@ -48,12 +71,12 @@ class Subscription extends BaseModel
         ]);
     }
 
-    public function ensureFreeActive(int $userId, int $days): void
+    public function ensureFreeActive(int $userId): void
     {
         $row = $this->findLatestByUserId($userId);
 
         if (!$row) {
-            $this->createFree($userId, $days);
+            $this->createFree($userId);
             return;
         }
 
@@ -65,6 +88,7 @@ class Subscription extends BaseModel
             // If renews_at missing or inactive, reset to next month from NOW as fallback
             $this->db->prepare("UPDATE subscriptions SET renews_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 MONTH), status='active', plan='trial' WHERE id = ?")
                 ->execute([(int)$row['id']]);
+            $this->syncTrialEndsAtToLatestRenewsAt($userId);
             return;
         }
 
@@ -88,5 +112,7 @@ class Subscription extends BaseModel
                 'id' => (int)$row['id'],
             ]);
         }
+
+        $this->syncTrialEndsAtToLatestRenewsAt($userId);
     }
 }
