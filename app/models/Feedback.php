@@ -44,6 +44,23 @@ class Feedback extends BaseModel
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    public function updateMessageForUser(int $feedbackId, int $userId, string $message): bool
+    {
+        $stmt = $this->db->prepare("
+            UPDATE feedback
+            SET message = :message
+            WHERE id = :id
+              AND user_id = :uid
+            LIMIT 1
+        ");
+        $stmt->execute([
+            'message' => $message,
+            'id' => $feedbackId,
+            'uid' => $userId,
+        ]);
+        return $stmt->rowCount() > 0;
+    }
+
     public function ensurePublicVerificationTable(): void
     {
         $this->db->exec("

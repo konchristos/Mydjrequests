@@ -84,6 +84,42 @@ class BugReport extends BaseModel
         ]);
     }
 
+    public function updateTitleForUser(int $bugId, int $userId, string $title): bool
+    {
+        $stmt = $this->db->prepare("
+            UPDATE bug_reports
+            SET title = :title,
+                updated_at = UTC_TIMESTAMP()
+            WHERE id = :bug_id
+              AND user_id = :user_id
+            LIMIT 1
+        ");
+        $stmt->execute([
+            'title' => $title,
+            'bug_id' => $bugId,
+            'user_id' => $userId,
+        ]);
+        return $stmt->rowCount() > 0;
+    }
+
+    public function updateDescriptionForUser(int $bugId, int $userId, string $description): bool
+    {
+        $stmt = $this->db->prepare("
+            UPDATE bug_reports
+            SET description = :description,
+                updated_at = UTC_TIMESTAMP()
+            WHERE id = :bug_id
+              AND user_id = :user_id
+            LIMIT 1
+        ");
+        $stmt->execute([
+            'description' => $description,
+            'bug_id' => $bugId,
+            'user_id' => $userId,
+        ]);
+        return $stmt->rowCount() > 0;
+    }
+
     public function addComment(int $bugId, int $userId, string $comment, bool $isAdmin): void
     {
         $stmt = $this->db->prepare("
@@ -113,5 +149,80 @@ class BugReport extends BaseModel
         ");
         $stmt->execute(['bid' => $bugId]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function updateCommentForUser(int $commentId, int $bugId, int $userId, string $comment): bool
+    {
+        if (!$this->userOwnsBug($bugId, $userId)) {
+            return false;
+        }
+
+        $stmt = $this->db->prepare("
+            UPDATE bug_comments
+            SET comment = :comment
+            WHERE id = :comment_id
+              AND bug_id = :bug_id
+              AND user_id = :user_id
+              AND is_admin = 0
+        ");
+        $stmt->execute([
+            'comment' => $comment,
+            'comment_id' => $commentId,
+            'bug_id' => $bugId,
+            'user_id' => $userId,
+        ]);
+
+        if ($stmt->rowCount() > 0) {
+            $this->db->prepare("UPDATE bug_reports SET updated_at = UTC_TIMESTAMP() WHERE id = ?")
+                ->execute([$bugId]);
+            return true;
+        }
+
+        return false;
+    }
+
+    public function deleteCommentForUser(int $commentId, int $bugId, int $userId): bool
+    {
+        if (!$this->userOwnsBug($bugId, $userId)) {
+            return false;
+        }
+
+        $stmt = $this->db->prepare("
+            DELETE FROM bug_comments
+            WHERE id = :comment_id
+              AND bug_id = :bug_id
+              AND user_id = :user_id
+              AND is_admin = 0
+        ");
+        $stmt->execute([
+            'comment_id' => $commentId,
+            'bug_id' => $bugId,
+            'user_id' => $userId,
+        ]);
+
+        if ($stmt->rowCount() > 0) {
+            $this->db->prepare("UPDATE bug_reports SET updated_at = UTC_TIMESTAMP() WHERE id = ?")
+                ->execute([$bugId]);
+            return true;
+        }
+
+        return false;
+    }
+
+    private function userOwnsBug(int $bugId, int $userId): bool
+    {
+        $stmt = $this->db->prepare("
+            SELECT 1
+            FROM bug_reports
+            WHERE id = :bug_id
+              AND user_id = :user_id
+            LIMIT 1
+        ");
+        $stmt->execute([
+            'bug_id' => $bugId,
+            'user_id' => $userId,
+        ]);
+
+        return (bool)$stmt->fetchColumn();
     }
 }
