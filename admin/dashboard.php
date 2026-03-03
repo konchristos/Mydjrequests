@@ -121,6 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = 'Failed to end alpha and convert users to trial: ' . $e->getMessage();
             }
         }
+
     }
 }
 
@@ -254,6 +255,17 @@ include APP_ROOT . '/dj/layout.php';
                     <?php endif; ?>
                 </h3>
                 <p>Leads from the Coming Soon page</p>
+            </a>
+        </div>
+    </div>
+
+    <div class="admin-section">
+        <h2>QR Tools</h2>
+        <p class="admin-section-copy">Open the standalone QR generator for custom URLs and style controls.</p>
+        <div class="admin-dashboard">
+            <a href="/admin/qr_generator.php" class="admin-card">
+                <h3>QR Generator</h3>
+                <p>Create QR codes from any URL, save slots, and manage custom styling presets.</p>
             </a>
         </div>
     </div>
