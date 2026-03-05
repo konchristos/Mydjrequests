@@ -60,7 +60,7 @@ require __DIR__ . '/layout.php';
 <div class="howto-wrap">
     <div class="howto-hero">
         <h1>How To Use MyDJRequests</h1>
-        <p>Detailed guidance for DJs (and a patron overview) during Alpha testing.</p>
+        <p>Everything you need to run events, accept song requests, and interact with your audience.</p>
     </div>
 
     <div class="howto-section">

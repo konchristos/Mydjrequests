@@ -1069,6 +1069,7 @@ section > h2,
         <img src="/assets/logo/MYDJRequests_Logo-white.png" alt="MyDJRequests" style="height:32px;">
     </a>
     <nav>
+        <a href="/about.php">About</a>
         <a href="<?php echo e(mdjr_url('dj/login.php')); ?>">DJ Login</a>
     </nav>
 </header>

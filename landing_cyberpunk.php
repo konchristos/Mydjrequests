@@ -807,8 +807,6 @@ section > h2,
         margin-top: 14px;
         align-items: center;
     }
-}
-
     .qr-box {
         width: 80px;
         height: 80px;
@@ -1512,12 +1510,16 @@ $adminUser = function_exists('is_admin') ? is_admin() : false;
         <?php if ($loggedIn): ?>
             <a href="/dj/dashboard.php">Dashboard</a>
             <a href="/dj/events.php">My Events</a>
+            <a href="/plans.php">Pro vs Premium</a>
+            <a href="/about.php">About</a>
             <a href="/dj/terms.php">Terms</a>
             <?php if ($adminUser): ?>
                 <a href="/admin/dashboard.php">Admin</a>
             <?php endif; ?>
             <a href="/dj/logout.php">Logout</a>
         <?php else: ?>
+            <a href="/plans.php">Pro vs Premium</a>
+            <a href="/about.php">About</a>
             <a href="<?php echo e(mdjr_url('dj/login.php')); ?>">DJ Login</a>
         <?php endif; ?>
     </nav>
@@ -1721,11 +1723,21 @@ $adminUser = function_exists('is_admin') ? is_admin() : false;
 
 <!-- Step 2 -->
 <div class="how-step tile-hover reveal"
+role="button"
+tabindex="0"
 onclick="openHowModal({
   title: 'Guests request from their phones',
   caption: 'Guests scan the QR code or open your link to request songs and leave messages — no apps, no accounts, no friction.',
   image: '/assets/marketing/how-step-2-patron-mobile.png'
-})">
+})"
+onkeydown="if (event.key === 'Enter' || event.key === ' ') {
+  event.preventDefault();
+  openHowModal({
+    title: 'Guests request from their phones',
+    caption: 'Guests scan the QR code or open your link to request songs and leave messages — no apps, no accounts, no friction.',
+    image: '/assets/marketing/how-step-2-patron-mobile.png'
+  });
+}">
     <div class="step-num">02</div>
     <h3>Guests request effortlessly</h3>
     <p>
@@ -1753,11 +1765,21 @@ onclick="openHowModal({
 
 <!-- Step 3 -->
 <div class="how-step tile-hover reveal"
+role="button"
+tabindex="0"
 onclick="openHowModal({
   title: 'You curate the set in real time',
   caption: 'All requests appear in your DJ dashboard where you approve, skip, or sort by popularity. Nothing plays automatically.',
   image: '/assets/marketing/how-step-3-dj-dashboard.png'
-})">
+})"
+onkeydown="if (event.key === 'Enter' || event.key === ' ') {
+  event.preventDefault();
+  openHowModal({
+    title: 'You curate the set in real time',
+    caption: 'All requests appear in your DJ dashboard where you approve, skip, or sort by popularity. Nothing plays automatically.',
+    image: '/assets/marketing/how-step-3-dj-dashboard.png'
+  });
+}">
     <div class="step-num">03</div>
     <h3>You curate the set</h3>
     <p>
@@ -2165,7 +2187,7 @@ let howModalScrollY = 0;
 
 function openHowModal(payload) {
   // ⛔ Disable ONLY on phones
-  if (IS_TOUCH_PHONE) return;
+  if (IS_PHONE) return;
 
   howModalScrollY = window.scrollY;
 

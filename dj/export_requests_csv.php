@@ -16,6 +16,11 @@ if (!$eventId) {
 
 $db = db();
 
+if (mdjr_get_user_plan($db, $djId) !== 'premium') {
+    http_response_code(403);
+    exit('CSV export is a Premium feature.');
+}
+
 /* --------------------------------------------------
    Verify event belongs to logged-in DJ
 -------------------------------------------------- */

@@ -1205,6 +1205,16 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     transform: translateY(1px);
 }
 
+.btn-csv.locked {
+    opacity: 0.65;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.btn-csv .premium-badge {
+    margin-left: 4px;
+}
+
 
 /*QR CODE HEADER*/
 
@@ -1992,12 +2002,21 @@ $isPublic     = !empty($spotifyPlaylist['is_public']);
 
         <!-- EXPORT -->
 <div class="request-export">
-    <a
-        href="/dj/export_requests_csv.php?event_id=<?php echo (int)$event['id']; ?>"
-        class="btn-csv"
-    >
-        ⬇ Download CSV
-    </a>
+    <?php if ($isPremiumPlan): ?>
+        <a
+            href="/dj/export_requests_csv.php?event_id=<?php echo (int)$event['id']; ?>"
+            class="btn-csv"
+        >
+            ⬇ Download CSV <span class="premium-badge">Premium</span>
+        </a>
+    <?php else: ?>
+        <span
+            class="btn-csv locked"
+            title="CSV export is available on Premium."
+        >
+            ⬇ Download CSV <span class="premium-badge">Premium</span>
+        </span>
+    <?php endif; ?>
 </div>
 
 <?php
