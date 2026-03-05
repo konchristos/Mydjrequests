@@ -24,6 +24,27 @@ $items = $feedbackModel->findAll();
 include APP_ROOT . '/dj/layout.php';
 ?>
 
+<style>
+.feedback-source {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.feedback-source-public {
+    background: rgba(53, 182, 255, 0.16);
+    color: #8dd8ff;
+    border: 1px solid rgba(53, 182, 255, 0.34);
+}
+.feedback-source-dj {
+    background: rgba(139, 92, 246, 0.16);
+    color: #d7c4ff;
+    border: 1px solid rgba(139, 92, 246, 0.34);
+}
+</style>
+
 <div class="admin-wrap">
     <p style="margin:0 0 8px;"><a href="/admin/dashboard.php" style="color:#ff2fd2; text-decoration:none;">← Back</a></p>
 <h1>Feedback</h1>
@@ -33,6 +54,7 @@ include APP_ROOT . '/dj/layout.php';
             <thead>
                 <tr>
                     <th>ID</th>
+                    <th>Source</th>
                     <th>Name</th>
                     <th>Email</th>
                     <th>Message</th>
@@ -43,6 +65,13 @@ include APP_ROOT . '/dj/layout.php';
             <?php foreach ($items as $f): ?>
                 <tr>
                     <td>#<?php echo (int)$f['id']; ?></td>
+                    <td>
+                        <?php if (empty($f['user_id'])): ?>
+                            <span class="feedback-source feedback-source-public">Public</span>
+                        <?php else: ?>
+                            <span class="feedback-source feedback-source-dj">DJ</span>
+                        <?php endif; ?>
+                    </td>
                     <td><?php echo e($f['name']); ?></td>
                     <td><?php echo e($f['email']); ?></td>
                     <td><?php echo e($f['message']); ?></td>

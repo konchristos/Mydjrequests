@@ -6,5 +6,5 @@ require_once __DIR__ . '/app/bootstrap.php';
 //require_once __DIR__ . '/landing_original.php';
 
 
-// Load your cyberpunk v2 landing page
-require_once __DIR__ . '/landing_cyberpunk.php';
+// Load your current public landing page
+require_once __DIR__ . '/landing_modern_light_hybrid.php';

@@ -37,7 +37,7 @@ if ($token === '') {
         .card { background:#111116; border:1px solid #1f1f29; border-radius:14px; padding:24px; }
         .msg-ok { color:#7be87f; }
         .msg-err { color:#ff8080; }
-        a.btn { display:inline-block; margin-top:12px; background:#ff2fd2; color:#fff; text-decoration:none; border:none; padding:10px 14px; border-radius:8px; font-weight:600; }
+        a.btn { display:inline-block; margin-top:12px; background:linear-gradient(145deg,#35b6ff,#1e9fe8); color:#03243a; text-decoration:none; border:1px solid rgba(80,180,240,.85); padding:10px 14px; border-radius:8px; font-weight:700; }
     </style>
 </head>
 <body>
@@ -45,7 +45,7 @@ if ($token === '') {
         <div class="card">
             <h1>Feedback Verification</h1>
             <p class="<?php echo $ok ? 'msg-ok' : 'msg-err'; ?>"><?php echo e($message); ?></p>
-            <a class="btn" href="/feedback.php">Back to Feedback</a>
+            <a class="btn" href="/">Back to Homepage</a>
         </div>
     </div>
 </body>

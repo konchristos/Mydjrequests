@@ -33,6 +33,7 @@
             --max: 1160px;
             --shadow: 0 30px 78px rgba(0, 0, 0, 0.42);
             --city-opacity: 0.08;
+            --header-h: 56px;
         }
 
         * { box-sizing: border-box; }
@@ -98,7 +99,7 @@
             mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent 82%);
         }
 
-        .wrap { width: min(var(--max), calc(100% - 40px)); margin: 0 auto; }
+        .wrap { width: min(var(--max), calc(100% - 28px)); margin: 0 auto; }
 
         header {
             position: sticky;
@@ -113,11 +114,12 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 14px;
-            padding: 13px 0;
+            gap: 16px;
+            min-height: var(--header-h);
+            padding: 8px 0;
         }
 
-        .brand img { height: 34px; display: block; }
+        .brand img { height: 30px; display: block; }
 
         nav { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: flex-end; }
 
@@ -527,6 +529,7 @@ if (!function_exists('mdjr_esc')) {
                 <a href="/dj/events.php">My Events</a>
                 <a href="/plans.php">Pro vs Premium</a>
                 <a href="/about.php">About</a>
+                <a href="/contact.php">Contact</a>
                 <a href="/dj/terms.php">Terms</a>
                 <?php if ($adminUser): ?>
                     <a href="/admin/dashboard.php">Admin</a>
@@ -535,6 +538,7 @@ if (!function_exists('mdjr_esc')) {
             <?php else: ?>
                 <a href="/plans.php">Pro vs Premium</a>
                 <a href="/about.php">About</a>
+                <a href="/contact.php">Contact</a>
                 <a href="<?php echo mdjr_esc(mdjr_url('dj/login.php')); ?>">DJ Login</a>
             <?php endif; ?>
         </nav>
@@ -783,7 +787,7 @@ if (!function_exists('mdjr_esc')) {
 </main>
 
 <footer>
-    &copy; <?php echo date('Y'); ?> MyDJRequests. All rights reserved.
+    &copy; <?php echo date('Y'); ?> MyDJRequests. All rights reserved. <a href="/privacy.php" style="color:inherit; text-decoration:underline;">Privacy</a>
 </footer>
 
 <script>

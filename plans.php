@@ -1,5 +1,8 @@
 <?php
 require_once __DIR__ . '/app/bootstrap_public.php';
+
+$loggedIn = function_exists('is_dj_logged_in') ? is_dj_logged_in() : false;
+$adminUser = function_exists('is_admin') ? is_admin() : false;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -7,6 +10,9 @@ require_once __DIR__ . '/app/bootstrap_public.php';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pro vs Premium | MyDJRequests</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet">
     <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="shortcut icon" href="/favicon-v2.ico">
@@ -14,15 +20,18 @@ require_once __DIR__ . '/app/bootstrap_public.php';
     <link rel="manifest" href="/site.webmanifest">
     <style>
         :root {
-            --bg: #0c0c11;
-            --panel: rgba(19, 19, 28, 0.88);
-            --panel-strong: rgba(26, 26, 38, 0.92);
-            --line: #2e2e42;
-            --text: #f1f1f8;
-            --muted: #b7b7ca;
-            --brand: #ff2fd2;
-            --ok: #69ecac;
-            --off: #818198;
+            --bg: #060b12;
+            --panel: rgba(12, 21, 33, 0.88);
+            --panel-strong: rgba(9, 17, 28, 0.94);
+            --line: rgba(149, 181, 216, 0.24);
+            --text: #eef5ff;
+            --muted: #9db1cb;
+            --brand: #35b6ff;
+            --brand-strong: #1e9fe8;
+            --ok: #6de5ba;
+            --off: #7f98b6;
+            --header-h: 56px;
+            --nav-max: 1160px;
         }
 
         * { box-sizing: border-box; }
@@ -31,7 +40,7 @@ require_once __DIR__ . '/app/bootstrap_public.php';
             margin: 0;
             background: var(--bg);
             color: var(--text);
-            font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
+            font-family: "Manrope", system-ui, -apple-system, Segoe UI, sans-serif;
         }
 
         .cyberpunk-bg {
@@ -39,14 +48,15 @@ require_once __DIR__ . '/app/bootstrap_public.php';
             inset: 0;
             z-index: -2;
             overflow: hidden;
-            background: #09090d;
+            background: #070f19;
+            opacity: 1;
         }
 
         .cyberpunk-bg video {
             width: 100%;
             height: 100%;
             object-fit: cover;
-            filter: saturate(1.1) contrast(1.08) brightness(.52);
+            filter: saturate(1.08) contrast(1.06) brightness(.58);
         }
 
         .bg-vignette {
@@ -54,46 +64,64 @@ require_once __DIR__ . '/app/bootstrap_public.php';
             inset: 0;
             z-index: -1;
             background:
-                radial-gradient(circle at 15% -10%, rgba(255, 47, 210, 0.22), transparent 44%),
-                linear-gradient(180deg, rgba(7, 7, 11, 0.3) 0%, rgba(7, 7, 11, 0.86) 76%);
+                radial-gradient(circle at 15% -10%, rgba(53, 182, 255, 0.22), transparent 44%),
+                radial-gradient(circle at 85% -12%, rgba(45, 210, 190, 0.16), transparent 46%),
+                linear-gradient(180deg, rgba(7, 12, 20, 0.35) 0%, rgba(6, 10, 17, 0.9) 76%);
             pointer-events: none;
         }
 
         header {
-            position: sticky;
+            position: fixed;
             top: 0;
-            z-index: 10;
-            padding: 14px 20px;
-            border-bottom: 1px solid #242437;
-            background: rgba(10, 10, 15, 0.8);
-            backdrop-filter: blur(7px);
+            left: 0;
+            right: 0;
+            z-index: 100;
+            border-bottom: 1px solid rgba(149, 181, 216, 0.2);
+            background: rgba(6, 12, 20, 0.78);
+            backdrop-filter: blur(9px);
+        }
+
+        .header-inner {
+            width: min(var(--nav-max), calc(100% - 28px));
+            margin: 0 auto;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 16px;
+            min-height: var(--header-h);
+            padding: 8px 0;
         }
 
         nav {
             display: flex;
             gap: 16px;
             align-items: center;
+            flex-wrap: wrap;
+            justify-content: flex-end;
         }
 
         nav a {
-            color: #d7d7e7;
+            color: #c9ddf4;
             text-decoration: none;
             font-size: 14px;
+            font-weight: 600;
         }
 
-        nav a:hover { color: #fff; }
+        nav a:hover { color: var(--brand); }
 
         .wrap {
             width: min(1100px, calc(100% - 28px));
-            margin: 28px auto 54px;
+            margin: 0 auto;
+        }
+
+        main.wrap {
+            margin-top: calc(var(--header-h) + 16px);
+            margin-bottom: 54px;
         }
 
         .hero {
-            background: linear-gradient(140deg, rgba(255, 47, 210, 0.2), rgba(14, 14, 24, 0.88));
-            border: 1px solid #53335b;
+            background: linear-gradient(140deg, rgba(53, 182, 255, 0.24), rgba(10, 19, 31, 0.9));
+            border: 1px solid rgba(92, 150, 212, 0.4);
             border-radius: 18px;
             padding: 26px 22px;
         }
@@ -102,12 +130,13 @@ require_once __DIR__ . '/app/bootstrap_public.php';
             margin: 0 0 12px;
             font-size: 34px;
             line-height: 1.1;
-            color: #fff;
+            color: var(--text);
+            font-family: "Plus Jakarta Sans", "Manrope", sans-serif;
         }
 
         .hero p {
             margin: 0;
-            color: #d9d9e7;
+            color: #c2d4ea;
             max-width: 760px;
             line-height: 1.55;
             font-size: 16px;
@@ -118,16 +147,17 @@ require_once __DIR__ . '/app/bootstrap_public.php';
             font-size: 13px;
             letter-spacing: .08em;
             text-transform: uppercase;
-            color: #c0c0d3;
+            color: #b5cae3;
             font-weight: 700;
         }
 
         .tile-zone {
             position: relative;
             border-radius: 16px;
-            border: 1px solid #2c2c40;
+            border: 1px solid var(--line);
             overflow: hidden;
             padding: 18px;
+            background: rgba(8, 15, 25, 0.9);
         }
 
         .tile-zone-video {
@@ -141,14 +171,14 @@ require_once __DIR__ . '/app/bootstrap_public.php';
             width: 100%;
             height: 100%;
             object-fit: cover;
-            filter: brightness(.5) saturate(1.1);
+            filter: brightness(.56) saturate(1.08);
         }
 
         .tile-zone-shade {
             position: absolute;
             inset: 0;
             z-index: 1;
-            background: linear-gradient(180deg, rgba(11, 11, 17, 0.28), rgba(11, 11, 17, 0.75));
+            background: linear-gradient(180deg, rgba(8, 14, 24, 0.78), rgba(7, 12, 21, 0.94));
         }
 
         .tile-zone-content {
@@ -164,16 +194,16 @@ require_once __DIR__ . '/app/bootstrap_public.php';
 
         th, td {
             padding: 12px 14px;
-            border-bottom: 1px solid rgba(53, 53, 74, 0.85);
+            border-bottom: 1px solid rgba(149, 181, 216, 0.2);
             font-size: 14px;
             text-align: left;
             vertical-align: top;
-            background: rgba(15, 15, 24, 0.52);
+            background: rgba(11, 19, 30, 0.9);
         }
 
         th {
-            background: rgba(26, 26, 40, 0.8);
-            color: #ddddef;
+            background: rgba(16, 28, 43, 0.96);
+            color: #d4e5f8;
             font-size: 13px;
         }
 
@@ -191,28 +221,29 @@ require_once __DIR__ . '/app/bootstrap_public.php';
         }
 
         .plan-card {
-            border: 1px solid #36364a;
+            border: 1px solid rgba(149, 181, 216, 0.26);
             border-radius: 14px;
             padding: 18px;
             background: var(--panel);
         }
 
         .plan-card.featured {
-            border-color: #9b327f;
+            border-color: rgba(53, 182, 255, 0.55);
             background: var(--panel-strong);
-            box-shadow: 0 0 34px rgba(255, 47, 210, 0.12);
+            box-shadow: 0 0 34px rgba(53, 182, 255, 0.16);
         }
 
         .plan-name {
             margin: 0;
             font-size: 22px;
-            color: #fff;
+            color: var(--text);
+            font-family: "Plus Jakarta Sans", "Manrope", sans-serif;
         }
 
         .plan-card ul {
             margin: 14px 0 0;
             padding-left: 18px;
-            color: #d4d4e5;
+            color: #c2d4ea;
             line-height: 1.52;
             font-size: 14px;
         }
@@ -225,20 +256,21 @@ require_once __DIR__ . '/app/bootstrap_public.php';
         }
 
         .btn {
-            border: 1px solid #3e3e54;
+            border: 1px solid rgba(149, 181, 216, 0.32);
             border-radius: 9px;
             padding: 11px 14px;
             font-weight: 700;
             font-size: 14px;
             text-decoration: none;
-            color: #fff;
-            background: #202031;
+            color: #dcecff;
+            background: rgba(13, 22, 35, 0.9);
             display: inline-block;
         }
 
         .btn.primary {
-            border-color: #aa2c8b;
-            background: var(--brand);
+            border-color: rgba(80, 180, 240, 0.85);
+            color: #03243a;
+            background: linear-gradient(145deg, var(--brand), var(--brand-strong));
         }
 
         .btn:hover { opacity: .92; }
@@ -246,11 +278,26 @@ require_once __DIR__ . '/app/bootstrap_public.php';
         .footer-note {
             margin-top: 14px;
             font-size: 12px;
-            color: #a7a7be;
+            color: #9bb0ca;
             line-height: 1.45;
         }
 
+        footer {
+            border-top: 1px solid rgba(149, 181, 216, 0.22);
+            background: rgba(7, 13, 22, 0.72);
+            color: #9ab1cb;
+        }
+
+        .footer-inner {
+            width: min(1100px, calc(100% - 28px));
+            margin: 0 auto;
+            text-align: center;
+            padding: 22px 0 34px;
+            font-size: 13px;
+        }
+
         @media (max-width: 860px) {
+            :root { --header-h: 52px; }
             .pricing { grid-template-columns: 1fr; }
             .hero h1 { font-size: 28px; }
             table, thead, tbody, th, td, tr { display: block; }
@@ -258,11 +305,11 @@ require_once __DIR__ . '/app/bootstrap_public.php';
             td { border-bottom: 0; padding: 8px 12px; }
             tr {
                 margin-bottom: 8px;
-                border: 1px solid rgba(53, 53, 74, 0.75);
+                border: 1px solid rgba(149, 181, 216, 0.24);
             }
             td:first-child {
                 font-weight: 700;
-                color: #fff;
+                color: var(--text);
                 padding-top: 11px;
             }
         }
@@ -278,25 +325,42 @@ require_once __DIR__ . '/app/bootstrap_public.php';
 <div class="bg-vignette" aria-hidden="true"></div>
 
 <header>
-    <a href="/">
-        <img src="/assets/logo/MYDJRequests_Logo-white.png" alt="MyDJRequests" style="height:30px;">
-    </a>
-    <nav>
-        <a href="/">Home</a>
-        <a href="<?php echo e(mdjr_url('dj/login.php')); ?>">DJ Login</a>
-    </nav>
+    <div class="header-inner">
+        <a href="/">
+            <img src="/assets/logo/MYDJRequests_Logo-white.png" alt="MyDJRequests" style="height:30px;">
+        </a>
+        <nav>
+            <?php if ($loggedIn): ?>
+                <a href="/dj/dashboard.php">Dashboard</a>
+                <a href="/dj/events.php">My Events</a>
+                <a href="/plans.php">Pro vs Premium</a>
+                <a href="/about.php">About</a>
+                <a href="/contact.php">Contact</a>
+                <a href="/dj/terms.php">Terms</a>
+                <?php if ($adminUser): ?>
+                    <a href="/admin/dashboard.php">Admin</a>
+                <?php endif; ?>
+                <a href="/dj/logout.php">Logout</a>
+            <?php else: ?>
+                <a href="/plans.php">Pro vs Premium</a>
+                <a href="/about.php">About</a>
+                <a href="/contact.php">Contact</a>
+                <a href="<?php echo e(mdjr_url('dj/login.php')); ?>">DJ Login</a>
+            <?php endif; ?>
+        </nav>
+    </div>
 </header>
 
-<main class="wrap">
-    <section class="hero">
-        <h1>Choose Your DJ Growth Plan</h1>
+		<main class="wrap">
+		    <section class="hero">
+	        <h1>Choose Your DJ Growth Plan</h1>
         <p>
             MyDJRequests gives every DJ a clean request workflow. Premium unlocks advanced growth tools for engagement, branding, and live stream presentation.
         </p>
     </section>
 
-    <h2 class="section-title">Plan Comparison</h2>
-    <section class="tile-zone" aria-label="Pro vs Premium comparison">
+	    <h2 class="section-title">Plan Comparison</h2>
+		    <section class="tile-zone" aria-label="Pro vs Premium comparison">
         <div class="tile-zone-video" aria-hidden="true">
             <video muted loop playsinline autoplay preload="none">
                 <source src="/assets/video/cyberpunk_night_city_loop.webm" type="video/webm">
@@ -417,8 +481,8 @@ require_once __DIR__ . '/app/bootstrap_public.php';
         </div>
     </section>
 
-    <h2 class="section-title">Alpha Access</h2>
-    <section class="tile-zone" aria-label="Subscribe options">
+	    <h2 class="section-title">Alpha Access</h2>
+		    <section class="tile-zone" aria-label="Subscribe options">
         <div class="tile-zone-video" aria-hidden="true">
             <video muted loop playsinline autoplay preload="none">
                 <source src="/assets/video/cyberpunk_night_city_loop.webm" type="video/webm">
@@ -462,7 +526,12 @@ require_once __DIR__ . '/app/bootstrap_public.php';
                 Alpha testing is active. Join now to access MyDJRequests and start taking requests.
             </p>
         </div>
-    </section>
-</main>
-</body>
-</html>
+	    </section>
+	</main>
+    <footer>
+        <div class="footer-inner">
+            &copy; <?php echo date('Y'); ?> MyDJRequests. All rights reserved. <a href="/privacy.php" style="color:inherit; text-decoration:underline;">Privacy</a>
+        </div>
+    </footer>
+		</body>
+		</html>

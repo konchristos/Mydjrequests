@@ -25,6 +25,8 @@
             --accent: #35b6ff;
             --radius: 16px;
             --max: 1100px;
+            --header-h: 56px;
+            --nav-max: 1160px;
         }
 
         * { box-sizing: border-box; }
@@ -33,37 +35,65 @@
         body {
             font-family: "Manrope", "Segoe UI", sans-serif;
             color: var(--ink);
-            background:
-                radial-gradient(900px 420px at 15% -8%, rgba(53, 182, 255, 0.18), transparent 72%),
-                radial-gradient(900px 420px at 90% -5%, rgba(45, 210, 190, 0.14), transparent 74%),
-                var(--bg);
+            background: var(--bg);
             line-height: 1.6;
         }
 
-        .wrap { width: min(var(--max), calc(100% - 34px)); margin: 0 auto; }
+        .cyber-bg {
+            position: fixed;
+            inset: 0;
+            z-index: -2;
+            pointer-events: none;
+        }
+
+        .cyber-bg video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: saturate(1.08) contrast(1.06) brightness(.58);
+        }
+
+        .bg-wash {
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                radial-gradient(900px 420px at 15% -8%, rgba(53, 182, 255, 0.18), transparent 72%),
+                radial-gradient(900px 420px at 90% -5%, rgba(45, 210, 190, 0.14), transparent 74%),
+                linear-gradient(180deg, rgba(7, 12, 20, 0.35) 0%, rgba(6, 10, 17, 0.9) 76%);
+        }
+
+        .wrap { width: min(var(--max), calc(100% - 28px)); margin: 0 auto; }
 
         header {
-            position: sticky;
+            position: fixed;
             top: 0;
+            left: 0;
+            right: 0;
             z-index: 100;
-            background: rgba(7, 13, 22, 0.82);
-            border-bottom: 1px solid rgba(151, 182, 216, 0.2);
-            backdrop-filter: blur(8px);
+            border-bottom: 1px solid rgba(149, 181, 216, 0.2);
+            background: rgba(6, 12, 20, 0.78);
+            backdrop-filter: blur(9px);
         }
 
         .header-row {
+            width: min(var(--nav-max), calc(100% - 28px));
+            margin: 0 auto;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 14px;
-            padding: 13px 0;
+            gap: 16px;
+            min-height: var(--header-h);
+            padding: 8px 0;
         }
 
-        .brand img { height: 34px; display: block; }
+        .brand img { height: 30px; display: block; }
 
         nav {
             display: flex;
-            gap: 14px;
+            align-items: center;
+            gap: 16px;
             flex-wrap: wrap;
             justify-content: flex-end;
         }
@@ -76,6 +106,10 @@
         }
 
         nav a:hover { color: var(--accent); }
+
+        main.wrap {
+            margin-top: calc(var(--header-h) + 16px);
+        }
 
         h1, h2, h3 {
             font-family: "Plus Jakarta Sans", "Manrope", sans-serif;
@@ -176,12 +210,22 @@
         footer {
             border-top: 1px solid rgba(151, 182, 216, 0.2);
             color: #86a0bf;
+            background: rgba(7, 13, 22, 0.72);
+        }
+
+        .footer-inner {
+            width: min(var(--max), calc(100% - 28px));
+            margin: 0 auto;
             text-align: center;
             padding: 22px 0 34px;
             font-size: 13px;
         }
 
         @media (max-width: 820px) {
+            :root {
+                --header-h: 52px;
+            }
+
             .grid-2,
             .values {
                 grid-template-columns: 1fr;
@@ -197,8 +241,16 @@ $loggedIn = function_exists('is_dj_logged_in') ? is_dj_logged_in() : false;
 $adminUser = function_exists('is_admin') ? is_admin() : false;
 ?>
 
+<div class="cyber-bg" aria-hidden="true">
+    <video muted loop playsinline autoplay preload="auto">
+        <source src="/assets/video/cyberpunk_night_city_loop.webm" type="video/webm">
+        <source src="/assets/video/cyberpunk_night_city_loop.mp4" type="video/mp4">
+    </video>
+</div>
+<div class="bg-wash" aria-hidden="true"></div>
+
 <header>
-    <div class="wrap header-row">
+    <div class="header-row">
         <a href="/" class="brand">
             <img src="/assets/logo/MYDJRequests_Logo-white.png" alt="MyDJRequests">
         </a>
@@ -208,6 +260,8 @@ $adminUser = function_exists('is_admin') ? is_admin() : false;
                 <a href="/dj/events.php">My Events</a>
                 <a href="/plans.php">Pro vs Premium</a>
                 <a href="/about.php">About</a>
+                <a href="/contact.php">Contact</a>
+                <a href="/dj/terms.php">Terms</a>
                 <?php if ($adminUser): ?>
                     <a href="/admin/dashboard.php">Admin</a>
                 <?php endif; ?>
@@ -215,6 +269,7 @@ $adminUser = function_exists('is_admin') ? is_admin() : false;
             <?php else: ?>
                 <a href="/plans.php">Pro vs Premium</a>
                 <a href="/about.php">About</a>
+                <a href="/contact.php">Contact</a>
                 <a href="/dj/login.php">DJ Login</a>
             <?php endif; ?>
         </nav>
@@ -288,7 +343,9 @@ $adminUser = function_exists('is_admin') ? is_admin() : false;
 </main>
 
 <footer>
-    &copy; <?php echo date('Y'); ?> MyDJRequests. All rights reserved.
+    <div class="footer-inner">
+        &copy; <?php echo date('Y'); ?> MyDJRequests. All rights reserved. <a href="/privacy.php" style="color:inherit; text-decoration:underline;">Privacy</a>
+    </div>
 </footer>
 
 </body>

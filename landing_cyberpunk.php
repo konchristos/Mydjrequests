@@ -1512,6 +1512,7 @@ $adminUser = function_exists('is_admin') ? is_admin() : false;
             <a href="/dj/events.php">My Events</a>
             <a href="/plans.php">Pro vs Premium</a>
             <a href="/about.php">About</a>
+            <a href="/contact.php">Contact</a>
             <a href="/dj/terms.php">Terms</a>
             <?php if ($adminUser): ?>
                 <a href="/admin/dashboard.php">Admin</a>
@@ -1520,6 +1521,7 @@ $adminUser = function_exists('is_admin') ? is_admin() : false;
         <?php else: ?>
             <a href="/plans.php">Pro vs Premium</a>
             <a href="/about.php">About</a>
+            <a href="/contact.php">Contact</a>
             <a href="<?php echo e(mdjr_url('dj/login.php')); ?>">DJ Login</a>
         <?php endif; ?>
     </nav>
@@ -2094,7 +2096,7 @@ onkeydown="if (event.key === 'Enter' || event.key === ' ') {
 </section>
 
 <footer>
-    &copy; <?php echo date('Y'); ?> MyDJRequests — All Rights Reserved.
+    &copy; <?php echo date('Y'); ?> MyDJRequests — All Rights Reserved. <a href="/privacy.php" style="color:inherit; text-decoration:underline;">Privacy</a>
 </footer>
 
 <script>

@@ -564,6 +564,7 @@ if (!function_exists('mdjr_esc')) {
                 <a href="/dj/events.php">My Events</a>
                 <a href="/plans.php">Pro vs Premium</a>
                 <a href="/about.php">About</a>
+                <a href="/contact.php">Contact</a>
                 <a href="/dj/terms.php">Terms</a>
                 <?php if ($adminUser): ?>
                     <a href="/admin/dashboard.php">Admin</a>
@@ -572,6 +573,7 @@ if (!function_exists('mdjr_esc')) {
             <?php else: ?>
                 <a href="/plans.php">Pro vs Premium</a>
                 <a href="/about.php">About</a>
+                <a href="/contact.php">Contact</a>
                 <a href="<?php echo mdjr_esc(mdjr_url('dj/login.php')); ?>">DJ Login</a>
             <?php endif; ?>
         </nav>
@@ -703,7 +705,7 @@ if (!function_exists('mdjr_esc')) {
 </main>
 
 <footer>
-    &copy; <?php echo date('Y'); ?> MyDJRequests. All rights reserved.
+    &copy; <?php echo date('Y'); ?> MyDJRequests. All rights reserved. <a href="/privacy.php" style="color:inherit; text-decoration:underline;">Privacy</a>
 </footer>
 
 <script>

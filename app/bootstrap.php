@@ -64,6 +64,7 @@ $authBypassPaths = [
     '/dj/logout.php',
     '/feedback.php',
     '/feedback_verify.php',
+    '/contact.php',
 
     '/api/auth/forgot_password.php',
     '/api/auth/reset_password.php',

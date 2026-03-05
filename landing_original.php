@@ -1070,6 +1070,7 @@ section > h2,
     </a>
     <nav>
         <a href="/about.php">About</a>
+        <a href="/contact.php">Contact</a>
         <a href="<?php echo e(mdjr_url('dj/login.php')); ?>">DJ Login</a>
     </nav>
 </header>
@@ -1586,7 +1587,7 @@ onclick="openHowModal({
 </section>
 
 <footer>
-    &copy; <?php echo date('Y'); ?> MyDJRequests — All Rights Reserved.
+    &copy; <?php echo date('Y'); ?> MyDJRequests — All Rights Reserved. <a href="/privacy.php" style="color:inherit; text-decoration:underline;">Privacy</a>
 </footer>
 
 <script>
