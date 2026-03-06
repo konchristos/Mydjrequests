@@ -2,8 +2,9 @@
 require_once __DIR__ . '/../app/bootstrap.php';
 require_admin();
 
-$userModel = new User();
-$users = $userModel->getAllUsers(); // adjust if needed (order by created_at desc)
+$db = db();
+$me = current_user();
+$enableUserDelete = false; // Toggle to true when you need temporary delete access.
 
 $pageTitle = 'All Users';
 $pageBodyClass = 'admin-page';   // ðŸ‘ˆ EXPLICITLY opt into admin layout
@@ -26,14 +27,229 @@ function admin_time_ago(string $utcDatetime, string $tz = 'Australia/Melbourne')
     }
 }
 
+function admin_table_exists(PDO $db, string $tableName): bool
+{
+    $stmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+    ");
+    $stmt->execute([$tableName]);
+    return ((int)$stmt->fetchColumn() > 0);
+}
+
+function admin_column_exists(PDO $db, string $tableName, string $columnName): bool
+{
+    $stmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND COLUMN_NAME = ?
+    ");
+    $stmt->execute([$tableName, $columnName]);
+    return ((int)$stmt->fetchColumn() > 0);
+}
+
+function admin_software_label(string $software, ?string $other): string
+{
+    $software = strtolower(trim($software));
+    $labels = [
+        'rekordbox' => 'Rekordbox',
+        'serato' => 'Serato',
+        'traktor' => 'Traktor',
+        'virtualdj' => 'VirtualDJ',
+        'djay' => 'djay / djay Pro',
+        'other' => 'Other',
+    ];
+    if ($software === '') {
+        return '-';
+    }
+    if ($software === 'other') {
+        $other = trim((string)$other);
+        return $other !== '' ? $other : 'Other';
+    }
+    return $labels[$software] ?? ucfirst($software);
+}
+
+function admin_ident(string $name): string
+{
+    return '`' . str_replace('`', '``', $name) . '`';
+}
+
+function admin_delete_rows_for_user_column(PDO $db, string $columnName, int $userId, array $excludeTables = []): void
+{
+    $stmt = $db->prepare("
+        SELECT DISTINCT TABLE_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND COLUMN_NAME = ?
+    ");
+    $stmt->execute([$columnName]);
+    $tables = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+    foreach ($tables as $tableName) {
+        if ($tableName === 'users' || in_array($tableName, $excludeTables, true)) {
+            continue;
+        }
+        $sql = 'DELETE FROM ' . admin_ident((string)$tableName) . ' WHERE ' . admin_ident($columnName) . ' = ?';
+        $del = $db->prepare($sql);
+        $del->execute([$userId]);
+    }
+}
+
+function admin_delete_rows_for_event_column(PDO $db, string $columnName, array $eventValues, array $excludeTables = []): void
+{
+    if (empty($eventValues)) {
+        return;
+    }
+    $safeValues = [];
+    foreach ($eventValues as $value) {
+        if (is_int($value)) {
+            $safeValues[] = (string)$value;
+        } else {
+            $safeValues[] = "'" . str_replace("'", "''", (string)$value) . "'";
+        }
+    }
+    if (empty($safeValues)) {
+        return;
+    }
+    $inList = implode(',', $safeValues);
+
+    $stmt = $db->prepare("
+        SELECT DISTINCT TABLE_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND COLUMN_NAME = ?
+    ");
+    $stmt->execute([$columnName]);
+    $tables = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+    foreach ($tables as $tableName) {
+        if (in_array($tableName, $excludeTables, true)) {
+            continue;
+        }
+        $sql = 'DELETE FROM ' . admin_ident((string)$tableName)
+            . ' WHERE ' . admin_ident($columnName) . ' IN (' . $inList . ')';
+        $db->exec($sql);
+    }
+}
+
+function admin_delete_user_with_related_data(PDO $db, int $userId): void
+{
+    $evtStmt = $db->prepare("SELECT id, uuid FROM events WHERE user_id = ?");
+    $evtStmt->execute([$userId]);
+    $events = $evtStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $eventIds = [];
+    $eventUuids = [];
+    foreach ($events as $event) {
+        $eid = (int)($event['id'] ?? 0);
+        if ($eid > 0) {
+            $eventIds[] = $eid;
+        }
+        $uuid = trim((string)($event['uuid'] ?? ''));
+        if ($uuid !== '') {
+            $eventUuids[] = $uuid;
+        }
+    }
+
+    admin_delete_rows_for_event_column($db, 'event_uuid', $eventUuids, []);
+    admin_delete_rows_for_event_column($db, 'event_id', $eventIds, ['events']);
+
+    admin_delete_rows_for_user_column($db, 'dj_id', $userId, []);
+    admin_delete_rows_for_user_column($db, 'user_id', $userId, []);
+    admin_delete_rows_for_user_column($db, 'recipient_user_id', $userId, []);
+
+    $db->prepare("DELETE FROM users WHERE id = ? LIMIT 1")->execute([$userId]);
+}
+
+$flashMsg = '';
+$flashOk = false;
+
+if (
+    $enableUserDelete
+    && $_SERVER['REQUEST_METHOD'] === 'POST'
+    && (string)($_POST['action'] ?? '') === 'delete_user'
+) {
+    if (!verify_csrf_token()) {
+        $flashMsg = 'Security check failed. Please refresh and try again.';
+    } else {
+        $targetUserId = (int)($_POST['target_user_id'] ?? 0);
+        if ($targetUserId <= 0) {
+            $flashMsg = 'Invalid user selection.';
+        } elseif ($targetUserId === (int)($me['id'] ?? 0)) {
+            $flashMsg = 'You cannot delete your own admin account.';
+        } else {
+            $targetStmt = $db->prepare("SELECT id, email, is_admin FROM users WHERE id = ? LIMIT 1");
+            $targetStmt->execute([$targetUserId]);
+            $target = $targetStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
+            if (!$target) {
+                $flashMsg = 'User not found (they may already be deleted).';
+            } elseif (!empty($target['is_admin'])) {
+                $flashMsg = 'Admin users are protected and cannot be deleted here.';
+            } else {
+                try {
+                    $db->beginTransaction();
+                    admin_delete_user_with_related_data($db, $targetUserId);
+                    $db->commit();
+                    $flashOk = true;
+                    $flashMsg = 'User deleted: ' . (string)$target['email'];
+                } catch (Throwable $e) {
+                    if ($db->inTransaction()) {
+                        $db->rollBack();
+                    }
+                    $flashMsg = 'Delete failed: ' . $e->getMessage();
+                }
+            }
+        }
+    }
+}
+
+$userModel = new User();
+$users = $userModel->getAllUsers(); // adjust if needed (order by created_at desc)
+
+$currencyByUserId = [];
+if (admin_table_exists($db, 'user_settings') && admin_column_exists($db, 'user_settings', 'tip_boost_currency')) {
+    $stmt = $db->query("SELECT user_id, tip_boost_currency FROM user_settings");
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $uid = (int)($row['user_id'] ?? 0);
+        if ($uid > 0) {
+            $cur = strtoupper(trim((string)($row['tip_boost_currency'] ?? '')));
+            $currencyByUserId[$uid] = in_array($cur, ['AUD', 'USD', 'NZD'], true) ? $cur : '-';
+        }
+    }
+}
+
+$softwareByUserId = [];
+if (
+    admin_table_exists($db, 'user_onboarding_profiles')
+    && admin_column_exists($db, 'user_onboarding_profiles', 'dj_software')
+) {
+    $hasOther = admin_column_exists($db, 'user_onboarding_profiles', 'dj_software_other');
+    $sql = $hasOther
+        ? "SELECT user_id, dj_software, dj_software_other FROM user_onboarding_profiles"
+        : "SELECT user_id, dj_software, NULL AS dj_software_other FROM user_onboarding_profiles";
+    $stmt = $db->query($sql);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $uid = (int)($row['user_id'] ?? 0);
+        if ($uid > 0) {
+            $softwareByUserId[$uid] = admin_software_label(
+                (string)($row['dj_software'] ?? ''),
+                $row['dj_software_other'] ?? null
+            );
+        }
+    }
+}
+
 
 ?>
 
 
 
 <?php include APP_ROOT . '/dj/layout.php'; ?>
-
-<?php $me = current_user(); ?>
 
 
 <style>
@@ -62,6 +278,47 @@ function admin_time_ago(string $utcDatetime, string $tz = 'Australia/Melbourne')
     background: #323241;
     border-color: #4a4a5a;
 }  
+
+<?php if ($enableUserDelete): ?>
+.admin-delete-btn {
+    background:#40161e;
+    border:1px solid #8f2b3d;
+    color:#ffb8c3;
+    padding:6px 10px;
+    border-radius:8px;
+    font-size:12px;
+    font-weight:600;
+    cursor:pointer;
+}
+.admin-delete-btn:hover {
+    background:#531b26;
+}
+.admin-protected-pill {
+    display:inline-block;
+    padding:4px 8px;
+    border-radius:999px;
+    border:1px solid #3f3f4e;
+    color:#9ea0af;
+    font-size:11px;
+}
+.admin-alert {
+    margin: 10px 0 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    border: 1px solid #2c2c39;
+    background:#12121a;
+    color:#d8d9e2;
+}
+.admin-alert.ok {
+    border-color:#1f6c38;
+    color:#9be8b4;
+}
+.admin-alert.err {
+    border-color:#8f2b3d;
+    color:#ffb8c3;
+}
+<?php endif; ?>
     
 </style>
 
@@ -78,6 +335,11 @@ function admin_time_ago(string $utcDatetime, string $tz = 'Australia/Melbourne')
     </div>
 
     <h1>All Users</h1>
+    <?php if ($enableUserDelete && $flashMsg !== ''): ?>
+        <div class="admin-alert <?php echo $flashOk ? 'ok' : 'err'; ?>">
+            <?php echo e($flashMsg); ?>
+        </div>
+    <?php endif; ?>
 
 
 <div class="admin-report">
@@ -105,10 +367,13 @@ function admin_time_ago(string $utcDatetime, string $tz = 'Australia/Melbourne')
             <th data-sort="string">Email</th>
             <th data-sort="string">Country</th>
             <th data-sort="string">City</th>
+            <th data-sort="string">Currency</th>
+            <th data-sort="string">DJ Software</th>
             <th data-sort="date">Trial Ends</th>
             <th data-sort="string">Status</th>
             <th data-sort="date">Registered</th>
             <th data-sort="lastactive">Last Active</th>
+            <?php if ($enableUserDelete): ?><th>Actions</th><?php endif; ?>
         </tr>
         </thead>
 
@@ -156,6 +421,8 @@ function admin_time_ago(string $utcDatetime, string $tz = 'Australia/Melbourne')
                 
                 <td><?php echo e($u['country_code'] ?? '-'); ?></td>
                 <td><?php echo e($u['city'] ?? '-'); ?></td>
+                <td><?php echo e($currencyByUserId[(int)$u['id']] ?? '-'); ?></td>
+                <td><?php echo e($softwareByUserId[(int)$u['id']] ?? '-'); ?></td>
 
                 <td>
                     <?php if (!empty($u['trial_ends_at'])): ?>
@@ -180,13 +447,36 @@ function admin_time_ago(string $utcDatetime, string $tz = 'Australia/Melbourne')
 
                 
 <td title="<?php
-    $dt = new DateTime($u['session_updated_at'], new DateTimeZone('UTC'));
-    $dt->setTimezone(new DateTimeZone('Australia/Melbourne'));
-    echo e($dt->format('Y-m-d H:i:s'));
+    if (!empty($u['session_updated_at'])) {
+        $dt = new DateTime($u['session_updated_at'], new DateTimeZone('UTC'));
+        $dt->setTimezone(new DateTimeZone('Australia/Melbourne'));
+        echo e($dt->format('Y-m-d H:i:s'));
+    }
 ?>">
-    <?php echo e(admin_time_ago($u['session_updated_at'])); ?>
+    <?php echo !empty($u['session_updated_at']) ? e(admin_time_ago($u['session_updated_at'])) : '-'; ?>
 </td>
 
+                <?php if ($enableUserDelete): ?>
+                    <td>
+                        <?php if ((int)$u['id'] === (int)($me['id'] ?? 0)): ?>
+                            <span class="admin-protected-pill">Protected</span>
+                        <?php else: ?>
+                            <form method="post" class="delete-user-form" style="display:inline;">
+                                <?php echo csrf_field(); ?>
+                                <input type="hidden" name="action" value="delete_user">
+                                <input type="hidden" name="target_user_id" value="<?php echo (int)$u['id']; ?>">
+                                <button
+                                    type="submit"
+                                    class="admin-delete-btn"
+                                    data-user-id="<?php echo (int)$u['id']; ?>"
+                                    data-user-email="<?php echo e($u['email']); ?>"
+                                >
+                                    Delete
+                                </button>
+                            </form>
+                        <?php endif; ?>
+                    </td>
+                <?php endif; ?>
 
             </tr>
 
@@ -229,6 +519,28 @@ function admin_time_ago(string $utcDatetime, string $tz = 'Australia/Melbourne')
     statusFilter.addEventListener('change', applyFilters);
 })();
 </script>
+
+<?php if ($enableUserDelete): ?>
+<script>
+(() => {
+    const forms = document.querySelectorAll('.delete-user-form');
+    forms.forEach(form => {
+        form.addEventListener('submit', (event) => {
+            const btn = form.querySelector('.admin-delete-btn');
+            const uid = btn ? btn.dataset.userId : '';
+            const email = btn ? (btn.dataset.userEmail || '') : '';
+            const label = email !== '' ? `${email} (ID ${uid})` : `ID ${uid}`;
+            const ok = window.confirm(
+                `Delete user ${label} and their related data?\n\nThis action cannot be undone.`
+            );
+            if (!ok) {
+                event.preventDefault();
+            }
+        });
+    });
+})();
+</script>
+<?php endif; ?>
 
 <script>
 (function () {

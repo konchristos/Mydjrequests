@@ -461,6 +461,7 @@ public function getAllUsers(): array
             u.id,
             u.uuid,
             u.email,
+            u.is_admin,
             u.country_code,
             u.city,
             u.subscription_status,
