@@ -31,6 +31,26 @@ function getPlatformFeeBps(PDO $db): int
     }
 }
 
+function getDjTipBoostCurrency(PDO $db, int $djUserId): string
+{
+    try {
+        $stmt = $db->prepare("
+            SELECT tip_boost_currency
+            FROM user_settings
+            WHERE user_id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$djUserId]);
+        $raw = strtoupper((string)($stmt->fetchColumn() ?: ''));
+        if (in_array($raw, ['AUD', 'USD', 'NZD'], true)) {
+            return strtolower($raw);
+        }
+    } catch (Throwable $e) {
+        // fall through
+    }
+    return 'aud';
+}
+
 // --------------------
 // Inputs
 // --------------------
@@ -112,10 +132,11 @@ try {
 
     $platformFeeBps = getPlatformFeeBps($db);
     $applicationFeeAmount = (int)floor(($amount * $platformFeeBps) / 10000);
+    $tipCurrency = getDjTipBoostCurrency($db, (int)$dj['id']);
 
     $payload = [
         'amount'   => $amount,
-        'currency' => 'aud',
+        'currency' => $tipCurrency,
 
         // ✅ Apple Pay / Google Pay / Card
         'automatic_payment_methods' => [

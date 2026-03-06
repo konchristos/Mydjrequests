@@ -78,17 +78,34 @@ try {
 // Resolve per-event tips/boost visibility:
 // global app setting (dev) AND (event override if set, otherwise DJ default).
 $djDefaultTipsBoostEnabled = false;
+$tipBoostCurrency = 'AUD';
 try {
     $userSettingStmt = $db->prepare("
-        SELECT default_tips_boost_enabled
+        SELECT default_tips_boost_enabled, tip_boost_currency
         FROM user_settings
         WHERE user_id = ?
         LIMIT 1
     ");
     $userSettingStmt->execute([(int)$event['user_id']]);
-    $djDefaultTipsBoostEnabled = ((string)$userSettingStmt->fetchColumn() === '1');
+    $userSettings = $userSettingStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    $djDefaultTipsBoostEnabled = ((string)($userSettings['default_tips_boost_enabled'] ?? '0') === '1');
+    $rawCurrency = strtoupper((string)($userSettings['tip_boost_currency'] ?? ''));
+    $tipBoostCurrency = in_array($rawCurrency, ['AUD', 'USD', 'NZD'], true) ? $rawCurrency : 'AUD';
 } catch (Throwable $e) {
-    $djDefaultTipsBoostEnabled = false;
+    // Backward compatibility before the tip_boost_currency column exists.
+    try {
+        $fallbackStmt = $db->prepare("
+            SELECT default_tips_boost_enabled
+            FROM user_settings
+            WHERE user_id = ?
+            LIMIT 1
+        ");
+        $fallbackStmt->execute([(int)$event['user_id']]);
+        $djDefaultTipsBoostEnabled = ((string)$fallbackStmt->fetchColumn() === '1');
+    } catch (Throwable $ignored) {
+        $djDefaultTipsBoostEnabled = false;
+    }
+    $tipBoostCurrency = 'AUD';
 }
 
 $eventOverrideRaw = $event['tips_boost_enabled'] ?? null;
@@ -1443,9 +1460,9 @@ select.mdjr-menu {
         </div>
 
         <div class="stripe-tip-presets">
-            <button class="tip-preset" data-amount="500">💖 $5</button>
-            <button class="tip-preset" data-amount="1000">🔥 $10</button>
-            <button class="tip-preset" data-amount="2000">🚀 $20</button>
+            <button class="tip-preset" data-amount="500">💖 <?php echo e($tipBoostCurrency); ?> 5</button>
+            <button class="tip-preset" data-amount="1000">🔥 <?php echo e($tipBoostCurrency); ?> 10</button>
+            <button class="tip-preset" data-amount="2000">🚀 <?php echo e($tipBoostCurrency); ?> 20</button>
             <button class="tip-preset other">Other</button>
         </div>
     </div>
@@ -1479,12 +1496,13 @@ select.mdjr-menu {
         </div>
 
         <div id="mySupportAmount"
+             data-total-cents="0"
              style="
                 font-size:16px;
                 font-weight:800;
                 color:#c7c2ff;
              ">
-            $0
+            <?php echo e($tipBoostCurrency); ?> 0.00
         </div>
     </div>
 
@@ -1788,6 +1806,8 @@ const EVENT_UUID = "<?= e($uuid); ?>";
 const EVENT_TITLE = <?= json_encode($event['title']); ?>;
 const STRIPE_PUBLISHABLE_KEY = "<?= e(STRIPE_PUBLISHABLE_KEY); ?>";
 const ENABLE_PATRON_PAYMENTS = <?= $ENABLE_PATRON_PAYMENTS ? 'true' : 'false'; ?>;
+const TIP_CURRENCY = "<?= e($tipBoostCurrency); ?>";
+const BOOST_AMOUNT_CENTS = 500;
 const CAN_REQUEST_SONGS = <?= in_array($eventState, ['upcoming', 'live'], true) ? 'true' : 'false'; ?>;
 let currentActiveTab = "section-home";
 const MESSAGE_SEEN_KEY = "mdjr_message_seen_<?= e($uuid); ?>";
@@ -1819,7 +1839,8 @@ async function loadMySupportTile() {
 
         if (!tile || !amount) return;
 
-        amount.textContent = `$${(data.total_cents / 100).toFixed(2)}`;
+        amount.dataset.totalCents = String(data.total_cents);
+        amount.textContent = formatMoneyFromCents(data.total_cents);
         tile.style.display = "block";
 
         // Future: drill-down modal
@@ -1830,6 +1851,11 @@ async function loadMySupportTile() {
     } catch (err) {
         console.warn("Support tile load failed", err);
     }
+}
+
+function formatMoneyFromCents(cents) {
+    const safe = Number(cents || 0);
+    return `${TIP_CURRENCY} ${(safe / 100).toFixed(2)}`;
 }
 
 /* =========================
@@ -3285,11 +3311,11 @@ document.querySelectorAll(".tip-preset").forEach(btn => {
     btn.classList.add("highlight");
 
     if (btn.classList.contains("other")) {
-      const input = prompt("Enter tip amount (AUD):", "5");
+      const input = prompt(`Enter tip amount (${TIP_CURRENCY}):`, "5");
       if (!input) return;
       amount = Math.round(parseFloat(input) * 100);
       if (!amount || amount < 500) {
-        alert("Minimum tip is $5");
+        alert(`Minimum tip is ${TIP_CURRENCY} 5.00`);
         return;
       }
     } else {
@@ -3406,12 +3432,12 @@ async function openTipFlow(amountCents, buttonEl) {
 
     showPayModal({
       title: "💖 Support the DJ",
-      subtitle: `${EVENT_TITLE} • Tip $${(amountCents/100).toFixed(2)} • Secure payment`
+      subtitle: `${EVENT_TITLE} • Tip ${formatMoneyFromCents(amountCents)} • Secure payment`
     });
 
     await mountPaymentElement(cs);
 
-    lockPayButton(false, `Pay $${(amountCents/100).toFixed(2)}`);
+    lockPayButton(false, `Pay ${formatMoneyFromCents(amountCents)}`);
 
   } catch (e) {
     alert("Tipping is unavailable right now.");
@@ -3462,7 +3488,7 @@ showPayModal({
 
     await mountPaymentElement(cs);
 
-    lockPayButton(false, "Pay $5.00");
+    lockPayButton(false, `Pay ${formatMoneyFromCents(BOOST_AMOUNT_CENTS)}`);
 
   } catch (e) {
     alert("Boosting is unavailable right now.");
@@ -3485,10 +3511,11 @@ function optimisticallyUpdateSupport(amountCents) {
 
   if (!tile || !amountEl) return;
 
-  const current = parseFloat(amountEl.textContent.replace("$", "")) || 0;
-  const next = current + amountCents / 100;
+  const current = parseInt(amountEl.dataset.totalCents || "0", 10) || 0;
+  const next = current + amountCents;
 
-  amountEl.textContent = `$${next.toFixed(2)}`;
+  amountEl.dataset.totalCents = String(next);
+  amountEl.textContent = formatMoneyFromCents(next);
   tile.style.display = "block";
 }
 

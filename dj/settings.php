@@ -77,9 +77,27 @@ $db->exec("
     CREATE TABLE IF NOT EXISTS user_settings (
         user_id INT UNSIGNED NOT NULL PRIMARY KEY,
         default_tips_boost_enabled TINYINT(1) NOT NULL DEFAULT 0,
+        tip_boost_currency CHAR(3) NOT NULL DEFAULT 'AUD',
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
+
+// Backward-compatible migration for existing installs.
+try {
+    $colStmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'user_settings'
+          AND COLUMN_NAME = 'tip_boost_currency'
+    ");
+    $colStmt->execute();
+    if ((int)$colStmt->fetchColumn() === 0) {
+        $db->exec("ALTER TABLE user_settings ADD COLUMN tip_boost_currency CHAR(3) NOT NULL DEFAULT 'AUD' AFTER default_tips_boost_enabled");
+    }
+} catch (Throwable $e) {
+    // Keep settings page usable even if migration check fails.
+}
 
 // Ensure onboarding profile table exists (safe if already present).
 $db->exec("
@@ -97,16 +115,20 @@ $db->exec("
 
 function userSettingValue(PDO $db, int $userId, string $key, string $default = '0'): string
 {
-    if ($key !== 'default_tips_boost_enabled') {
+    if (!in_array($key, ['default_tips_boost_enabled', 'tip_boost_currency'], true)) {
         return $default;
     }
-    $stmt = $db->prepare("SELECT default_tips_boost_enabled FROM user_settings WHERE user_id = ? LIMIT 1");
+    $stmt = $db->prepare("SELECT default_tips_boost_enabled, tip_boost_currency FROM user_settings WHERE user_id = ? LIMIT 1");
     $stmt->execute([$userId]);
-    $value = $stmt->fetchColumn();
-    if ($value === false) {
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$row) {
         return $default;
     }
-    return ((string)$value === '1') ? '1' : '0';
+    if ($key === 'default_tips_boost_enabled') {
+        return ((string)($row['default_tips_boost_enabled'] ?? '0') === '1') ? '1' : '0';
+    }
+    $currency = strtoupper((string)($row['tip_boost_currency'] ?? ''));
+    return in_array($currency, ['AUD', 'USD', 'NZD'], true) ? $currency : 'AUD';
 }
 
 function appSettingValue(PDO $db, string $key, string $default = '0'): string
@@ -154,6 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hasAppleMusic = isset($_POST['has_apple_music']) ? 1 : 0;
         $hasBeatport = isset($_POST['has_beatport']) ? 1 : 0;
         $defaultTipsBoost = isset($_POST['default_tips_boost_enabled']) ? 1 : 0;
+        $tipBoostCurrency = strtoupper(trim((string)($_POST['tip_boost_currency'] ?? 'AUD')));
         $defaultEventBroadcastEnabled = isset($_POST['default_event_broadcast_enabled']) ? 1 : 0;
         $defaultEventBroadcastMode = trim((string)($_POST['default_event_broadcast_mode'] ?? 'default'));
         $defaultEventBroadcastMessage = trim((string)($_POST['default_event_broadcast_message'] ?? ''));
@@ -168,6 +191,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Please select your DJ software platform.';
         } elseif ($software === 'other' && $softwareOther === '') {
             $error = 'Please specify your DJ software when selecting Other.';
+        } elseif (!in_array($tipBoostCurrency, ['AUD', 'USD', 'NZD'], true)) {
+            $error = 'Invalid tip/boost currency selected.';
         } elseif (!in_array($defaultEventBroadcastMode, ['default', 'custom'], true)) {
             $error = 'Invalid broadcast message mode selected.';
         } elseif ($defaultEventBroadcastEnabled === 1 && $defaultEventBroadcastMode === 'custom' && $defaultEventBroadcastMessage === '') {
@@ -201,12 +226,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
 
             $stmt = $db->prepare("
-                INSERT INTO user_settings (user_id, default_tips_boost_enabled)
-                VALUES (?, ?)
+                INSERT INTO user_settings (user_id, default_tips_boost_enabled, tip_boost_currency)
+                VALUES (?, ?, ?)
                 ON DUPLICATE KEY UPDATE
-                    default_tips_boost_enabled = VALUES(default_tips_boost_enabled)
+                    default_tips_boost_enabled = VALUES(default_tips_boost_enabled),
+                    tip_boost_currency = VALUES(tip_boost_currency)
             ");
-            $stmt->execute([$djId, $defaultTipsBoost]);
+            $stmt->execute([$djId, $defaultTipsBoost, $tipBoostCurrency]);
 
             $stmt = $db->prepare("
                 UPDATE users
@@ -248,6 +274,7 @@ $profile = $profileStmt->fetch(PDO::FETCH_ASSOC) ?: [
 ];
 
 $defaultTipsBoostEnabled = userSettingValue($db, $djId, 'default_tips_boost_enabled', '0') === '1';
+$tipBoostCurrency = userSettingValue($db, $djId, 'tip_boost_currency', 'AUD');
 $broadcastStmt = $db->prepare("
     SELECT default_broadcast_message
     FROM users
@@ -1156,6 +1183,15 @@ require __DIR__ . '/layout.php';
                             Enable tips/boosts by default when creating new events
                         </label>
                         <div class="settings-help">You can still override this per event.</div>
+                    </div>
+                    <div class="settings-row">
+                        <label class="settings-label" for="tip_boost_currency">Tip &amp; Boost Currency</label>
+                        <select class="settings-select" id="tip_boost_currency" name="tip_boost_currency">
+                            <option value="AUD" <?php echo $tipBoostCurrency === 'AUD' ? 'selected' : ''; ?>>AUD</option>
+                            <option value="USD" <?php echo $tipBoostCurrency === 'USD' ? 'selected' : ''; ?>>USD</option>
+                            <option value="NZD" <?php echo $tipBoostCurrency === 'NZD' ? 'selected' : ''; ?>>NZD</option>
+                        </select>
+                        <div class="settings-help">This sets the payment currency used on your request page for both tips and boosts.</div>
                     </div>
                 </div>
 

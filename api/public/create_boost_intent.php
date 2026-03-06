@@ -27,6 +27,26 @@ function getPlatformFeeBpsBoost(PDO $db): int
     }
 }
 
+function getDjTipBoostCurrencyBoost(PDO $db, int $djUserId): string
+{
+    try {
+        $stmt = $db->prepare("
+            SELECT tip_boost_currency
+            FROM user_settings
+            WHERE user_id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$djUserId]);
+        $raw = strtoupper((string)($stmt->fetchColumn() ?: ''));
+        if (in_array($raw, ['AUD', 'USD', 'NZD'], true)) {
+            return strtolower($raw);
+        }
+    } catch (Throwable $e) {
+        // fall through
+    }
+    return 'aud';
+}
+
 // --------------------
 // Inputs
 // --------------------
@@ -35,7 +55,7 @@ $trackKey   = $_POST['track_key']  ?? null;
 $guestToken = $_COOKIE['mdjr_guest'] ?? null;
 $guestName = trim($_POST['guest_name'] ?? '');
 
-$amount = 500; // fixed $5 AUD boost
+$amount = 500; // fixed 5.00 in selected currency
 
 if (!$eventUuid || !$trackKey || !$guestToken) {
     http_response_code(400);
@@ -120,10 +140,11 @@ try {
 
     $platformFeeBps = getPlatformFeeBpsBoost($db);
     $applicationFeeAmount = (int)floor(($amount * $platformFeeBps) / 10000);
+    $boostCurrency = getDjTipBoostCurrencyBoost($db, (int)$row['dj_user_id']);
 
     $payload = [
         'amount'   => $amount,
-        'currency' => 'aud',
+        'currency' => $boostCurrency,
 
     // ✅ THIS enables Apple Pay + Google Pay
     'automatic_payment_methods' => [

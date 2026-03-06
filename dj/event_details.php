@@ -173,17 +173,33 @@ try {
 
 // DJ default preference fallback from user settings.
 $djDefaultTipsBoostEnabled = false;
+$djTipBoostCurrency = 'AUD';
 try {
     $stmt = $db->prepare("
-        SELECT default_tips_boost_enabled
+        SELECT default_tips_boost_enabled, tip_boost_currency
         FROM user_settings
         WHERE user_id = ?
         LIMIT 1
     ");
     $stmt->execute([$djId]);
-    $djDefaultTipsBoostEnabled = ((string)$stmt->fetchColumn() === '1');
+    $settingsRow = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    $djDefaultTipsBoostEnabled = ((string)($settingsRow['default_tips_boost_enabled'] ?? '0') === '1');
+    $rawCurrency = strtoupper(trim((string)($settingsRow['tip_boost_currency'] ?? 'AUD')));
+    $djTipBoostCurrency = in_array($rawCurrency, ['AUD', 'USD', 'NZD'], true) ? $rawCurrency : 'AUD';
 } catch (Throwable $e) {
-    $djDefaultTipsBoostEnabled = false;
+    try {
+        $stmt = $db->prepare("
+            SELECT default_tips_boost_enabled
+            FROM user_settings
+            WHERE user_id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$djId]);
+        $djDefaultTipsBoostEnabled = ((string)$stmt->fetchColumn() === '1');
+    } catch (Throwable $inner) {
+        $djDefaultTipsBoostEnabled = false;
+    }
+    $djTipBoostCurrency = 'AUD';
 }
 
 $eventTipsBoostOverrideRaw = $event['tips_boost_enabled'] ?? null;
@@ -1426,7 +1442,8 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h2 style="margin-top:0;">Tips & Boost Settings</h2>
             <p class="tips-boost-status">
                 Event setting: <strong><?php echo $eventTipsBoostEnabled ? 'ON' : 'OFF'; ?></strong><br>
-                Platform: <strong>ENABLED</strong>
+                Platform: <strong>ENABLED</strong><br>
+                Currency: <strong><?php echo e($djTipBoostCurrency); ?></strong>
             </p>
         </div>
 

@@ -17,6 +17,28 @@ $djId = (int) $_SESSION['dj_id'];
 
 $db = db();
 
+function getDjTipBoostCurrency(PDO $db, int $djId): string
+{
+    try {
+        $stmt = $db->prepare("
+            SELECT tip_boost_currency
+            FROM user_settings
+            WHERE user_id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$djId]);
+        $currency = strtoupper(trim((string)$stmt->fetchColumn()));
+        if (in_array($currency, ['AUD', 'USD', 'NZD'], true)) {
+            return $currency;
+        }
+    } catch (Throwable $e) {
+        // Fallback to default if settings table/column is unavailable.
+    }
+    return 'AUD';
+}
+
+$djTipBoostCurrency = getDjTipBoostCurrency($db, $djId);
+
 // -----------------------------
 // LIFETIME EVENTS COUNT
 // -----------------------------
@@ -123,7 +145,11 @@ $tipMonthly = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $monthlyByCurrency = [];
 foreach ($tipMonthly as $row) {
-    $monthlyByCurrency[$row['currency']] = $row;
+    $cur = strtoupper((string)($row['currency'] ?? ''));
+    if ($cur !== '') {
+        $row['currency'] = $cur;
+        $monthlyByCurrency[$cur] = $row;
+    }
 }
 
 
@@ -162,7 +188,11 @@ $boostMonthly = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $boostMonthlyByCurrency = [];
 foreach ($boostMonthly as $row) {
-    $boostMonthlyByCurrency[$row['currency']] = $row;
+    $cur = strtoupper((string)($row['currency'] ?? ''));
+    if ($cur !== '') {
+        $row['currency'] = $cur;
+        $boostMonthlyByCurrency[$cur] = $row;
+    }
 }
 
 
@@ -1105,8 +1135,19 @@ require __DIR__ . '/layout.php';
 <div class="cards">
     
     <?php
-$tip = $tipLifetime[0] ?? null;
-$currency = $tip['currency'] ?? 'AUD';
+$tipLifetimeByCurrency = [];
+foreach ($tipLifetime as $row) {
+    $cur = strtoupper((string)($row['currency'] ?? ''));
+    if ($cur !== '') {
+        $row['currency'] = $cur;
+        $tipLifetimeByCurrency[$cur] = $row;
+    }
+}
+$currency = $djTipBoostCurrency;
+if (!isset($tipLifetimeByCurrency[$currency]) && !empty($tipLifetimeByCurrency)) {
+    $currency = (string)array_key_first($tipLifetimeByCurrency);
+}
+$tip = $tipLifetimeByCurrency[$currency] ?? null;
 
 $lifetimeAmount = (float)($tip['lifetime_amount'] ?? 0);
 $monthAmount    = (float)($monthlyByCurrency[$currency]['month_amount'] ?? 0);
@@ -1202,7 +1243,7 @@ $monthAmount    = (float)($monthlyByCurrency[$currency]['month_amount'] ?? 0);
     
         <?php if ($monthAmount > 0): ?>
             <small style="color:#1db954;">
-                +<?php echo number_format($monthAmount, 2); ?> this month
+                +<?php echo e($currency); ?> <?php echo number_format($monthAmount, 2); ?> this month
             </small>
         <?php else: ?>
             <small style="color:#9aa;">
@@ -1222,9 +1263,20 @@ $monthAmount    = (float)($monthlyByCurrency[$currency]['month_amount'] ?? 0);
     
     <!-- LIFETIME BOOSTS -->
     <?php
-    $boost = $boostLifetime[0] ?? null;
-    $boostCurrency = $boost['currency'] ?? 'AUD';
-    
+    $boostLifetimeByCurrency = [];
+    foreach ($boostLifetime as $row) {
+        $cur = strtoupper((string)($row['currency'] ?? ''));
+        if ($cur !== '') {
+            $row['currency'] = $cur;
+            $boostLifetimeByCurrency[$cur] = $row;
+        }
+    }
+    $boostCurrency = $djTipBoostCurrency;
+    if (!isset($boostLifetimeByCurrency[$boostCurrency]) && !empty($boostLifetimeByCurrency)) {
+        $boostCurrency = (string)array_key_first($boostLifetimeByCurrency);
+    }
+    $boost = $boostLifetimeByCurrency[$boostCurrency] ?? null;
+
     $boostLifetimeAmount = (float)($boost['lifetime_amount'] ?? 0);
     $boostMonthAmount    = (float)($boostMonthlyByCurrency[$boostCurrency]['month_amount'] ?? 0);
     ?>
@@ -1261,7 +1313,7 @@ $monthAmount    = (float)($monthlyByCurrency[$currency]['month_amount'] ?? 0);
     
         <?php if ($boostMonthAmount > 0): ?>
             <small style="color:#6ae3ff;">
-                +<?php echo number_format($boostMonthAmount, 2); ?> this month
+                +<?php echo e($boostCurrency); ?> <?php echo number_format($boostMonthAmount, 2); ?> this month
             </small>
         <?php else: ?>
             <small style="color:#9aa;">
