@@ -199,8 +199,8 @@ function get_bug_attachments(int $bugId): array
 .comment:first-child { border-top: none; }
 .comment .meta { color:#aaa; font-size:12px; margin-bottom:4px; }
 .comment-admin {
-    border: 1px solid rgba(255, 47, 210, 0.35);
-    background: rgba(255, 47, 210, 0.08);
+    border: 1px solid rgba(var(--brand-accent-rgb), 0.35);
+    background: rgba(var(--brand-accent-rgb), 0.08);
     border-radius: 10px;
     padding: 10px;
     margin: 10px 0;
@@ -213,7 +213,7 @@ function get_bug_attachments(int $bugId): array
 
 textarea { width:100%; padding:10px; border-radius:8px; border:1px solid #2a2a38; background:#0f0f14; color:#fff; }
 .input { width:100%; padding:10px; border-radius:8px; border:1px solid #2a2a38; background:#0f0f14; color:#fff; }
-.btn-primary { background:#ff2fd2; color:#fff; border:none; padding:10px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
+.btn-primary { background:var(--brand-accent); color:#fff; border:none; padding:10px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
 .btn-secondary { background:#222233; color:#fff; border:1px solid #31314a; padding:8px 12px; border-radius:8px; font-weight:600; cursor:pointer; }
 .btn-info { background:#2563eb; color:#fff; border:1px solid #3b82f6; padding:8px 12px; border-radius:8px; font-weight:600; cursor:pointer; }
 .btn-info:hover { background:#1d4ed8; }
@@ -264,12 +264,12 @@ textarea,
 }
 </style>
 
-<p style="margin:0 0 8px;"><a href="/dj/bugs.php" style="color:#ff2fd2; text-decoration:none;">← Back</a></p>
+<p style="margin:0 0 8px;"><a href="/dj/bugs.php" style="color:var(--brand-accent); text-decoration:none;">← Back</a></p>
 <h1>Bug #<?php echo (int)$bug['id']; ?></h1>
 
 <?php if (!empty($bug['parent_bug_id'])): ?>
-    <div class="card" style="border-left:4px solid #ff2fd2;">
-        This bug was merged into <a href="/dj/bug_view.php?id=<?php echo (int)$bug['parent_bug_id']; ?>" style="color:#ff2fd2;">Bug #<?php echo (int)$bug['parent_bug_id']; ?></a>
+    <div class="card" style="border-left:4px solid var(--brand-accent);">
+        This bug was merged into <a href="/dj/bug_view.php?id=<?php echo (int)$bug['parent_bug_id']; ?>" style="color:var(--brand-accent);">Bug #<?php echo (int)$bug['parent_bug_id']; ?></a>
     </div>
 <?php endif; ?>
 
@@ -329,7 +329,7 @@ textarea,
                     <?php echo csrf_field(); ?>
                     <input type="hidden" name="attachment_id" value="<?php echo (int)$a['id']; ?>">
                     <input type="hidden" name="bug_id" value="<?php echo (int)$bugId; ?>">
-                    <button type="submit" style="background:#ff2fd2; color:#fff; border:none; border-radius:6px; padding:2px 6px; cursor:pointer; font-size:11px;">Delete</button>
+                    <button type="submit" style="background:var(--brand-accent); color:#fff; border:none; border-radius:6px; padding:2px 6px; cursor:pointer; font-size:11px;">Delete</button>
                 </form>
             </div>
         <?php endforeach; ?>

@@ -63,7 +63,7 @@ require __DIR__ . '/layout.php';
 
 .message-template-card h2 {
     margin: 0 0 18px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 /* Form fields */
@@ -117,7 +117,7 @@ require __DIR__ . '/layout.php';
 
 /* Button (matches your system) */
 .btn-primary {
-    background: #ff2fd2;
+    background: var(--brand-accent);
     border: none;
     padding: 12px 20px;
     border-radius: 8px;

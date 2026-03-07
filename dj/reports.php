@@ -1202,11 +1202,11 @@ require __DIR__ . '/layout.php';
     opacity: 0.9;
     cursor: pointer;
 }
-.reports-btn { background:#ff2fd2; color:#fff; border:none; padding:10px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
+.reports-btn { background:var(--brand-accent); color:#fff; border:none; padding:10px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
 .reports-help { color:#b7b7c8; font-size:13px; margin-top:8px; }
 .reports-view-links { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
 .reports-view-link { display:inline-block; padding:8px 10px; border:1px solid #2a2a3a; border-radius:8px; color:#cfd0da; text-decoration:none; font-size:13px; }
-.reports-view-link.active { border-color:#ff2fd2; color:#ff8ae9; background:rgba(255,47,210,0.08); }
+.reports-view-link.active { border-color:var(--brand-accent); color:#ff8ae9; background:rgba(var(--brand-accent-rgb), 0.08); }
 .reports-table-wrap { overflow-x:auto; }
 .reports-table { width:100%; border-collapse:collapse; min-width:700px; }
 .reports-table th, .reports-table td { text-align:left; padding:10px; border-bottom:1px solid #242432; }
@@ -1229,12 +1229,12 @@ require __DIR__ . '/layout.php';
 .reports-bar-row { display:grid; grid-template-columns:170px 1fr 56px; gap:8px; align-items:center; }
 .reports-bar-label { color:#c8cade; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .reports-bar-track { height:10px; background:#1a1b28; border-radius:999px; overflow:hidden; }
-.reports-bar-fill { height:100%; border-radius:999px; background:linear-gradient(90deg, #ff2fd2, #7c6cff); }
+.reports-bar-fill { height:100%; border-radius:999px; background:linear-gradient(90deg, var(--brand-accent), #7c6cff); }
 .reports-bar-value { color:#e6e8f3; font-size:12px; text-align:right; }
 .reports-table-compact { min-width:0; }
 .premium-lock-note {
     border:1px solid #3d2b4d;
-    background:rgba(255,47,210,0.08);
+    background:rgba(var(--brand-accent-rgb), 0.08);
     border-radius:10px;
     padding:12px;
     color:#e8d8ef;
@@ -1254,7 +1254,7 @@ require __DIR__ . '/layout.php';
 }
 .transcript-row--guest td { background: rgba(255,255,255,0.02); }
 .transcript-row--dj td { background: rgba(24,92,255,0.16); }
-.transcript-row--broadcast td { background: rgba(255,47,210,0.16); }
+.transcript-row--broadcast td { background: rgba(var(--brand-accent-rgb), 0.16); }
 .transcript-chat { display:flex; flex-direction:column; gap:10px; }
 .transcript-chat-row { display:flex; }
 .transcript-chat-row.guest { justify-content:flex-start; }
@@ -1276,7 +1276,7 @@ require __DIR__ . '/layout.php';
 </style>
 
 <div class="reports-wrap">
-    <p style="margin:0 0 8px;"><a href="/dj/dashboard.php" style="color:#ff2fd2; text-decoration:none;">&larr; Back to Dashboard</a></p>
+    <p style="margin:0 0 8px;"><a href="/dj/dashboard.php" style="color:var(--brand-accent); text-decoration:none;">&larr; Back to Dashboard</a></p>
     <h1>Reports</h1>
 
     <?php if ($reportError !== ''): ?>

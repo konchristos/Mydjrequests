@@ -91,11 +91,11 @@ require __DIR__ . '/layout.php';
 .terms-actions input[type="checkbox"] {
     width: 18px;
     height: 18px;
-    accent-color: #ff2fd2;
+    accent-color: var(--brand-accent);
 }
 
 .btn-primary {
-    background: #ff2fd2;
+    background: var(--brand-accent);
     color: #fff;
     border: none;
     padding: 10px 16px;

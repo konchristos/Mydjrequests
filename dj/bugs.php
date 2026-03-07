@@ -30,7 +30,7 @@ require __DIR__ . '/layout.php';
 }
 
 .bugs-back-link {
-    color: #ff2fd2;
+    color: var(--brand-accent);
     text-decoration: none;
     font-weight: 600;
 }
@@ -54,7 +54,7 @@ require __DIR__ . '/layout.php';
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #ff2fd2, #ff5fe4);
+    background: linear-gradient(135deg, var(--brand-accent), var(--brand-accent-strong));
     color: #fff;
     border: none;
     padding: 11px 16px;
@@ -62,7 +62,7 @@ require __DIR__ . '/layout.php';
     font-weight: 700;
     text-decoration: none;
     display: inline-block;
-    box-shadow: 0 8px 24px rgba(255, 47, 210, 0.25);
+    box-shadow: 0 8px 24px rgba(var(--brand-accent-rgb), 0.25);
 }
 
 .stats-grid {
@@ -91,9 +91,9 @@ require __DIR__ . '/layout.php';
 }
 
 .stat-tile.active {
-    border-color: rgba(255, 47, 210, 0.55);
-    box-shadow: 0 0 0 1px rgba(255, 47, 210, 0.3) inset;
-    background: linear-gradient(180deg, rgba(255, 47, 210, 0.14), rgba(255, 47, 210, 0.05));
+    border-color: rgba(var(--brand-accent-rgb), 0.55);
+    box-shadow: 0 0 0 1px rgba(var(--brand-accent-rgb), 0.3) inset;
+    background: linear-gradient(180deg, rgba(var(--brand-accent-rgb), 0.14), rgba(var(--brand-accent-rgb), 0.05));
 }
 
 .stat-label {
@@ -138,8 +138,8 @@ require __DIR__ . '/layout.php';
 
 .bug-search:focus {
     outline: none;
-    border-color: rgba(255, 47, 210, 0.5);
-    box-shadow: 0 0 0 3px rgba(255, 47, 210, 0.12);
+    border-color: rgba(var(--brand-accent-rgb), 0.5);
+    box-shadow: 0 0 0 3px rgba(var(--brand-accent-rgb), 0.12);
 }
 
 .search-meta {

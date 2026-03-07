@@ -190,8 +190,8 @@ require __DIR__ . '/layout.php';
 }
 
 .fancy-form input:focus {
-    border-color: #ff2fd2;
-    box-shadow: 0 0 6px rgba(255, 47, 210, 0.6);
+    border-color: var(--brand-accent);
+    box-shadow: 0 0 6px rgba(var(--brand-accent-rgb), 0.6);
     outline: none;
 }
 
@@ -211,7 +211,7 @@ require __DIR__ . '/layout.php';
     top: -8px;
     left: 40px;
     font-size: 12px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     background: #1a1a1f;
     padding: 0 4px;
 }
@@ -219,7 +219,7 @@ require __DIR__ . '/layout.php';
 
 /* Restore real Save button */
 .fancy-form .btn-primary {
-    background: #ff2fd2 !important;
+    background: var(--brand-accent) !important;
     padding: 12px 25px;
     border-radius: 6px;
     border: none;
@@ -264,7 +264,7 @@ require __DIR__ . '/layout.php';
 }
 
 .modal-box h2 {
-    color: #ff2fd2;
+    color: var(--brand-accent);
     margin-bottom: 15px;
 }
 
@@ -292,7 +292,7 @@ require __DIR__ . '/layout.php';
 }
 
 .modal-box .confirm {
-    background: #ff2fd2;
+    background: var(--brand-accent);
     color: #fff;
 }
 

@@ -93,12 +93,12 @@ require __DIR__ . '/layout.php';
 ========================================================= */
 
 h1, h2 {
-    color: #ff2fd2;
+    color: var(--brand-accent);
     margin-bottom: 25px;
 }
 
 button {
-    background: #ff2fd2;
+    background: var(--brand-accent);
     color: #fff;
     padding: 12px 16px;
     border: none;
@@ -149,7 +149,7 @@ button:hover {
 }
 
 .event-card:hover {
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
 }
 
 .event-card-header {
@@ -188,8 +188,8 @@ button:hover {
 }
 
 .badge-upcoming {
-    background: rgba(255, 47, 210, 0.15);
-    color: #ff2fd2;
+    background: rgba(var(--brand-accent-rgb), 0.15);
+    color: var(--brand-accent);
 }
 
 .badge-today {
@@ -205,9 +205,9 @@ button:hover {
 }
 
 .badge-requests {
-    background: rgba(255, 47, 210, 0.18);
-    color: #ff2fd2;
-    border: 1px solid rgba(255, 47, 210, 0.45);
+    background: rgba(var(--brand-accent-rgb), 0.18);
+    color: var(--brand-accent);
+    border: 1px solid rgba(var(--brand-accent-rgb), 0.45);
     font-size: 11px;
     font-weight: 700;
     padding: 4px 9px;
@@ -246,7 +246,7 @@ button:hover {
 .request-link {
     margin-top: 12px;
     font-size: 13px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     display: block;
 }
 
@@ -273,7 +273,7 @@ button:hover {
 .copy-btn {
     background: #1a1a1f;
     border: 1px solid #292933;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     padding: 6px 12px;
     border-radius: 999px;
     font-size: 12px;
@@ -283,7 +283,7 @@ button:hover {
 }
 
 .copy-btn:hover {
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
     background: #1f1f25;
 }
 
@@ -340,8 +340,8 @@ button:hover {
 }
 
 .search-input:focus {
-    border-color: #ff2fd2;
-    box-shadow: 0 0 6px rgba(255, 47, 210, 0.4);
+    border-color: var(--brand-accent);
+    box-shadow: 0 0 6px rgba(var(--brand-accent-rgb), 0.4);
     outline: none;
 }
 
@@ -408,8 +408,8 @@ body > * {
 
 /* focus */
 .fancy-form input:focus {
-    border-color: #ff2fd2;
-    box-shadow: 0 0 0 1px rgba(255,47,210,0.6);
+    border-color: var(--brand-accent);
+    box-shadow: 0 0 0 1px rgba(var(--brand-accent-rgb), 0.6);
     outline: none;
 }
 
@@ -418,7 +418,7 @@ body > * {
     margin-bottom: 8px;
     font-size: 16px;
     font-weight: 600;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     letter-spacing: 0.2px;
 }
 
@@ -427,7 +427,7 @@ body > * {
 .fancy-form input:not(:placeholder-shown) + label {
     top: -7px;
     font-size: 11px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     background: #1a1a1f;
     padding: 0 6px;
 }
@@ -441,7 +441,7 @@ body > * {
 .fancy-form input:focus + .icon,
 .fancy-form .input-wrap:focus-within .icon {
     opacity: 1;
-    filter: drop-shadow(0 0 4px rgba(255,47,210,0.6));
+    filter: drop-shadow(0 0 4px rgba(var(--brand-accent-rgb), 0.6));
 }
 
 
@@ -483,15 +483,15 @@ body > * {
 ========================= */
 
 .badge-live {
-    background: linear-gradient(135deg, #ff2fd2, #ff453a);
+    background: linear-gradient(135deg, #ff1f1f, #ff3b3b);
     color: #050510;
     border: none;
     font-weight: 800;
     letter-spacing: 0.08em;
 
     box-shadow:
-        0 0 10px rgba(255, 69, 58, 0.6),
-        0 0 18px rgba(255, 47, 210, 0.45);
+        0 0 10px rgba(255, 31, 31, 0.6),
+        0 0 18px rgba(255, 59, 59, 0.45);
 
     animation: livePulse 1.4s ease-in-out infinite;
 }
@@ -500,20 +500,20 @@ body > * {
     0% {
         transform: scale(1);
         box-shadow:
-            0 0 8px rgba(255, 69, 58, 0.45),
-            0 0 14px rgba(255, 47, 210, 0.35);
+            0 0 8px rgba(255, 31, 31, 0.45),
+            0 0 14px rgba(255, 59, 59, 0.35);
     }
     50% {
         transform: scale(1.08);
         box-shadow:
-            0 0 16px rgba(255, 69, 58, 0.9),
-            0 0 28px rgba(255, 47, 210, 0.75);
+            0 0 16px rgba(255, 31, 31, 0.9),
+            0 0 28px rgba(255, 59, 59, 0.75);
     }
     100% {
         transform: scale(1);
         box-shadow:
-            0 0 8px rgba(255, 69, 58, 0.45),
-            0 0 14px rgba(255, 47, 210, 0.35);
+            0 0 8px rgba(255, 31, 31, 0.45),
+            0 0 14px rgba(255, 59, 59, 0.35);
     }
 }
 
@@ -723,7 +723,7 @@ document.addEventListener('DOMContentLoaded', () => {
 .modal-panel h2 {
     margin: 0 0 30px;
     font-size: 28px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     text-align: left;
 }
 
@@ -740,7 +740,7 @@ document.addEventListener('DOMContentLoaded', () => {
 }
 
 .modal-x:hover {
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 

@@ -458,7 +458,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <style>
 /* Event Details Page */
 .event-header {
-    background: radial-gradient(circle at top left, #550066 0%, #0d0d0f 80%);
+    background: radial-gradient(circle at top left, rgba(var(--brand-accent-rgb), 0.28) 0%, #0d0d0f 80%);
     padding: 30px 25px;
     border-radius: 12px;
     margin-bottom: 35px;
@@ -467,7 +467,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 .event-header h1 {
     margin: 0;
     font-size: 28px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 .event-meta {
@@ -514,7 +514,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 .section-card h2 {
     margin-top: 0;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 .premium-badge {
   display: inline-block;
@@ -525,8 +525,8 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
   font-weight: 700;
   letter-spacing: .04em;
   text-transform: uppercase;
-  background: rgba(255,47,210,0.18);
-  border: 1px solid rgba(255,47,210,0.55);
+  background: rgba(var(--brand-accent-rgb), 0.18);
+  border: 1px solid rgba(var(--brand-accent-rgb), 0.55);
   color: #ff7de8;
   vertical-align: middle;
 }
@@ -553,8 +553,8 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     padding: 18px;
     background: #0c0c11;
     border-radius: 16px;
-    border: 2px solid #ff2fd2;
-    box-shadow: 0 0 20px rgba(255, 47, 210, 0.4);
+    border: 2px solid var(--brand-accent);
+    box-shadow: 0 0 20px rgba(var(--brand-accent-rgb), 0.4);
 }
 
 .qr-image {
@@ -570,7 +570,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     right: -15px;
     bottom: -15px;
     border-radius: 20px;
-    background: radial-gradient(circle, rgba(255,47,210,0.4), transparent 70%);
+    background: radial-gradient(circle, rgba(var(--brand-accent-rgb), 0.4), transparent 70%);
     animation: pulseGlow 2.5s infinite;
     z-index: -1;
 }
@@ -585,7 +585,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     margin-top: 12px;
     font-size: 18px;
     font-weight: bold;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     animation: scanPulse 1.4s infinite;
 }
 
@@ -600,7 +600,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     color: #fff;
     font-size: 20px;
     font-weight: 600;
-    text-shadow: 0 0 6px rgba(255,47,210,0.8);
+    text-shadow: 0 0 6px rgba(var(--brand-accent-rgb), 0.8);
 }
 
 /* QR TILE POSITIONING */
@@ -720,7 +720,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 .qr-top-action a:hover {
     background: #292933;
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
     color: #fff;
 }
 
@@ -738,7 +738,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 .copy-patron-link:hover {
     opacity: 1;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 .poster-override-tiles {
@@ -775,7 +775,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 .poster-override-tile.dragging {
   opacity: .6;
-  border-color: #ff2fd2;
+  border-color: var(--brand-accent);
 }
 
 
@@ -787,13 +787,15 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     gap: 6px;
     font-size: 12px;
     font-weight: 700;
-    color: #ff4d4d;
+    color: #ff3b30 !important;
+    text-shadow: 0 0 8px rgba(255, 59, 48, 0.55);
 }
 
 .live-indicator .dot {
     width: 8px;
     height: 8px;
-    background: #ff4d4d;
+    background: #ff3b30 !important;
+    box-shadow: 0 0 8px rgba(255, 59, 48, 0.85);
     border-radius: 50%;
     animation: livePulse 1.4s infinite;
 }
@@ -881,11 +883,12 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 /* LIVE */
 .event-live {
-  background: linear-gradient(135deg, #ff2fd2, #ff453a);
-  color: #050510;
+  background: linear-gradient(135deg, #ff1f1f, #ff3b3b) !important;
+  color: #120000 !important;
+  border: 1px solid rgba(255, 59, 59, 0.7) !important;
   box-shadow:
-    0 0 12px rgba(255,69,58,0.45),
-    0 0 22px rgba(255,47,210,0.35);
+    0 0 14px rgba(255, 31, 31, 0.78),
+    0 0 24px rgba(255, 59, 59, 0.62);
   animation: pulseLive 1.4s infinite;
 }
 
@@ -927,8 +930,9 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 .btn-end {
-  background: #e74c3c;
+  background: #ff3b30;
   color: #fff;
+  box-shadow: 0 0 12px rgba(255, 59, 48, 0.45);
 }
 
 .btn-reopen {
@@ -983,8 +987,12 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 .event-live {
-  background: linear-gradient(135deg, #ff2fd2, #ff453a);
-  color: #050510;
+  background: linear-gradient(135deg, #ff1f1f, #ff3b3b) !important;
+  color: #120000 !important;
+  border: 1px solid rgba(255, 59, 59, 0.7) !important;
+  box-shadow:
+    0 0 14px rgba(255, 31, 31, 0.78),
+    0 0 24px rgba(255, 59, 59, 0.62);
   animation: pulseLive 1.4s infinite;
 }
 
@@ -998,9 +1006,9 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 
 .badge-requests {
-    background: rgba(255, 47, 210, 0.18);
-    color: #ff2fd2;
-    border: 1px solid rgba(255, 47, 210, 0.55);
+    background: rgba(var(--brand-accent-rgb), 0.18);
+    color: var(--brand-accent);
+    border: 1px solid rgba(var(--brand-accent-rgb), 0.55);
     font-size: 12px;
     font-weight: 800;
     padding: 5px 11px;
@@ -1165,7 +1173,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 .toggle-btn:hover {
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
     color: #fff;
 }
 
@@ -1176,7 +1184,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 .request-export a {
     font-size: 13px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     text-decoration: none;
     font-weight: 600;
 }
@@ -1213,8 +1221,8 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 .btn-csv:hover {
     background: #383844;
-    border-color: #ff2fd2;
-    color: #ff2fd2;
+    border-color: var(--brand-accent);
+    color: var(--brand-accent);
 }
 
 .btn-csv:active {
@@ -1245,7 +1253,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 .qr-header h2 {
     margin: 0;
     text-align: center;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 /* Shared button look */
@@ -1267,18 +1275,18 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 /* DEV button */
 .qr-dev-btn {
-    border-color: #ff453a;
-    color: #ff453a;
+    border-color: var(--brand-accent-strong);
+    color: var(--brand-accent-strong);
 }
 
 .qr-dev-btn:hover {
-    background: rgba(255,69,58,0.12);
+    background: rgba(255, 31, 31, 0.12);
 }
 
 /* PROD button */
 .qr-prod-btn:hover {
     background: #292933;
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
     color: #fff;
 }
 
@@ -1519,7 +1527,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <button
             id="copyRequestLinkBtn"
             style="
-                background:#ff2fd2;
+                background:var(--brand-accent);
                 border:none;
                 padding:6px 12px;
                 border-radius:6px;
@@ -1598,7 +1606,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <a href="<?php echo e(url('r/' . $event['uuid'])); ?>"
            target="_blank"
            style="
-                background:linear-gradient(135deg,#ff2fd2,#ff44de);
+                background:linear-gradient(135deg,var(--brand-accent),var(--brand-accent-strong));
                 padding:14px 22px;
                 border-radius:10px;
                 color:#fff;
@@ -1693,7 +1701,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <a href="<?php echo e($posterDownloadUrl); ?>"
                style="
                     margin-top:10px;
-                    background:#ff2fd2;
+                    background:var(--brand-accent);
                     padding:12px 20px;
                     border-radius:8px;
                     color:#fff;
@@ -2288,7 +2296,7 @@ $tz = new DateTimeZone(date_default_timezone_get());
             <div style="
                 font-weight:800;
                 margin-bottom:8px;
-                color:#ff2fd2;
+                color:var(--brand-accent);
             ">
                 <?php echo e($guestNotice['title']); ?>
             </div>

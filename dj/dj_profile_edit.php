@@ -92,7 +92,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
 }
 
 .dj-profile-container h1 {
-    color: #ff2fd2;
+    color: var(--brand-accent);
     margin-bottom: 6px;
     font-size: 30px;
 }
@@ -132,7 +132,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
     content: "";
     height: 2px;
     border-radius: 999px;
-    background: linear-gradient(90deg, rgba(255,47,210,.75), rgba(106,227,255,.55));
+    background: linear-gradient(90deg, rgba(var(--brand-accent-rgb), .75), rgba(106,227,255,.55));
     flex: 1 1 auto;
 }
 
@@ -215,7 +215,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
     width: 34px;
     height: 34px;
     border-radius: 999px;
-    background: rgba(255, 47, 210, 0.18);
+    background: rgba(var(--brand-accent-rgb), 0.18);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -223,7 +223,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
 
 .social-icon i {
     font-size: 18px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 .social-input-wrap {
@@ -268,8 +268,8 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
     font-weight:700;
     letter-spacing:.04em;
     text-transform:uppercase;
-    background:rgba(255,47,210,0.18);
-    border:1px solid rgba(255,47,210,0.55);
+    background:rgba(var(--brand-accent-rgb), 0.18);
+    border:1px solid rgba(var(--brand-accent-rgb), 0.55);
     color:#ff7de8;
     vertical-align:middle;
 }
@@ -348,7 +348,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
 
 /* Save button */
 .save-btn {
-    background: #ff2fd2;
+    background: var(--brand-accent);
     padding: 14px 30px;
     border-radius: 10px;
     border: none;
@@ -356,7 +356,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
     cursor: pointer;
     font-size: 16px;
     font-weight: 600;
-    box-shadow: 0 0 14px rgba(255, 47, 210, 0.55);
+    box-shadow: 0 0 14px rgba(var(--brand-accent-rgb), 0.55);
     transition: 0.2s;
 }
 .save-btn:hover {
@@ -422,7 +422,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
 }
 
 .toggle-switch input:checked + .slider {
-    background: #ff2fd2;
+    background: var(--brand-accent);
 }
 
 .toggle-switch input:checked + .slider::before {
@@ -834,11 +834,11 @@ $profileUrl = "https://mydjrequests.com/dj/" . h($profile['page_slug']);
        background:#292933;
        padding:14px 26px;
        border-radius:10px;
-       color:#ff2fd2;
+       color:var(--brand-accent);
        text-decoration:none;
        font-size:16px;
        font-weight:600;
-       border:1px solid rgba(255,47,210,0.4);
+       border:1px solid rgba(var(--brand-accent-rgb), 0.4);
    ">
     Preview Patron Page
 </a>

@@ -12,14 +12,14 @@ require __DIR__ . '/layout.php';
 <style>
 .notif-list { margin-top: 10px; }
 .notif-item { padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.notif-item.unread { background: rgba(255,47,210,0.08); }
+.notif-item.unread { background: rgba(var(--brand-accent-rgb), 0.08); }
 .notif-title { font-weight: 600; color: #fff; }
 .notif-body { color: #aaa; margin-top: 4px; }
 .notif-meta { color: #888; font-size: 12px; margin-top: 6px; }
-.btn-mark { background:#ff2fd2; color:#fff; border:none; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer; }
+.btn-mark { background:var(--brand-accent); color:#fff; border:none; padding:6px 10px; border-radius:6px; font-size:12px; cursor:pointer; }
 </style>
 
-<p style="margin:0 0 8px;"><a href="/dj/dashboard.php" style="color:#ff2fd2; text-decoration:none;">← Back</a></p>
+<p style="margin:0 0 8px;"><a href="/dj/dashboard.php" style="color:var(--brand-accent); text-decoration:none;">← Back</a></p>
 <h1>Notifications</h1>
 
 <div class="notif-list">

@@ -120,7 +120,7 @@ require __DIR__ . '/layout.php';
 /* EVENTS PAGE STYLES */
 
 h1, h2 {
-    color: #ff2fd2;
+    color: var(--brand-accent);
     margin-bottom: 25px;
 }
 
@@ -144,7 +144,7 @@ h1, h2 {
 }
 
 button {
-    background: #ff2fd2;
+    background: var(--brand-accent);
     color: #fff;
     padding: 12px 16px;
     border: none;
@@ -173,7 +173,7 @@ button:hover {
 }
 
 .event-card:hover {
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
 }
 
 .event-title {
@@ -203,7 +203,7 @@ button:hover {
 .request-link {
     margin-top: 12px;
     font-size: 13px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     display: block;
 }
 
@@ -241,8 +241,8 @@ button:hover {
 }
 
 .badge-upcoming {
-    background: rgba(255, 47, 210, 0.15);
-    color: #ff2fd2;
+    background: rgba(var(--brand-accent-rgb), 0.15);
+    color: var(--brand-accent);
 }
 
 
@@ -303,7 +303,7 @@ button:hover {
 .copy-btn {
     background: #1a1a1f;
     border: 1px solid #292933;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     padding: 6px 12px;
     border-radius: 999px;
     font-size: 12px;
@@ -313,7 +313,7 @@ button:hover {
 }
 
 .copy-btn:hover {
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
     background: #1f1f25;
 }
 
@@ -418,8 +418,8 @@ button:hover {
 
 /* FOCUS EFFECT */
 .fancy-form input:focus {
-    border-color: #ff2fd2;
-    box-shadow: 0 0 6px rgba(255, 47, 210, 0.6);
+    border-color: var(--brand-accent);
+    box-shadow: 0 0 6px rgba(var(--brand-accent-rgb), 0.6);
     outline: none;
 }
 
@@ -441,14 +441,14 @@ button:hover {
     top: -8px;
     left: 40px;
     font-size: 12px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     background: #1a1a1f;
     padding: 0 4px;
 }
 
 /* Button */
 .fancy-form .btn-primary {
-    background: #ff2fd2;
+    background: var(--brand-accent);
     padding: 12px 25px;
     border-radius: 6px;
     border: none;
@@ -491,8 +491,8 @@ button:hover {
 }
 
 .search-input:focus {
-    border-color: #ff2fd2;
-    box-shadow: 0 0 6px rgba(255, 47, 210, 0.4);
+    border-color: var(--brand-accent);
+    box-shadow: 0 0 6px rgba(var(--brand-accent-rgb), 0.4);
     outline: none;
 }
 
@@ -527,7 +527,7 @@ button:hover {
 .request-count-mini {
     font-size: 12px;
     font-weight: 600;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     white-space: nowrap;
 }
 
@@ -567,9 +567,9 @@ button:hover {
 
 
 .badge-requests {
-    background: rgba(255, 47, 210, 0.18);
-    color: #ff2fd2;
-    border: 1px solid rgba(255, 47, 210, 0.45);
+    background: rgba(var(--brand-accent-rgb), 0.18);
+    color: var(--brand-accent);
+    border: 1px solid rgba(var(--brand-accent-rgb), 0.45);
     font-size: 11px;
     font-weight: 700;
     padding: 4px 9px;

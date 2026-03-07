@@ -430,7 +430,7 @@ require __DIR__ . '/layout.php';
     margin: 0;
     font-size: 32px;
     font-weight: 700;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 .dashboard-header p {
@@ -468,13 +468,13 @@ require __DIR__ . '/layout.php';
 }
 
 .card-box:hover {
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
 }
 
 .card-box h2 {
     margin: 0;
     font-size: 26px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 .card-box p {
@@ -487,7 +487,7 @@ require __DIR__ . '/layout.php';
 .create-btn {
     display: block;
     text-align: center;
-    background: #ff2fd2;
+    background: var(--brand-accent);
     color: white;
     padding: 14px;
     border-radius: 8px;
@@ -557,8 +557,8 @@ require __DIR__ . '/layout.php';
 }
 
 .spotify-banner.disconnected {
-    border-color: rgba(255, 47, 210, 0.4);
-    box-shadow: 0 0 0 1px rgba(255, 47, 210, 0.15) inset;
+    border-color: rgba(var(--brand-accent-rgb), 0.4);
+    box-shadow: 0 0 0 1px rgba(var(--brand-accent-rgb), 0.15) inset;
 }
 
 .spotify-left {
@@ -617,7 +617,7 @@ require __DIR__ . '/layout.php';
 }
 
 .spotify-link {
-    color: #ff2fd2;
+    color: var(--brand-accent);
     font-size: 13px;
     text-decoration: none;
 }
@@ -640,8 +640,8 @@ require __DIR__ . '/layout.php';
 }
 
 .card-highlight {
-    border-color: #ff2fd2;
-    box-shadow: 0 0 0 1px rgba(255,47,210,0.2) inset;
+    border-color: var(--brand-accent);
+    box-shadow: 0 0 0 1px rgba(var(--brand-accent-rgb), 0.2) inset;
 }
 
 .card-updates {
@@ -663,7 +663,7 @@ require __DIR__ . '/layout.php';
     margin-top: 8px;
     font-size: 14px;
     font-weight: 600;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 /* EVENT STATUS BADGES */
@@ -686,9 +686,9 @@ require __DIR__ . '/layout.php';
 }
 
 .badge-upcoming {
-    background: rgba(255, 47, 210, 0.15);
-    color: #ff2fd2;
-    border: 1px solid rgba(255, 47, 210, 0.4);
+    background: rgba(var(--brand-accent-rgb), 0.15);
+    color: var(--brand-accent);
+    border: 1px solid rgba(var(--brand-accent-rgb), 0.4);
 }
 
 
@@ -713,7 +713,7 @@ require __DIR__ . '/layout.php';
 .copy-btn {
     background: #1a1a1f;
     border: 1px solid #292933;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     padding: 6px 12px;
     border-radius: 999px;
     font-size: 12px;
@@ -723,7 +723,7 @@ require __DIR__ . '/layout.php';
 }
 
 .copy-btn:hover {
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
     background: #1f1f25;
 }
 
@@ -777,7 +777,7 @@ require __DIR__ . '/layout.php';
 .request-count .count {
     font-size: 28px;
     font-weight: 700;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 .request-count .label {
@@ -807,7 +807,7 @@ require __DIR__ . '/layout.php';
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #ff2fd2; /* electric pink */
+    color: var(--brand-accent); /* electric pink */
     margin-bottom: 6px;
 }
 
@@ -916,8 +916,8 @@ require __DIR__ . '/layout.php';
 }
 
 .badge-upcoming {
-    background: rgba(255, 47, 210, 0.15);
-    color: #ff2fd2;
+    background: rgba(var(--brand-accent-rgb), 0.15);
+    color: var(--brand-accent);
 }
 
 .badge-today {
@@ -938,15 +938,15 @@ require __DIR__ . '/layout.php';
 ========================= */
 
 .badge-live {
-    background: linear-gradient(135deg, #ff2fd2, #ff453a);
+    background: linear-gradient(135deg, #ff1f1f, #ff3b3b);
     color: #050510;
     border: none;
     font-weight: 800;
     letter-spacing: 0.08em;
 
     box-shadow:
-        0 0 10px rgba(255, 69, 58, 0.6),
-        0 0 18px rgba(255, 47, 210, 0.45);
+        0 0 10px rgba(255, 31, 31, 0.6),
+        0 0 18px rgba(255, 59, 59, 0.45);
 
     animation: livePulse 1.4s ease-in-out infinite;
 }
@@ -955,20 +955,20 @@ require __DIR__ . '/layout.php';
     0% {
         transform: scale(1);
         box-shadow:
-            0 0 8px rgba(255, 69, 58, 0.45),
-            0 0 14px rgba(255, 47, 210, 0.35);
+            0 0 8px rgba(255, 31, 31, 0.45),
+            0 0 14px rgba(255, 59, 59, 0.35);
     }
     50% {
         transform: scale(1.08);
         box-shadow:
-            0 0 16px rgba(255, 69, 58, 0.9),
-            0 0 28px rgba(255, 47, 210, 0.75);
+            0 0 16px rgba(255, 31, 31, 0.9),
+            0 0 28px rgba(255, 59, 59, 0.75);
     }
     100% {
         transform: scale(1);
         box-shadow:
-            0 0 8px rgba(255, 69, 58, 0.45),
-            0 0 14px rgba(255, 47, 210, 0.35);
+            0 0 8px rgba(255, 31, 31, 0.45),
+            0 0 14px rgba(255, 59, 59, 0.35);
     }
 }
 
@@ -988,9 +988,9 @@ require __DIR__ . '/layout.php';
 
 
 .badge-requests {
-    background: rgba(255, 47, 210, 0.18);
-    color: #ff2fd2;
-    border: 1px solid rgba(255, 47, 210, 0.55);
+    background: rgba(var(--brand-accent-rgb), 0.18);
+    color: var(--brand-accent);
+    border: 1px solid rgba(var(--brand-accent-rgb), 0.55);
     font-size: 12px;
     font-weight: 700;
     padding: 5px 12px;
@@ -1415,7 +1415,7 @@ $monthAmount    = (float)($monthlyByCurrency[$currency]['month_amount'] ?? 0);
 <!-- EVENTS LIST -->
 
 <div class="event-list">
-    <h2 style="margin-top:0; color:#ff2fd2;">Upcoming Events</h2>
+    <h2 style="margin-top:0; color:var(--brand-accent);">Upcoming Events</h2>
 
     <?php if (!empty($dashboardEvents)): ?>
         <?php foreach ($dashboardEvents as $event): ?>
@@ -1658,7 +1658,7 @@ document.addEventListener('DOMContentLoaded', () => {
     margin-bottom: 8px;
     font-size: 16px;
     font-weight: 600;
-    color: #ff2fd2;
+    color: var(--brand-accent);
     letter-spacing: 0.2px;
 }
 
@@ -1687,14 +1687,14 @@ document.addEventListener('DOMContentLoaded', () => {
 }
 
 .fancy-form input:focus {
-    border-color: #ff2fd2;
-    box-shadow: 0 0 0 1px rgba(255,47,210,0.6);
+    border-color: var(--brand-accent);
+    box-shadow: 0 0 0 1px rgba(var(--brand-accent-rgb), 0.6);
     outline: none;
 }
 
 .fancy-form .input-wrap:focus-within .icon {
     opacity: 1;
-    filter: drop-shadow(0 0 4px rgba(255,47,210,0.6));
+    filter: drop-shadow(0 0 4px rgba(var(--brand-accent-rgb), 0.6));
 }
 
 /* Date input */
@@ -1737,7 +1737,7 @@ document.addEventListener('DOMContentLoaded', () => {
 .modal-panel h2 {
     margin: 0 0 30px;
     font-size: 28px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 .modal-x {
@@ -1752,7 +1752,7 @@ document.addEventListener('DOMContentLoaded', () => {
 }
 
 .modal-x:hover {
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 
@@ -1777,7 +1777,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* Modal submit button */
 .btn-submit {
-    background: #ff2fd2;
+    background: var(--brand-accent);
     color: #fff;
     border: none;
     border-radius: 10px;
@@ -1811,7 +1811,7 @@ document.addEventListener('DOMContentLoaded', () => {
     width: 100%;
     margin-top: 16px;
 
-    background: #ff2fd2;
+    background: var(--brand-accent);
     color: #fff;
 
     border: none;

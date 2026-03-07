@@ -4,6 +4,7 @@ require_once __DIR__ . '/../app/bootstrap.php';
 require_dj_login(); // DJ must be logged in
 
 $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
+$theme = mdjr_get_dj_theme_config(db(), (int)($_SESSION['dj_id'] ?? 0));
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -25,6 +26,13 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
 
 
 <style>
+    :root {
+        --brand-accent: <?php echo e($theme['accent']); ?>;
+        --brand-accent-strong: <?php echo e($theme['accent_strong']); ?>;
+        --brand-accent-soft: <?php echo e($theme['accent_soft']); ?>;
+        --brand-accent-rgb: <?php echo e($theme['accent_rgb']); ?>;
+    }
+
     body {
         margin: 0;
         background: #0d0d0f;
@@ -49,7 +57,7 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
     .navbar .logo {
         font-size: 22px;
         font-weight: 700;
-        color: #ff2fd2;
+        color: var(--brand-accent);
         letter-spacing: 0.5px;
     }
 
@@ -61,14 +69,14 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
 
     .admin-left-link {
         text-decoration: none;
-        color: #ff2fd2;
+        color: var(--brand-accent);
         font-size: 14px;
         font-weight: 600;
         white-space: nowrap;
     }
 
     .admin-left-link:hover {
-        color: #ff70e3;
+        color: var(--brand-accent-soft);
     }
 
     .hamburger {
@@ -92,7 +100,7 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
     }
 
     .nav-links a:hover {
-        color: #ff2fd2;
+        color: var(--brand-accent);
     }
 
     /* Mobile Menu (hidden by default) */
@@ -153,7 +161,7 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
 
 .profile-dropdown-toggle:hover,
 .reports-dropdown-toggle:hover {
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 .profile-dropdown-menu,
@@ -184,7 +192,7 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
 .profile-dropdown-menu a:hover,
 .reports-dropdown-menu a:hover {
     background: #1f1f29;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 .profile-dropdown-menu a:last-child,
@@ -199,10 +207,10 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
 /* Notifications */
 .notif-wrap { position: relative; margin-right: 10px; }
 .notif-bell { color:#cfcfcf; cursor:pointer; position: relative; }
-.notif-bell:hover { color:#ff2fd2; }
+.notif-bell:hover { color:var(--brand-accent); }
 .notif-count {
     position:absolute; top:-6px; right:-8px;
-    background:#ff2fd2; color:#fff; font-size:11px; font-weight:700;
+    background:var(--brand-accent); color:#fff; font-size:11px; font-weight:700;
     padding:2px 6px; border-radius:999px;
 }
 .notif-menu {
@@ -211,12 +219,23 @@ $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
     min-width:320px; max-width:360px; z-index:3000;
 }
 .notif-menu a { display:block; padding:10px 12px; color:#cfcfcf; text-decoration:none; border-bottom:1px solid #1f1f29; }
-.notif-menu a:hover { background:#1f1f29; color:#ff2fd2; }
+.notif-menu a:hover { background:#1f1f29; color:var(--brand-accent); }
 .notif-menu a:last-child { border-bottom:none; }
 .notif-item-title { font-weight:600; color:#fff; }
 .notif-item-body { font-size:12px; color:#aaa; margin-top:4px; }
 .notif-item-time { font-size:11px; color:#888; margin-top:4px; }
-.notif-unread { background: rgba(255,47,210,0.08); }
+.notif-unread { background: rgba(var(--brand-accent-rgb),0.08); }
+
+/* Keep Premium indicators consistently pink across all DJ themes */
+.premium-badge {
+    background: rgba(255, 47, 210, 0.18) !important;
+    border: 1px solid rgba(255, 47, 210, 0.55) !important;
+    color: #ff7de8 !important;
+}
+
+.premium-lock-tip {
+    color: #ffb3ef !important;
+}
 
 </style>
 

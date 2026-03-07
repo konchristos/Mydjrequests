@@ -34,7 +34,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
 
 /* Banner */
 .preview-banner {
-    background: linear-gradient(135deg, #ff2fd2, #ff44de);
+    background: linear-gradient(135deg, var(--brand-accent), var(--brand-accent-strong));
     color: #fff;
     padding: 12px 16px;
     border-radius: 12px;
@@ -49,7 +49,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
     border-radius: 20px;
     border: 1px solid rgba(255,255,255,0.08);
     padding: 24px 22px 26px;
-    box-shadow: 0 0 25px rgba(255, 47, 210, 0.15);
+    box-shadow: 0 0 25px rgba(var(--brand-accent-rgb), 0.15);
 }
 
 .preview-card h2 {
@@ -94,7 +94,7 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
 }
 .preview-contact-line i {
     margin-right: 6px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 
 /* Social buttons (match patron card) */
@@ -114,12 +114,12 @@ echo '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-a
 }
 .social-btn i {
     font-size: 18px;
-    color: #ff2fd2;
+    color: var(--brand-accent);
 }
 .social-btn:hover {
-    background: rgba(255,47,210,0.15);
+    background: rgba(var(--brand-accent-rgb), 0.15);
     transform: translateY(-1px);
-    border-color: rgba(255,47,210,0.4);
+    border-color: rgba(var(--brand-accent-rgb), 0.4);
 }
 
 /* Save to contacts button */

@@ -28,6 +28,7 @@ $basePlan = mdjr_get_user_plan_base($db, $djId);
 $activeSimulation = mdjr_get_admin_plan_simulation($db, $djId);
 $effectivePlan = mdjr_get_user_plan($db, $djId);
 $isPremiumPlan = ($effectivePlan === 'premium');
+$currentDjThemeColor = mdjr_get_dj_theme_color_setting($db, $djId);
 $dynamicLivePatronUrl = $djUuid !== '' ? url('qr/live_patron.php?dj=' . urlencode($djUuid)) : '';
 mdjr_ensure_premium_tables($db);
 $globalQrSettings = mdjr_get_user_qr_settings($db, $djId) ?: null;
@@ -167,7 +168,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $activeSimulation = mdjr_get_admin_plan_simulation($db, $djId);
             $effectivePlan = mdjr_get_user_plan($db, $djId);
             $isPremiumPlan = ($effectivePlan === 'premium');
+            $currentDjThemeColor = mdjr_get_dj_theme_color_setting($db, $djId);
             $success = 'Admin plan simulation updated.';
+        }
+    } elseif (isset($_POST['theme_settings_submit'])) {
+        if (!$isPremiumPlan) {
+            $error = 'Theme color customization is available on Premium only.';
+        } else {
+            $requestedThemeColor = mdjr_normalize_hex_color((string)($_POST['theme_color'] ?? ''), '#ff2fd2');
+            if (mdjr_save_dj_theme_color_setting($db, $djId, $requestedThemeColor)) {
+                $currentDjThemeColor = $requestedThemeColor;
+                $success = 'Theme color updated.';
+            } else {
+                $error = 'Unable to save theme color right now. Please try again.';
+            }
         }
     } else {
         $software = trim((string)($_POST['dj_software'] ?? ''));
@@ -365,7 +379,7 @@ require __DIR__ . '/layout.php';
 }
 .settings-check { margin-right:8px; }
 .settings-help { color:#b7b7c8; font-size:14px; margin-top:6px; }
-.settings-btn { background:#ff2fd2; color:#fff; border:none; padding:10px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
+.settings-btn { background:var(--brand-accent); color:#fff; border:none; padding:10px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
 .settings-ok { color:#7be87f; margin-bottom:10px; }
 .settings-err { color:#ff8080; margin-bottom:10px; }
 .settings-divider {
@@ -469,8 +483,8 @@ require __DIR__ . '/layout.php';
     font-weight:700;
     letter-spacing:.04em;
     text-transform:uppercase;
-    background:rgba(255,47,210,0.18);
-    border:1px solid rgba(255,47,210,0.55);
+    background:rgba(var(--brand-accent-rgb),0.18);
+    border:1px solid rgba(var(--brand-accent-rgb),0.55);
     color:#ff7de8;
     vertical-align:middle;
 }
@@ -519,13 +533,14 @@ require __DIR__ . '/layout.php';
     content: "";
     height: 2px;
     border-radius: 999px;
-    background: linear-gradient(90deg, rgba(255,47,210,.75), rgba(106,227,255,.55));
+    background: linear-gradient(90deg, rgba(var(--brand-accent-rgb),.75), rgba(106,227,255,.55));
     flex: 1 1 auto;
 }
 .settings-order-profile .settings-card + .settings-card {
     margin-top: 22px;
 }
 .settings-order-admin { order: 10; }
+.settings-order-theme { order: 15; }
 .settings-order-profile { order: 20; }
 .settings-order-platform { order: 30; }
 .settings-order-dynamic { order: 40; }
@@ -553,8 +568,8 @@ require __DIR__ . '/layout.php';
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    border: 3px solid rgba(255, 47, 210, 0.25);
-    border-top-color: #ff2fd2;
+    border: 3px solid rgba(var(--brand-accent-rgb), 0.25);
+    border-top-color: var(--brand-accent);
     animation: qrSpin 0.9s linear infinite;
 }
 @keyframes qrSpin {
@@ -607,7 +622,7 @@ require __DIR__ . '/layout.php';
 }
 .poster-editor-tile.dragging {
     opacity: 0.55;
-    border-color: #ff2fd2;
+    border-color: var(--brand-accent);
 }
 .poster-studio-layout {
     display: grid;
@@ -630,11 +645,38 @@ require __DIR__ . '/layout.php';
     padding-top: 12px;
     border-top: 1px solid #232331;
 }
+.theme-color-inline {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.theme-color-inline input[type="color"] {
+    width: 64px;
+    height: 44px;
+    border: 1px solid #2a2a3a;
+    border-radius: 10px;
+    background: #0e0f17;
+    padding: 3px;
+}
+.theme-preview-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 92px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--theme-preview, #ff2fd2) 55%, #ffffff 12%);
+    color: #ffffff;
+    background: color-mix(in srgb, var(--theme-preview, #ff2fd2) 18%, #111116);
+    font-size: 12px;
+    font-weight: 700;
+}
 </style>
 
 <div class="settings-wrap">
     <p style="margin:0 0 8px;">
-        <a href="/dj/dashboard.php" style="color:#ff2fd2; text-decoration:none;">&larr; Back to Dashboard</a>
+        <a href="/dj/dashboard.php" style="color:var(--brand-accent); text-decoration:none;">&larr; Back to Dashboard</a>
     </p>
     <h1>Settings</h1>
 
@@ -664,6 +706,34 @@ require __DIR__ . '/layout.php';
         </div>
     </div>
     <?php endif; ?>
+
+    <div class="settings-card settings-order-theme">
+        <h3>
+            Dashboard Theme Color
+            <span class="premium-badge">Premium</span>
+            <?php if (!$isPremiumPlan): ?>
+                <span class="premium-lock-tip" title="Locked for Pro. Requires Premium subscription.">🔒</span>
+            <?php endif; ?>
+        </h3>
+        <div class="settings-help" style="margin-top:0;">
+            Pro accounts use the standard pink theme. Premium accounts can choose their own accent color.
+        </div>
+        <?php if ($isPremiumPlan): ?>
+            <form method="POST" style="margin-top:12px;">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="theme_settings_submit" value="1">
+                <div class="theme-color-inline">
+                    <input type="color" name="theme_color" value="<?php echo e($currentDjThemeColor); ?>" aria-label="Theme color">
+                    <span class="theme-preview-chip" style="--theme-preview: <?php echo e($currentDjThemeColor); ?>;">Preview</span>
+                    <button type="submit" class="settings-btn">Save Theme</button>
+                </div>
+            </form>
+        <?php else: ?>
+            <div class="settings-help" style="margin-top:10px;">
+                Upgrade to Premium to unlock custom theme colors across your DJ panel.
+            </div>
+        <?php endif; ?>
+    </div>
 
     <div class="settings-feature-separator settings-order-platform"><span>Platform</span></div>
     <div class="settings-card settings-order-platform">
@@ -780,7 +850,7 @@ require __DIR__ . '/layout.php';
             </div>
             <form id="premiumGlobalQrForm" enctype="multipart/form-data" style="margin-top:12px;">
                 <div id="qrStyleTabs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-                    <button type="button" class="settings-btn qr-tab-btn" data-tab="style" style="padding:8px 12px;background:#ff2fd2;">Style</button>
+                    <button type="button" class="settings-btn qr-tab-btn" data-tab="style" style="padding:8px 12px;background:var(--brand-accent);">Style</button>
                     <button type="button" class="settings-btn qr-tab-btn" data-tab="color" style="padding:8px 12px;background:#2a2a3a;">Color</button>
                     <button type="button" class="settings-btn qr-tab-btn" data-tab="brand" style="padding:8px 12px;background:#2a2a3a;">Brand</button>
                 </div>
@@ -916,7 +986,7 @@ require __DIR__ . '/layout.php';
                 <div class="settings-label" style="margin-bottom:8px;">Preview Studio</div>
                 <?php if ($previewEventUuid !== ''): ?>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-                        <button type="button" class="settings-btn preview-tab-btn" data-preview-tab="global" style="padding:7px 11px;background:#ff2fd2;">Global</button>
+                        <button type="button" class="settings-btn preview-tab-btn" data-preview-tab="global" style="padding:7px 11px;background:var(--brand-accent);">Global</button>
                         <button type="button" class="settings-btn preview-tab-btn" data-preview-tab="obs" style="padding:7px 11px;background:#2a2a3a;">OBS</button>
                         <button type="button" class="settings-btn preview-tab-btn" data-preview-tab="poster" style="padding:7px 11px;background:#2a2a3a;">Poster</button>
                     </div>
@@ -1593,7 +1663,7 @@ require __DIR__ . '/layout.php';
     function setActiveTab(tabName) {
         tabButtons.forEach((btn) => {
             const isActive = btn.getAttribute('data-tab') === tabName;
-            btn.style.background = isActive ? '#ff2fd2' : '#2a2a3a';
+            btn.style.background = isActive ? 'var(--brand-accent)' : '#2a2a3a';
         });
         tabPanes.forEach((pane) => {
             pane.style.display = pane.getAttribute('data-pane') === tabName ? 'grid' : 'none';
@@ -1779,7 +1849,7 @@ require __DIR__ . '/layout.php';
         btn.addEventListener('click', () => {
             const tabName = btn.getAttribute('data-preview-tab') || 'global';
             previewTabButtons.forEach((b) => {
-                b.style.background = b.getAttribute('data-preview-tab') === tabName ? '#ff2fd2' : '#2a2a3a';
+                b.style.background = b.getAttribute('data-preview-tab') === tabName ? 'var(--brand-accent)' : '#2a2a3a';
             });
             previewTabPanes.forEach((pane) => {
                 pane.style.display = pane.getAttribute('data-preview-pane') === tabName ? '' : 'none';

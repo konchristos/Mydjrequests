@@ -20,7 +20,7 @@ require __DIR__ . '/layout.php';
 .broadcast-meta { color: #888; font-size: 12px; margin-top: 6px; }
 </style>
 
-<p style="margin:0 0 8px;"><a href="/dj/dashboard.php" style="color:#ff2fd2; text-decoration:none;">← Back</a></p>
+<p style="margin:0 0 8px;"><a href="/dj/dashboard.php" style="color:var(--brand-accent); text-decoration:none;">← Back</a></p>
 <h1>Broadcasts</h1>
 
 <div class="broadcast-list">

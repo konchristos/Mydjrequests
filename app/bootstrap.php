@@ -138,6 +138,7 @@ require_once APP_ROOT . '/app/helpers/admin.php';
 require_once APP_ROOT . '/app/helpers/event_state.php';
 require_once APP_ROOT . '/app/helpers/notifications.php';
 require_once APP_ROOT . '/app/helpers/premium_features.php';
+require_once APP_ROOT . '/app/helpers/dj_theme.php';
 
 
 // ---------------------------------------------------------

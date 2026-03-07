@@ -29,7 +29,7 @@ require __DIR__ . '/layout.php';
     .howto-section h2 {
         margin: 0 0 10px;
         font-size: 20px;
-        color: #ff2fd2;
+        color: var(--brand-accent);
     }
     .howto-section h3 {
         margin: 14px 0 6px;

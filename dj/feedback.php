@@ -63,7 +63,7 @@ require __DIR__ . '/layout.php';
 }
 
 .feedback-back-link {
-    color: #ff2fd2;
+    color: var(--brand-accent);
     text-decoration: none;
     font-weight: 600;
 }
@@ -87,7 +87,7 @@ require __DIR__ . '/layout.php';
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #ff2fd2, #ff5fe4);
+    background: linear-gradient(135deg, var(--brand-accent), var(--brand-accent-strong));
     color: #fff;
     border: none;
     padding: 11px 16px;
@@ -95,7 +95,7 @@ require __DIR__ . '/layout.php';
     font-weight: 700;
     text-decoration: none;
     display: inline-block;
-    box-shadow: 0 8px 24px rgba(255, 47, 210, 0.25);
+    box-shadow: 0 8px 24px rgba(var(--brand-accent-rgb), 0.25);
 }
 
 .btn-info {

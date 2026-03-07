@@ -144,7 +144,7 @@ function handle_bug_upload(int $bugId, int $userId, array $file): string
 }
 
 .btn-primary {
-    background: #ff2fd2;
+    background: var(--brand-accent);
     color: #fff;
     border: none;
     padding: 10px 14px;
@@ -156,7 +156,7 @@ function handle_bug_upload(int $bugId, int $userId, array $file): string
 .error { color: #ff8080; }
 </style>
 
-<p style="margin:0 0 8px;"><a href="/dj/bugs.php" style="color:#ff2fd2; text-decoration:none;">← Back</a></p>
+<p style="margin:0 0 8px;"><a href="/dj/bugs.php" style="color:var(--brand-accent); text-decoration:none;">← Back</a></p>
 <h1>Report a Bug</h1>
 
 <div class="form-card">
