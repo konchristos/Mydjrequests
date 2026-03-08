@@ -1,5 +1,5 @@
 <?php
-// public_html/request/index.php    V2
+// public_html/request_v2/index.php
 header('Content-Type: text/html; charset=UTF-8');
 
 require_once __DIR__ . '/../app/bootstrap_public.php';
@@ -117,6 +117,57 @@ $eventState = strtolower((string)($event['event_state'] ?? 'upcoming'));
 $isEventLiveForPayments = ($eventState === 'live');
 $ENABLE_PATRON_PAYMENTS = $ENABLE_PATRON_PAYMENTS && $eventTipsBoostEnabled && $isEventLiveForPayments;
 $djHasPremiumPlan = mdjr_user_has_premium($db, (int)$event['user_id']);
+
+// Public bootstrap does not always load admin helper; resolve admin safely here.
+$v2IsAdmin = false;
+if (function_exists('is_admin')) {
+    $v2IsAdmin = is_admin();
+} elseif (!empty($_SESSION['dj_id'])) {
+    try {
+        $adminStmt = $db->prepare("SELECT is_admin FROM users WHERE id = ? LIMIT 1");
+        $adminStmt->execute([(int)$_SESSION['dj_id']]);
+        $v2IsAdmin = ((int)$adminStmt->fetchColumn() === 1);
+    } catch (Throwable $e) {
+        $v2IsAdmin = false;
+    }
+}
+
+// Premium theme-color preview for V2 patron page.
+// Admin override: ?premium_theme=1 or ?premium_theme=0
+$v2PremiumThemePreview = $djHasPremiumPlan;
+if ($v2IsAdmin && isset($_GET['premium_theme'])) {
+    $forcedPreview = trim((string)$_GET['premium_theme']);
+    if ($forcedPreview === '0') {
+        $v2PremiumThemePreview = false;
+    } elseif ($forcedPreview === '1') {
+        $v2PremiumThemePreview = true;
+    }
+}
+
+$v2Accent = '#ff2fd2';
+if ($v2PremiumThemePreview) {
+    try {
+        $themeStmt = $db->prepare("SELECT `value` FROM app_settings WHERE `key` = :k LIMIT 1");
+        $themeStmt->execute(['k' => 'dj_theme_color_' . (int)$event['user_id']]);
+        $rawThemeColor = strtolower(trim((string)($themeStmt->fetchColumn() ?: '')));
+        if (preg_match('/^#[0-9a-f]{6}$/', $rawThemeColor) === 1) {
+            $v2Accent = $rawThemeColor;
+        }
+    } catch (Throwable $e) {
+        $v2Accent = '#ff2fd2';
+    }
+}
+
+$v2AccentStrong = $v2Accent;
+$v2AccentRgb = '255, 47, 210';
+if (preg_match('/^#([0-9a-f]{6})$/i', $v2Accent, $m) === 1) {
+    $hex = $m[1];
+    $r = hexdec(substr($hex, 0, 2));
+    $g = hexdec(substr($hex, 2, 2));
+    $b = hexdec(substr($hex, 4, 2));
+    $v2AccentRgb = $r . ', ' . $g . ', ' . $b;
+    $v2AccentStrong = sprintf('#%02x%02x%02x', min(255, $r + 18), min(255, $g + 18), min(255, $b + 18));
+}
 
 // Load DJ (for name replacement)
 $userModel = new User();
@@ -1378,6 +1429,173 @@ select.mdjr-menu {
 @keyframes fadeTabIn {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* V2 premium accent preview (targeted only) */
+:root {
+    --v2-accent: <?php echo e($v2Accent); ?>;
+    --v2-accent-strong: <?php echo e($v2AccentStrong); ?>;
+    --v2-accent-rgb: <?php echo e($v2AccentRgb); ?>;
+}
+
+/* Top nav: remove top line + use glow for selected tab */
+#mdjr-nav {
+    border-top: none !important;
+    border-bottom: 1px solid rgba(var(--v2-accent-rgb), 0.38);
+    box-shadow: 0 0 18px rgba(var(--v2-accent-rgb), 0.14);
+}
+
+#mdjr-nav button i,
+#mdjr-nav button span {
+    color: var(--v2-accent) !important;
+    text-shadow: none;
+}
+
+#mdjr-nav button.active {
+    box-shadow: none;
+    border-radius: 0;
+    background: transparent;
+}
+
+#mdjr-nav button.active i {
+    color: var(--v2-accent);
+    text-shadow:
+        0 0 10px rgba(var(--v2-accent-rgb), 0.7),
+        0 0 22px rgba(var(--v2-accent-rgb), 0.45);
+    animation: v2TabIconPulse 1.7s ease-in-out infinite;
+}
+
+#mdjr-nav button.active span {
+    color: var(--v2-accent);
+    text-shadow: 0 0 8px rgba(var(--v2-accent-rgb), 0.45);
+}
+
+#mdjr-nav button:focus,
+#mdjr-nav button:focus-visible {
+    outline: none;
+}
+
+@keyframes v2TabIconPulse {
+    0%, 100% {
+        transform: scale(1);
+        filter: drop-shadow(0 0 0 rgba(var(--v2-accent-rgb), 0));
+    }
+    50% {
+        transform: scale(1.08);
+        filter: drop-shadow(0 0 10px rgba(var(--v2-accent-rgb), 0.8));
+    }
+}
+
+/* Home tab only: tile surrounds/glow + accent headings */
+#section-home .event-card {
+    background: radial-gradient(circle at top left, rgba(var(--v2-accent-rgb), 0.28) 0%, #1a1a2a 80%);
+    border-color: transparent !important;
+    box-shadow:
+        0 0 26px rgba(var(--v2-accent-rgb), 0.22) !important;
+}
+
+#section-home .event-card h1 {
+    color: var(--v2-accent) !important;
+}
+
+#section-home #noticeWrapper .event-notice {
+    background: radial-gradient(circle at top left, rgba(var(--v2-accent-rgb), 0.14) 0%, #0c0c11 72%) !important;
+    border-color: transparent !important;
+    box-shadow:
+        0 0 20px rgba(var(--v2-accent-rgb), 0.18) !important;
+}
+
+#section-home #noticeWrapper .event-notice > div:first-child > div:first-child {
+    color: var(--v2-accent) !important;
+}
+
+#section-home .stripe-tip-card {
+    border-color: transparent !important;
+    box-shadow:
+        0 0 24px rgba(var(--v2-accent-rgb), 0.2) !important;
+}
+
+#section-home .mood-card {
+    box-shadow: 0 0 20px rgba(var(--v2-accent-rgb), 0.24) !important;
+}
+
+#section-home .mood-title {
+    color: var(--v2-accent) !important;
+}
+
+#section-home .name-card {
+    border-color: transparent !important;
+    box-shadow:
+        0 0 24px rgba(var(--v2-accent-rgb), 0.2) !important;
+}
+
+/* Request tab: glow-only tile treatment + Send Song Request button */
+#section-request .request-card,
+#section-request > .card {
+    background: radial-gradient(circle at top left, rgba(var(--v2-accent-rgb), 0.14) 0%, #1a1a2a 78%) !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 22px rgba(var(--v2-accent-rgb), 0.2) !important;
+}
+
+button.send-btn {
+    background: linear-gradient(135deg, var(--v2-accent), var(--v2-accent-strong)) !important;
+    border-color: rgba(var(--v2-accent-rgb), 0.65) !important;
+}
+
+button.send-btn:hover {
+    box-shadow: 0 0 18px rgba(var(--v2-accent-rgb), 0.42) !important;
+}
+
+/* All Requests tab: only outer card glow (no inner content changes) */
+#section-requests > .card {
+    border-color: transparent !important;
+    box-shadow:
+        0 0 24px rgba(var(--v2-accent-rgb), 0.2) !important;
+}
+
+/* Message tab: glow-only tile treatment */
+#section-message .message-card {
+    background: radial-gradient(circle at top left, rgba(var(--v2-accent-rgb), 0.14) 0%, #1a1a2a 78%) !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 22px rgba(var(--v2-accent-rgb), 0.2) !important;
+}
+
+/* Contact tab: apply theme color treatment */
+#section-contact .dj-profile-card {
+    background: radial-gradient(circle at top left, rgba(var(--v2-accent-rgb), 0.14) 0%, #1a1a2a 78%) !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 22px rgba(var(--v2-accent-rgb), 0.2) !important;
+}
+
+#section-contact .social-btn {
+    background: #1c1c28 !important;
+    border-color: rgba(255,255,255,0.08) !important;
+    box-shadow: none !important;
+}
+
+#section-contact .social-btn i,
+#section-contact .dj-contact-line i {
+    color: var(--v2-accent) !important;
+}
+
+#section-contact .social-btn:hover {
+    background: rgba(var(--v2-accent-rgb), 0.2) !important;
+    border-color: rgba(var(--v2-accent-rgb), 0.62) !important;
+    box-shadow: 0 0 16px rgba(var(--v2-accent-rgb), 0.24) !important;
+}
+
+#section-contact .save-contact-btn {
+    background: linear-gradient(135deg, var(--v2-accent), var(--v2-accent-strong)) !important;
+    border: 1px solid rgba(var(--v2-accent-rgb), 0.6) !important;
+    box-shadow: 0 0 16px rgba(var(--v2-accent-rgb), 0.25) !important;
+}
+
+#section-contact .save-contact-btn:hover {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+    box-shadow:
+        0 0 22px rgba(var(--v2-accent-rgb), 0.4),
+        0 0 0 1px rgba(var(--v2-accent-rgb), 0.42) inset !important;
 }
 
 

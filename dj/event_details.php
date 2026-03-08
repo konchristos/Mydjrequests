@@ -471,9 +471,17 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 .event-meta {
-    margin-top: 10px;
     color: #ccc;
     font-size: 15px;
+}
+
+.event-header-top {
+    margin-top: 10px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+    flex-wrap: wrap;
 }
 
 .action-buttons {
@@ -481,6 +489,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     display: flex;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
 }
 
 .action-spacer {
@@ -502,6 +511,49 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 .action-buttons a:hover {
     background: #383844;
+}
+
+.event-status-panel {
+    min-width: 280px;
+    max-width: 340px;
+    padding: 14px 14px 12px;
+    border: 1px solid #2f3140;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+}
+
+.event-status-title {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #9fa6bf;
+    margin-bottom: 8px;
+}
+
+.event-status-current {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.event-status-help {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: #b7bbca;
+    line-height: 1.35;
+}
+
+.event-status-panel .event-state-btn {
+    width: 100%;
+}
+
+@media (max-width: 920px) {
+    .event-status-panel {
+        min-width: 100%;
+        max-width: 100%;
+    }
 }
 
 .section-card {
@@ -943,7 +995,7 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 .tips-boost-card-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 14px;
   flex-wrap: wrap;
 }
@@ -958,16 +1010,113 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
   color: #fff;
 }
 
-.tips-boost-toggle-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.tips-boost-panel {
+  min-width: 280px;
+  max-width: 340px;
+  padding: 14px 14px 12px;
+  border: 1px solid #2f3140;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
 }
 
-.tips-boost-note {
+.tips-boost-title {
   font-size: 11px;
-  color: #9ea0af;
-  white-space: nowrap;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #9fa6bf;
+  margin-bottom: 8px;
+}
+
+.tips-boost-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: nowrap;
+}
+
+.tips-boost-help {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #b7bbca;
+  line-height: 1.35;
+}
+
+.tips-boost-badge {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tips-boost-badge.tips-on {
+  background: rgba(46, 204, 113, 0.18);
+  color: #76f3b0;
+  border: 1px solid rgba(46, 204, 113, 0.5);
+}
+
+.tips-boost-badge.tips-off {
+  background: rgba(255,255,255,0.08);
+  color: #cfcfd8;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+.tips-boost-visibility-badge {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tips-boost-visibility-badge.visible {
+  background: rgba(46, 204, 113, 0.22);
+  color: #8cffbe;
+  border: 1px solid rgba(46, 204, 113, 0.58);
+  box-shadow:
+    0 0 8px rgba(46, 204, 113, 0.55),
+    0 0 16px rgba(46, 204, 113, 0.28);
+  animation: tipsVisiblePulse 1.6s ease-in-out infinite;
+}
+
+.tips-boost-visibility-badge.hidden {
+  background: rgba(255,255,255,0.08);
+  color: #cfcfd8;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+@keyframes tipsVisiblePulse {
+  0% {
+    box-shadow:
+      0 0 6px rgba(46, 204, 113, 0.35),
+      0 0 12px rgba(46, 204, 113, 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 12px rgba(46, 204, 113, 0.7),
+      0 0 22px rgba(46, 204, 113, 0.35);
+  }
+  100% {
+    box-shadow:
+      0 0 6px rgba(46, 204, 113, 0.35),
+      0 0 12px rgba(46, 204, 113, 0.18);
+  }
+}
+
+.tips-boost-panel .event-state-btn {
+  width: 100%;
 }
 
 .btn-tips-on {
@@ -976,8 +1125,9 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 .btn-tips-off {
-  background: #6a6f7e;
+  background: #ff3b30;
   color: #fff;
+  box-shadow: 0 0 10px rgba(255, 59, 48, 0.35);
 }
 
 .event-upcoming {
@@ -1380,66 +1530,62 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </span>
 </h1>
 
-    <div class="event-meta">
-        <strong>Date:</strong> <?php echo e($event['event_date'] ?: 'No date set'); ?><br>
-        <strong>Location:</strong> <?php echo e($event['location'] ?: 'N/A'); ?><br>
-        <strong>UUID:</strong> <?php echo e($event['uuid']); ?>
+    <div class="event-header-top">
+        <div class="event-meta">
+            <strong>Date:</strong> <?php echo e($event['event_date'] ?: 'No date set'); ?><br>
+            <strong>Location:</strong> <?php echo e($event['location'] ?: 'N/A'); ?><br>
+            <strong>UUID:</strong> <?php echo e($event['uuid']); ?>
+        </div>
+
+        <div class="event-status-panel">
+            <div class="event-status-title">Current Event Status</div>
+
+            <div class="event-status-current">
+                <span
+                  id="eventStateBadge"
+                  class="event-state-badge event-<?php echo e($event['event_state']); ?>"
+                >
+                  <?php echo strtoupper($event['event_state']); ?>
+                </span>
+            </div>
+
+            <?php if ($event['event_state'] === 'upcoming'): ?>
+                <p class="event-status-help">This event is not live yet. Set status to LIVE when you are ready to accept live requests.</p>
+                <button
+                  id="toggleLiveBtn"
+                  class="event-state-btn btn-live"
+                  data-event-id="<?php echo (int)$event['id']; ?>"
+                  data-current-state="upcoming"
+                >
+                  Set Status to LIVE
+                </button>
+            <?php elseif ($event['event_state'] === 'live'): ?>
+                <p class="event-status-help">This event is currently live. Set status to ENDED to close live requests.</p>
+                <button
+                  id="toggleLiveBtn"
+                  class="event-state-btn btn-end"
+                  data-event-id="<?php echo (int)$event['id']; ?>"
+                  data-current-state="live"
+                >
+                  Set Status to ENDED
+                </button>
+            <?php elseif ($event['event_state'] === 'ended'): ?>
+                <p class="event-status-help">This event has ended. Set status to UPCOMING if you need to reopen it before going live again.</p>
+                <button
+                  id="revertUpcomingBtn"
+                  class="event-state-btn btn-reopen"
+                  data-event-id="<?php echo (int)$event['id']; ?>"
+                >
+                  Set Status to UPCOMING
+                </button>
+            <?php endif; ?>
+        </div>
     </div>
 
-
-    <!-- IMPORTANT: action-buttons is CLOSED properly -->
-<div class="action-buttons">
-
-    <a href="<?php echo e(url('dj/events.php')); ?>">← Back to Events</a>
-    <a href="<?php echo e(url('dj/event_edit.php?uuid=' . $event['uuid'])); ?>">✏️ Edit Event</a>
-
-    <!-- SPACER pushes state controls to the right -->
-    <div class="action-spacer"></div>
-
-    <!-- ACTION BUTTON FIRST -->
-    <?php if ($event['event_state'] === 'upcoming'): ?>
-
-        <button
-          id="toggleLiveBtn"
-          class="event-state-btn btn-live"
-          data-event-id="<?php echo (int)$event['id']; ?>"
-          data-current-state="upcoming"
-        >
-          Go Live
-        </button>
-
-    <?php elseif ($event['event_state'] === 'live'): ?>
-
-        <button
-          id="toggleLiveBtn"
-          class="event-state-btn btn-end"
-          data-event-id="<?php echo (int)$event['id']; ?>"
-          data-current-state="live"
-        >
-          End Event
-        </button>
-
-    <?php elseif ($event['event_state'] === 'ended'): ?>
-
-        <button
-          id="revertUpcomingBtn"
-          class="event-state-btn btn-reopen"
-          data-event-id="<?php echo (int)$event['id']; ?>"
-        >
-          Reopen – Set Upcoming
-        </button>
-
-    <?php endif; ?>
-
-    <!-- STATE BADGE LAST -->
-    <span
-      id="eventStateBadge"
-      class="event-state-badge event-<?php echo e($event['event_state']); ?>"
-    >
-      <?php echo strtoupper($event['event_state']); ?>
-    </span>
-
-</div>
+    <div class="action-buttons">
+        <a href="<?php echo e(url('dj/events.php')); ?>">← Back to Events</a>
+        <a href="<?php echo e(url('dj/event_edit.php?uuid=' . $event['uuid'])); ?>">✏️ Edit Event</a>
+    </div>
 </div>
 
 <?php if ($platformTipsBoostEnabled): ?>
@@ -1450,22 +1596,42 @@ $eventBoostHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h2 style="margin-top:0;">Tips & Boost Settings</h2>
             <p class="tips-boost-status">
                 Event setting: <strong><?php echo $eventTipsBoostEnabled ? 'ON' : 'OFF'; ?></strong><br>
-                Platform: <strong>ENABLED</strong><br>
+                Visible to patrons:
+                <strong>
+                    <?php echo ($eventTipsBoostEnabled && $isLiveEvent) ? 'YES (LIVE + ON)' : 'NO'; ?>
+                </strong><br>
                 Currency: <strong><?php echo e($djTipBoostCurrency); ?></strong>
             </p>
         </div>
 
-        <div class="tips-boost-toggle-wrap">
+        <div class="tips-boost-panel">
+            <div class="tips-boost-title">Current Tips/Boost Status</div>
+            <div class="tips-boost-current">
+                <span class="tips-boost-badge <?php echo $eventTipsBoostEnabled ? 'tips-on' : 'tips-off'; ?>">
+                    <?php echo $eventTipsBoostEnabled ? 'ON' : 'OFF'; ?>
+                </span>
+                <span class="tips-boost-visibility-badge <?php echo ($eventTipsBoostEnabled && $isLiveEvent) ? 'visible' : 'hidden'; ?>">
+                    <?php echo ($eventTipsBoostEnabled && $isLiveEvent) ? 'VISIBLE' : 'HIDDEN'; ?>
+                </span>
+            </div>
+            <?php if ($eventTipsBoostEnabled): ?>
+                <?php if ($isLiveEvent): ?>
+                    <p class="tips-boost-help">Tips/boost is ON and this event is LIVE, so it is visible to patrons now.</p>
+                <?php else: ?>
+                    <p class="tips-boost-help">Tips/boost is ON, but patrons only see it when the event is LIVE.</p>
+                <?php endif; ?>
+            <?php else: ?>
+                <p class="tips-boost-help">Tips/boost is OFF, so it is hidden from patrons even if the event is LIVE.</p>
+            <?php endif; ?>
             <button
               id="toggleTipsBoostBtn"
               type="button"
-              class="event-state-btn <?php echo $eventTipsBoostEnabled ? 'btn-tips-on' : 'btn-tips-off'; ?>"
+              class="event-state-btn <?php echo $eventTipsBoostEnabled ? 'btn-tips-off' : 'btn-tips-on'; ?>"
               data-event-id="<?php echo (int)$event['id']; ?>"
               data-current-enabled="<?php echo $eventTipsBoostEnabled ? '1' : '0'; ?>"
             >
-              Tips/Boost: <?php echo $eventTipsBoostEnabled ? 'ON' : 'OFF'; ?>
+              Set Tips/Boost to <?php echo $eventTipsBoostEnabled ? 'OFF' : 'ON'; ?>
             </button>
-            <span class="tips-boost-note">Per-event override</span>
         </div>
     </div>
 </div>

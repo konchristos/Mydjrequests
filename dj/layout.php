@@ -237,6 +237,88 @@ $theme = mdjr_get_dj_theme_config(db(), (int)($_SESSION['dj_id'] ?? 0));
     color: #ffb3ef !important;
 }
 
+/* Global interactive affordance for logged-in DJ controls */
+:where(
+    button,
+    input[type="button"],
+    input[type="submit"],
+    input[type="reset"],
+    a.settings-btn,
+    a.reports-btn,
+    a.btn-primary,
+    a.qr-prod-btn,
+    a.qr-dev-btn,
+    a.copy-btn,
+    a.event-state-btn,
+    .settings-btn,
+    .reports-btn,
+    .btn-primary,
+    .qr-prod-btn,
+    .qr-dev-btn,
+    .copy-btn,
+    .event-state-btn
+) {
+    transition:
+        background-color 0.18s ease,
+        border-color 0.18s ease,
+        color 0.18s ease,
+        box-shadow 0.18s ease,
+        transform 0.14s ease,
+        filter 0.18s ease;
+}
+
+:where(
+    button,
+    input[type="button"],
+    input[type="submit"],
+    input[type="reset"],
+    a.settings-btn,
+    a.reports-btn,
+    a.btn-primary,
+    a.qr-prod-btn,
+    a.qr-dev-btn,
+    a.copy-btn,
+    a.event-state-btn,
+    .settings-btn,
+    .reports-btn,
+    .btn-primary,
+    .qr-prod-btn,
+    .qr-dev-btn,
+    .copy-btn,
+    .event-state-btn
+):where(:hover, :focus-visible):not(:disabled):not([aria-disabled="true"]) {
+    box-shadow:
+        0 0 0 1px rgba(var(--brand-accent-rgb), 0.55),
+        0 0 14px rgba(var(--brand-accent-rgb), 0.28);
+    border-color: rgba(var(--brand-accent-rgb), 0.65);
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+}
+
+:where(
+    button,
+    input[type="button"],
+    input[type="submit"],
+    input[type="reset"],
+    a.settings-btn,
+    a.reports-btn,
+    a.btn-primary,
+    a.qr-prod-btn,
+    a.qr-dev-btn,
+    a.copy-btn,
+    a.event-state-btn,
+    .settings-btn,
+    .reports-btn,
+    .btn-primary,
+    .qr-prod-btn,
+    .qr-dev-btn,
+    .copy-btn,
+    .event-state-btn
+):focus-visible {
+    outline: 2px solid rgba(var(--brand-accent-rgb), 0.95);
+    outline-offset: 2px;
+}
+
 </style>
 
 <?php if (is_admin()): ?>

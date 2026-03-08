@@ -129,7 +129,7 @@ require __DIR__ . '/layout.php';
 
 <!-- DELETE EVENT SECTION -->
 <div class="card danger-zone" style="border-color:#552;">
-    <h2 style="color:#ff4ae0;">Danger Zone</h2>
+    <h2 style="color:#ff2d2d;font-weight:800;letter-spacing:0.02em;">Danger Zone</h2>
     <p>This will permanently delete this event and all associated requests.</p>
 
     <button id="openDeleteModal" style="
@@ -265,7 +265,7 @@ require __DIR__ . '/layout.php';
 }
 
 .fancy-form .btn-primary:hover {
-    background: #ff4ae0 !important;
+    background: var(--brand-accent-strong) !important;
 }
 
 /* Modal Overlay */
@@ -330,7 +330,7 @@ require __DIR__ . '/layout.php';
 }
 
 .modal-box .confirm:hover {
-    background: #ff4ae0;
+    background: var(--brand-accent-strong);
 }
 
 

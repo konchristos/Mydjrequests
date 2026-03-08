@@ -108,7 +108,7 @@ button {
 }
 
 button:hover {
-    background: #ff4ae0;
+    background: var(--brand-accent-strong);
 }
 
 
