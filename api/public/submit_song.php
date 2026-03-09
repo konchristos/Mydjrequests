@@ -6,6 +6,7 @@ error_reporting(E_ALL);
 
 // api/public/submit_song.php
 require_once __DIR__ . '/../../app/bootstrap_public.php';
+require_once APP_ROOT . '/app/helpers/event_tracks_projection.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -21,6 +22,12 @@ try {
 } catch (Throwable $e) {
     echo json_encode(['success' => false, 'message' => 'Database error']);
     exit;
+}
+
+try {
+    trackIdentityEnsureSchema($pdo);
+} catch (Throwable $e) {
+    // Keep existing API behavior if schema migration is temporarily unavailable.
 }
 
 function appSettingEnabled(PDO $pdo, string $key, bool $default = false): bool
@@ -218,6 +225,17 @@ if (!$event) {
 }
 
 $eventId = (int)$event['id'];
+$trackIdentityId = null;
+try {
+    $trackIdentityId = trackIdentityResolveForRequest(
+        $pdo,
+        $spotifyId,
+        $spotifyName !== '' ? $spotifyName : $songTitle,
+        $spotifyArtist !== '' ? $spotifyArtist : $artist
+    );
+} catch (Throwable $e) {
+    $trackIdentityId = null;
+}
 
 // -----------------------------
 // PREVENT DUPLICATE REQUESTS
@@ -326,6 +344,7 @@ $insert = $pdo->prepare("
         spotify_track_name,
         spotify_artist_name,
         spotify_album_art_url,
+        track_identity_id,
         ip_address,
         user_agent,
         created_at
@@ -341,6 +360,7 @@ $insert = $pdo->prepare("
         :spotify_track_name,
         :spotify_artist_name,
         :spotify_album_art_url,
+        :track_identity_id,
         :ip_address,
         :user_agent,
         NOW()
@@ -357,11 +377,18 @@ $insert->execute([
     ':spotify_track_name'    => $spotifyName,
     ':spotify_artist_name'   => $spotifyArtist,
     ':spotify_album_art_url' => $spotifyArt,
+    ':track_identity_id'     => $trackIdentityId,
     ':ip_address'            => $ip,
     ':user_agent'            => $ua
 ]);
 
 $requestId = (int)$pdo->lastInsertId();
+
+eventTracksProjectionIncrementRequest(
+    $pdo,
+    $eventId,
+    ($trackIdentityId !== null && (int)$trackIdentityId > 0) ? (int)$trackIdentityId : null
+);
 
 // -----------------------------
 // INCREMENT REQUEST STATS
@@ -378,6 +405,7 @@ if ($spotifyId !== '') {
 $cache = $pdo->prepare("
     INSERT INTO spotify_tracks (
         spotify_track_id,
+        track_identity_id,
         track_name,
         artist_name,
         album_name,
@@ -389,6 +417,7 @@ $cache = $pdo->prepare("
         last_refreshed_at
     ) VALUES (
         :track_id,
+        :track_identity_id,
         :track_name,
         :artist_name,
         :album_name,
@@ -407,11 +436,13 @@ $cache = $pdo->prepare("
         release_date    = IF(VALUES(release_date) IS NOT NULL, VALUES(release_date), release_date),
         release_year    = IF(VALUES(release_year) IS NOT NULL, VALUES(release_year), release_year),
         preview_url     = IF(VALUES(preview_url) IS NOT NULL, VALUES(preview_url), preview_url),
+        track_identity_id = COALESCE(track_identity_id, VALUES(track_identity_id)),
         last_refreshed_at = NOW()
 ");
 
     $cache->execute([
         ':track_id'       => $spotifyId,
+        ':track_identity_id' => $trackIdentityId,
         ':track_name'     => $spotifyName ?: $songTitle,
         ':artist_name'    => $spotifyArtist ?: $artist,
         ':album_name'     => null,
