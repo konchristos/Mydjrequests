@@ -5,6 +5,8 @@ require_dj_login(); // DJ must be logged in
 
 $pageTitle = $pageTitle ?? "MyDJRequests - DJ Panel";
 $theme = mdjr_get_dj_theme_config(db(), (int)($_SESSION['dj_id'] ?? 0));
+$db = db();
+$bpmAccessEnabled = bpmCurrentUserHasAccess($db);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -436,6 +438,10 @@ if (!empty($_SESSION['dj_id'])) {
 
     <a href="<?php echo e(url('dj/dashboard.php')); ?>">Dashboard</a>
     <a href="<?php echo e(url('dj/events.php')); ?>">My Events</a>
+    <?php if ($bpmAccessEnabled): ?>
+    <a href="<?php echo e(url('BPM/index.php')); ?>">Playlist Imports</a>
+    <a href="<?php echo e(url('dj/library_import.php')); ?>">Library Import</a>
+    <?php endif; ?>
     <a href="<?php echo e(url('dj/how_to.php')); ?>">How To</a>
     <a href="<?php echo e(url('dj/terms.php')); ?>">Terms</a>
 
@@ -511,6 +517,10 @@ if (!empty($_SESSION['dj_id'])) {
 <div id="mobileMenu" class="mobile-menu">
     <a href="<?php echo e(url('dj/dashboard.php')); ?>">Dashboard</a>
     <a href="<?php echo e(url('dj/events.php')); ?>">My Events</a>
+    <?php if ($bpmAccessEnabled): ?>
+    <a href="<?php echo e(url('BPM/index.php')); ?>">Playlist Imports</a>
+    <a href="<?php echo e(url('dj/library_import.php')); ?>">Library Import</a>
+    <?php endif; ?>
     <a href="<?php echo e(url('dj/how_to.php')); ?>">How To</a>
     <a href="<?php echo e(url('dj/reports.php?view=performance')); ?>">Reports</a>
     <a href="<?php echo e(url('dj/broadcasts.php')); ?>">MyDJRequests Messages</a>
