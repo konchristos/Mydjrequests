@@ -3,6 +3,13 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../app/bootstrap.php';
 require_once __DIR__ . '/config.php';
+require_dj_login();
+
+$db = db();
+if (!bpmCurrentUserHasAccess($db)) {
+    http_response_code(403);
+    die('BPM import is not enabled for this account.');
+}
 
 if (!isset($_FILES['xml'])) {
     die('No file uploaded');
@@ -17,7 +24,7 @@ if ($file['error'] !== UPLOAD_ERR_OK) {
 // Extension check
 $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
 if (!in_array($ext, BPM_ALLOWED_EXT, true)) {
-    die('Invalid file type. XML only.');
+    die('Invalid file type. TXT only.');
 }
 
 // Size check

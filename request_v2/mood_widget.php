@@ -116,6 +116,7 @@
 <script>
 document.addEventListener("DOMContentLoaded", () => {
     const eventUuid     = <?php echo json_encode($uuid); ?>;
+    const canInteract   = (typeof CAN_INTERACT_DURING_EVENT === "boolean") ? CAN_INTERACT_DURING_EVENT : true;
     const btnPos        = document.querySelector('.mood-btn.mood-up');
     const btnNeg        = document.querySelector('.mood-btn.mood-down');
     const moodScoreEl   = document.getElementById('moodScore');
@@ -133,6 +134,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Save vote
  async function sendMood(mood) {
+    if (!canInteract) return;
     try {
         const patronName =
             (document.getElementById("guest_name")?.value || localStorage.getItem("mdjr_guest_name") || "").trim();
@@ -161,6 +163,13 @@ document.addEventListener("DOMContentLoaded", () => {
 btnPos.addEventListener("click", () => sendMood(1));
 btnNeg.addEventListener("click", () => sendMood(-1));
 
+    if (!canInteract) {
+        btnPos.disabled = true;
+        btnNeg.disabled = true;
+        btnPos.style.opacity = "0.55";
+        btnNeg.style.opacity = "0.55";
+    }
+
     // Fetch stats
 let moodFetchInProgress = false;
 
@@ -183,7 +192,9 @@ window.fetchMoodStats = async function fetchMoodStats() {
         const total    = data.total || 0;
 
         if (total === 0 || score === null) {
-            moodScoreEl.textContent = "No votes yet. Be the first!";
+            moodScoreEl.textContent = canInteract
+                ? "No votes yet. Be the first!"
+                : "No mood votes were recorded before this event ended.";
             moodBarInner.style.width = "0%";
             moodVotesEl.style.display = "none";
         } else {

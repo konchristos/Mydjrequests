@@ -43,7 +43,7 @@ try {
     // --------------------------------------------------
     // Resolve event
     // --------------------------------------------------
-    $stmt = $db->prepare("SELECT id FROM events WHERE uuid = ? LIMIT 1");
+    $stmt = $db->prepare("SELECT id, event_state FROM events WHERE uuid = ? LIMIT 1");
     $stmt->execute([$eventUuid]);
     $event = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -54,6 +54,12 @@ try {
     }
 
     $eventId = (int)$event['id'];
+    $eventState = strtolower((string)($event['event_state'] ?? 'upcoming'));
+    if ($eventState === 'ended') {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Mood voting is closed because this event has ended']);
+        exit;
+    }
 
     // --------------------------------------------------
     // Resolve patron name

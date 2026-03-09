@@ -198,7 +198,8 @@ foreach ($boostMonthly as $row) {
 
 //--------------------------------
 /* --- Spotify status --- */
-$isSpotifyConnected = false;
+$hasValidSpotifyToken = false;
+$spotifyExpiresAtTs = null;
 
 try {
     $stmt = $db->prepare("
@@ -210,7 +211,8 @@ try {
     $spotifyAccount = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($spotifyAccount && !empty($spotifyAccount['expires_at'])) {
-        $isSpotifyConnected = (strtotime($spotifyAccount['expires_at']) > time());
+        $spotifyExpiresAtTs = strtotime((string)$spotifyAccount['expires_at']) ?: null;
+        $hasValidSpotifyToken = ($spotifyExpiresAtTs !== null && $spotifyExpiresAtTs > time());
     }
 } catch (Throwable $e) {
     // fail silently
@@ -219,6 +221,22 @@ try {
 
 $userModel = new User();
 $user = $userModel->findById($djId);
+$spotifyAccessEnabled = (int)($user['spotify_access_enabled'] ?? 0);
+$isSpotifyConnected = ($hasValidSpotifyToken && $spotifyAccessEnabled === 1);
+$spotifyConnectedUntilLabel = $spotifyExpiresAtTs ? date('D j M, g:i A', $spotifyExpiresAtTs) : null;
+
+$spotifyAuthStatus = trim((string)($_GET['spotify_auth'] ?? ''));
+$spotifyAuthMessage = '';
+$spotifyAuthNoticeType = 'info';
+if ($spotifyAuthStatus === 'connected') {
+    $spotifyAuthMessage = 'Spotify connected successfully.';
+    $spotifyAuthNoticeType = 'success';
+} elseif ($spotifyAuthStatus === 'cancelled') {
+    $spotifyAuthMessage = 'Spotify connection was cancelled.';
+} elseif (in_array($spotifyAuthStatus, ['invalid', 'token_failed', 'profile_failed'], true)) {
+    $spotifyAuthMessage = 'Spotify authorization did not complete. Please try reconnecting.';
+    $spotifyAuthNoticeType = 'error';
+}
 
 // -----------------------------
 // STRIPE STATUS
@@ -1048,6 +1066,26 @@ require __DIR__ . '/layout.php';
     box-shadow: 0 0 0 1px rgba(106,227,255,0.15) inset;
 }
 
+.spotify-oauth-notice {
+    margin: 0 0 16px 0;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 13px;
+}
+
+.spotify-oauth-notice.success {
+    border-color: rgba(40, 205, 111, 0.45);
+    background: rgba(40, 205, 111, 0.12);
+}
+
+.spotify-oauth-notice.error {
+    border-color: rgba(255, 107, 107, 0.45);
+    background: rgba(255, 107, 107, 0.12);
+}
+
 
 
 
@@ -1059,6 +1097,11 @@ require __DIR__ . '/layout.php';
     <p>Your DJ control panel — manage events, requests, and more.</p>
 </div>
 
+<?php if ($spotifyAuthMessage !== ''): ?>
+    <div class="spotify-oauth-notice <?php echo e($spotifyAuthNoticeType); ?>">
+        <?php echo e($spotifyAuthMessage); ?>
+    </div>
+<?php endif; ?>
 
 <!-- SPOTIFY STATUS BANNER -->
 <div class="spotify-banner <?php echo $isSpotifyConnected ? 'connected' : 'disconnected'; ?>">
@@ -1072,7 +1115,7 @@ require __DIR__ . '/layout.php';
         <div class="spotify-text">
             <?php if ($isSpotifyConnected): ?>
                 <h3>Spotify Connected</h3>
-                <p>Your account is linked and ready for live requests.</p>
+                <p>Your account is linked and ready for live requests. Token valid until <?php echo e($spotifyConnectedUntilLabel ?: 'soon'); ?>.</p>
             <?php else: ?>
                 <h3>Connect Spotify to unlock requests</h3>
                 <p>Enable song search, previews, and smarter request handling.</p>

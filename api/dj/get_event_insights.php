@@ -81,6 +81,23 @@ try {
     $connectedGuestsStmt->execute([$eventId]);
     $connectedGuests = $connectedGuestsStmt->fetchAll(PDO::FETCH_ASSOC);
 
+    // Count all unique connected guests without UI list limits.
+    $connectedTokenStmt = $db->prepare("
+        SELECT DISTINCT epv.guest_token
+        FROM event_page_views epv
+        WHERE epv.event_id = ?
+          AND epv.guest_token IS NOT NULL
+          AND epv.guest_token <> ''
+    ");
+    $connectedTokenStmt->execute([$eventId]);
+    foreach ($connectedTokenStmt->fetchAll(PDO::FETCH_ASSOC) as $tokenRow) {
+        $token = (string)($tokenRow['guest_token'] ?? '');
+        if ($token !== '') {
+            $connectedTokens[$token] = true;
+        }
+    }
+    $connectedPatrons = count($connectedTokens);
+
     $countryUpdateStmt = null;
     if ($hasCountryCodeCol) {
         $countryUpdateStmt = $db->prepare('
@@ -132,7 +149,6 @@ try {
     }
     unset($cg);
 
-    $connectedPatrons = count($connectedTokens);
 } catch (Throwable $e) {
     // Fallback: if event_page_views schema differs/missing, derive from activity.
     $connectedSource = 'activity';

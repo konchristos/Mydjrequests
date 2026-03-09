@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/app/bootstrap_public.php';
+require_once __DIR__ . '/app/helpers/dj_theme.php';
 $db = db();
 
 /* -------------------------------------------------
@@ -86,9 +87,15 @@ imagefill($img, 0, 0, $transparent);
    Colours
 ------------------------------------------------- */
 
-$neonPink = imagecolorallocate($img, 255, 47, 210);
-$white    = imagecolorallocate($img, 255, 255, 255);
-$glowPink = imagecolorallocatealpha($img, 255, 47, 210, 90);
+$accentRgb = [255, 47, 210];
+if ($isPremium) {
+    $theme = mdjr_get_dj_theme_config($db, (int)$event['user_id']);
+    $accentRgb = mdjr_hex_to_rgb_triplet((string)($theme['accent'] ?? '#ff2fd2'));
+}
+
+$neonAccent = imagecolorallocate($img, $accentRgb[0], $accentRgb[1], $accentRgb[2]);
+$white      = imagecolorallocate($img, 255, 255, 255);
+$glowAccent = imagecolorallocatealpha($img, $accentRgb[0], $accentRgb[1], $accentRgb[2], 90);
 
 /* -------------------------------------------------
    Background gradient
@@ -115,7 +122,7 @@ for ($i = 0; $i < 3; $i++) {
         $W - 6 - $i,
         $H - 6 - $i,
         16,
-        $neonPink
+        $neonAccent
     );
 }
 
@@ -179,11 +186,11 @@ $scanMeY  = $qrY + $qrSize + 36;
 $x = centerTextX($W, $scanText, 22, $useTTF ? $font : null);
 
 if ($useTTF) {
-    imagettftext($img, 22, 0, $x+1, $scanMeY+1, $glowPink, $font, $scanText);
-    imagettftext($img, 22, 0, $x-1, $scanMeY-1, $glowPink, $font, $scanText);
-    imagettftext($img, 22, 0, $x,   $scanMeY,   $neonPink, $font, $scanText);
+    imagettftext($img, 22, 0, $x+1, $scanMeY+1, $glowAccent, $font, $scanText);
+    imagettftext($img, 22, 0, $x-1, $scanMeY-1, $glowAccent, $font, $scanText);
+    imagettftext($img, 22, 0, $x,   $scanMeY,   $neonAccent, $font, $scanText);
 } else {
-    imagestring($img, 5, $x, $scanMeY - 14, $scanText, $neonPink);
+    imagestring($img, 5, $x, $scanMeY - 14, $scanText, $neonAccent);
 }
 
 /* -------------------------------------------------

@@ -9,6 +9,8 @@ error_reporting(E_ALL);
 require_once __DIR__ . '/../../app/bootstrap.php';
 
 $db = db();
+ensureDjOwnedTrackOverridesTable($db);
+ensureDjEventTrackOverridesTable($db);
 
 $eventUuid = $_GET['event'] ?? '';
 if (!$eventUuid) {
@@ -55,6 +57,7 @@ SELECT
   (r_group.request_count + COALESCE(v.vote_count, 0)) AS popularity
 
 FROM (
+    -- Projection path (preferred): event_tracks
     SELECT
       e.track_identity_id,
       COALESCE(
@@ -107,6 +110,56 @@ FROM (
       GROUP BY track_identity_id
     ) sr ON sr.track_identity_id = e.track_identity_id
     WHERE e.event_id = ?
+
+    UNION ALL
+
+    -- Compatibility fallback: legacy requests not yet projected
+    SELECT
+      NULL AS track_identity_id,
+      COALESCE(
+        NULLIF(r.spotify_track_id, ''),
+        CONCAT(r.song_title, '::', r.artist)
+      ) AS track_key,
+      MAX(NULLIF(r.spotify_track_id, '')) AS spotify_track_id,
+      COALESCE(MAX(st.track_name), MAX(r.song_title)) AS song_title,
+      COALESCE(MAX(st.artist_name), MAX(r.artist)) AS artist,
+      COALESCE(MAX(st.album_art_url), MAX(r.spotify_album_art_url)) AS album_art,
+      MAX(st.bpm) AS cache_bpm,
+      MAX(st.musical_key) AS cache_musical_key,
+      COALESCE(MAX(st.release_year), 0) AS release_year,
+      COUNT(*) AS request_count,
+      MAX(r.created_at) AS last_requested_at,
+      GROUP_CONCAT(
+        DISTINCT CONCAT(r.requester_name, '::', r.created_at)
+        ORDER BY r.created_at DESC
+        SEPARATOR '||'
+      ) AS requester_data,
+      CASE
+        WHEN SUM(r.status = 'played') > 0 THEN 'played'
+        WHEN SUM(r.status = 'skipped') = COUNT(*) THEN 'skipped'
+        ELSE 'active'
+      END AS track_status,
+      NULL AS dj_track_id
+    FROM song_requests r
+    LEFT JOIN spotify_tracks st
+      ON st.spotify_track_id = NULLIF(r.spotify_track_id, '')
+    WHERE r.event_id = ?
+      AND (
+        r.track_identity_id IS NULL
+        OR NOT EXISTS (
+            SELECT 1
+            FROM event_tracks et
+            WHERE et.event_id = r.event_id
+              AND et.track_identity_id = r.track_identity_id
+        )
+      )
+    GROUP BY
+      COALESCE(
+        NULLIF(r.spotify_track_id, ''),
+        CONCAT(r.song_title, '::', r.artist)
+      ),
+      COALESCE(st.track_name, r.song_title),
+      COALESCE(st.artist_name, r.artist)
 ) r_group
 
 LEFT JOIN (
@@ -143,7 +196,14 @@ ORDER BY popularity DESC, r_group.last_requested_at DESC
 
 try {
     $stmt = $db->prepare($sql);
-    $stmt->execute([(int)$_SESSION['dj_id'], $eventId, $eventId, $eventId, $eventId]);
+    $stmt->execute([
+        (int)$_SESSION['dj_id'],
+        $eventId,
+        $eventId,
+        $eventId,
+        $eventId,
+        $eventId
+    ]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {
     http_response_code(500);
@@ -152,6 +212,318 @@ try {
         'error' => $e->getMessage()
     ]);
     exit;
+}
+
+// DJ/event scoped manual track overrides (sticky and DJ-specific).
+$djId = (int)($_SESSION['dj_id'] ?? 0);
+$eventOverrideMap = [];
+$eventOverrideTitleMap = [];
+if ($djId > 0 && !empty($rows)) {
+    try {
+        $ovStmt = $db->prepare("
+            SELECT override_key, bpm, musical_key, release_year, manual_owned
+            FROM dj_event_track_overrides
+            WHERE dj_id = ?
+              AND event_id = ?
+        ");
+        $ovStmt->execute([$djId, $eventId]);
+        foreach ($ovStmt->fetchAll(PDO::FETCH_ASSOC) as $ov) {
+            $k = trim((string)($ov['override_key'] ?? ''));
+            if ($k === '') {
+                continue;
+            }
+            $eventOverrideMap[$k] = $ov;
+
+            $titleCore = mdjr_override_title_from_key($k);
+            if ($titleCore !== '' && !isset($eventOverrideTitleMap[$titleCore])) {
+                $eventOverrideTitleMap[$titleCore] = $ov;
+            }
+        }
+    } catch (Throwable $e) {
+        // Non-blocking.
+    }
+}
+
+// Manual ownership overrides: if admin confirmed ownership via manual match,
+// trust that marker for this DJ/spotify_track_id.
+if ($djId > 0 && !empty($rows)) {
+    try {
+        $spotifyIds = [];
+        foreach ($rows as $r) {
+            $sid = trim((string)($r['spotify_track_id'] ?? ''));
+            if ($sid !== '') {
+                $spotifyIds[$sid] = true;
+            }
+        }
+
+        $ownedSpotify = [];
+        if (!empty($spotifyIds)) {
+            $ids = array_keys($spotifyIds);
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            $ownSql = "
+                SELECT spotify_track_id
+                FROM dj_owned_track_overrides
+                WHERE dj_id = ?
+                  AND spotify_track_id IN ($in)
+            ";
+            $ownStmt = $db->prepare($ownSql);
+            $ownStmt->execute(array_merge([$djId], $ids));
+            foreach ($ownStmt->fetchAll(PDO::FETCH_ASSOC) as $orow) {
+                $sid = trim((string)($orow['spotify_track_id'] ?? ''));
+                if ($sid !== '') {
+                    $ownedSpotify[$sid] = true;
+                }
+            }
+        }
+
+        foreach ($rows as $idx => $r) {
+            $sid = trim((string)($r['spotify_track_id'] ?? ''));
+            $rows[$idx]['manual_owned'] = ($sid !== '' && isset($ownedSpotify[$sid])) ? 1 : 0;
+        }
+    } catch (Throwable $e) {
+        foreach ($rows as $idx => $r) {
+            $rows[$idx]['manual_owned'] = 0;
+        }
+    }
+}
+
+// Ownership fallback: when track_identity_id providers differ (spotify vs manual),
+// mark ownership by normalized title/artist hash against dj_tracks.normalized_hash.
+if ($djId > 0 && !empty($rows) && function_exists('trackIdentityNormalisedHash')) {
+    $needFallback = [];
+    $hashToRowIdx = [];
+
+    foreach ($rows as $idx => $r) {
+        $hasDirect = (isset($r['manual_owned']) && (int)$r['manual_owned'] === 1)
+            || (isset($r['dj_track_id']) && is_numeric($r['dj_track_id']) && (int)$r['dj_track_id'] > 0);
+        if ($hasDirect) {
+            continue;
+        }
+
+        $hash = trackIdentityNormalisedHash(
+            (string)($r['song_title'] ?? ''),
+            (string)($r['artist'] ?? '')
+        );
+        if ($hash === null || $hash === '') {
+            continue;
+        }
+
+        $needFallback[$hash] = true;
+        if (!isset($hashToRowIdx[$hash])) {
+            $hashToRowIdx[$hash] = [];
+        }
+        $hashToRowIdx[$hash][] = $idx;
+    }
+
+    if (!empty($needFallback)) {
+        try {
+            $hashes = array_keys($needFallback);
+            $in = implode(',', array_fill(0, count($hashes), '?'));
+            $ownSql = "
+                SELECT id, normalized_hash
+                FROM dj_tracks
+                WHERE dj_id = ?
+                  AND normalized_hash IN ($in)
+            ";
+            $ownStmt = $db->prepare($ownSql);
+            $ownStmt->execute(array_merge([$djId], $hashes));
+
+            $ownedMap = [];
+            foreach ($ownStmt->fetchAll(PDO::FETCH_ASSOC) as $orow) {
+                $h = (string)($orow['normalized_hash'] ?? '');
+                if ($h !== '' && !isset($ownedMap[$h])) {
+                    $ownedMap[$h] = (int)($orow['id'] ?? 0);
+                }
+            }
+
+            foreach ($ownedMap as $hash => $ownedId) {
+                if ($ownedId <= 0 || empty($hashToRowIdx[$hash])) {
+                    continue;
+                }
+                foreach ($hashToRowIdx[$hash] as $idx) {
+                    $rows[$idx]['dj_track_id'] = $ownedId;
+                }
+            }
+        } catch (Throwable $e) {
+            // Ignore ownership fallback failures; keep base response.
+        }
+    }
+
+    // Second-pass ownership fallback for metadata variants (feat/remix/edit text).
+    $remainingIdx = [];
+    foreach ($rows as $idx => $r) {
+        $hasDirect = (isset($r['manual_owned']) && (int)$r['manual_owned'] === 1)
+            || (isset($r['dj_track_id']) && is_numeric($r['dj_track_id']) && (int)$r['dj_track_id'] > 0);
+        if (!$hasDirect) {
+            $remainingIdx[] = $idx;
+        }
+    }
+
+    if (!empty($remainingIdx)) {
+        try {
+            $libStmt = $db->prepare("
+                SELECT id, normalized_hash, title, artist
+                FROM dj_tracks
+                WHERE dj_id = ?
+                LIMIT 60000
+            ");
+            $libStmt->execute([$djId]);
+            $libRows = $libStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $strictOwned = [];
+            $relaxedOwned = [];
+            $coreOwned = [];
+            $artistBucket = [];
+            $artistTokenIndex = [];
+            foreach ($libRows as $lr) {
+                $lid = (int)($lr['id'] ?? 0);
+                if ($lid <= 0) {
+                    continue;
+                }
+
+                $h = trim((string)($lr['normalized_hash'] ?? ''));
+                if ($h !== '' && !isset($strictOwned[$h])) {
+                    $strictOwned[$h] = $lid;
+                }
+
+                $rh = mdjr_relaxed_track_hash((string)($lr['title'] ?? ''), (string)($lr['artist'] ?? ''));
+                if ($rh !== '' && !isset($relaxedOwned[$rh])) {
+                    $relaxedOwned[$rh] = $lid;
+                }
+
+                $coreKey = mdjr_core_track_key((string)($lr['title'] ?? ''), (string)($lr['artist'] ?? ''));
+                if ($coreKey !== '' && !isset($coreOwned[$coreKey])) {
+                    $coreOwned[$coreKey] = $lid;
+                }
+
+                $aCore = mdjr_core_artist((string)($lr['artist'] ?? ''));
+                $tCore = mdjr_core_title((string)($lr['title'] ?? ''));
+                $aTokens = mdjr_artist_tokens($aCore);
+                $tTokens = mdjr_title_tokens($tCore);
+                if ($aCore !== '' && $tCore !== '') {
+                    if (!isset($artistBucket[$aCore])) {
+                        $artistBucket[$aCore] = [];
+                    }
+                    $artistBucket[$aCore][] = [
+                        'id' => $lid,
+                        'title' => $tCore,
+                        'tokens' => $tTokens,
+                        'artist_tokens' => $aTokens,
+                    ];
+
+                    foreach ($aTokens as $at) {
+                        if (!isset($artistTokenIndex[$at])) {
+                            $artistTokenIndex[$at] = [];
+                        }
+                        $artistTokenIndex[$at][] = [
+                            'id' => $lid,
+                            'title' => $tCore,
+                            'tokens' => $tTokens,
+                            'artist_tokens' => $aTokens,
+                        ];
+                    }
+                }
+            }
+
+            foreach ($remainingIdx as $idx) {
+                $title = (string)($rows[$idx]['song_title'] ?? '');
+                $artist = (string)($rows[$idx]['artist'] ?? '');
+
+                $strict = trackIdentityNormalisedHash($title, $artist);
+                if ($strict !== null && isset($strictOwned[$strict])) {
+                    $rows[$idx]['dj_track_id'] = $strictOwned[$strict];
+                    continue;
+                }
+
+                $relaxed = mdjr_relaxed_track_hash($title, $artist);
+                if ($relaxed !== '' && isset($relaxedOwned[$relaxed])) {
+                    $rows[$idx]['dj_track_id'] = $relaxedOwned[$relaxed];
+                    continue;
+                }
+
+                $coreKey = mdjr_core_track_key($title, $artist);
+                if ($coreKey !== '' && isset($coreOwned[$coreKey])) {
+                    $rows[$idx]['dj_track_id'] = $coreOwned[$coreKey];
+                    continue;
+                }
+
+                $aCore = mdjr_core_artist($artist);
+                $tCore = mdjr_core_title($title);
+                if ($aCore === '' || $tCore === '' || empty($artistBucket[$aCore])) {
+                    continue;
+                }
+
+                $targetTokens = mdjr_title_tokens($tCore);
+                foreach ($artistBucket[$aCore] as $cand) {
+                    $candId = (int)($cand['id'] ?? 0);
+                    $candTitle = (string)($cand['title'] ?? '');
+                    $candTokens = (array)($cand['tokens'] ?? []);
+                    if ($candId <= 0 || $candTitle === '') {
+                        continue;
+                    }
+
+                    if ($candTitle === $tCore || str_contains($candTitle, $tCore) || str_contains($tCore, $candTitle)) {
+                        $rows[$idx]['dj_track_id'] = $candId;
+                        break;
+                    }
+
+                    if (mdjr_tokens_overlap_strong($targetTokens, $candTokens)) {
+                        $rows[$idx]['dj_track_id'] = $candId;
+                        break;
+                    }
+                }
+
+                $hasMatch = isset($rows[$idx]['dj_track_id']) && is_numeric($rows[$idx]['dj_track_id']) && (int)$rows[$idx]['dj_track_id'] > 0;
+                if ($hasMatch) {
+                    continue;
+                }
+
+                // Looser "owned version" fallback:
+                // same/overlapping artist tokens + strong title overlap.
+                $targetArtistTokens = mdjr_artist_tokens($aCore);
+                if (empty($targetArtistTokens)) {
+                    continue;
+                }
+
+                $scanned = [];
+                foreach ($targetArtistTokens as $at) {
+                    if (empty($artistTokenIndex[$at])) {
+                        continue;
+                    }
+                    foreach ($artistTokenIndex[$at] as $cand) {
+                        $candId = (int)($cand['id'] ?? 0);
+                        if ($candId <= 0 || isset($scanned[$candId])) {
+                            continue;
+                        }
+                        $scanned[$candId] = true;
+
+                        $candTitle = (string)($cand['title'] ?? '');
+                        $candTitleTokens = (array)($cand['tokens'] ?? []);
+                        $candArtistTokens = (array)($cand['artist_tokens'] ?? []);
+                        if ($candTitle === '') {
+                            continue;
+                        }
+
+                        if (!mdjr_tokens_overlap_artist($targetArtistTokens, $candArtistTokens)) {
+                            continue;
+                        }
+
+                        if (
+                            $candTitle === $tCore ||
+                            str_contains($candTitle, $tCore) ||
+                            str_contains($tCore, $candTitle) ||
+                            mdjr_tokens_overlap_strong($targetTokens, $candTitleTokens)
+                        ) {
+                            $rows[$idx]['dj_track_id'] = $candId;
+                            break 2;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+            // Ignore relaxed ownership fallback failures.
+        }
+    }
 }
 
 /*
@@ -255,15 +627,43 @@ foreach ($rows as &$row) {
         }
     }
 
+    // Authoritative override: when a link exists, linked BPM catalog metadata
+    // should win over raw Spotify cache values (manual/admin apply relies on this).
     if ($sid !== '' && isset($bpmMap[$sid])) {
-        if (!$row['bpm'] && !empty($bpmMap[$sid]['bpm'])) {
+        if (!empty($bpmMap[$sid]['bpm'])) {
             $row['bpm'] = $bpmMap[$sid]['bpm'];
         }
-        if (!$row['musical_key'] && !empty($bpmMap[$sid]['musical_key'])) {
+        if (!empty($bpmMap[$sid]['musical_key'])) {
             $row['musical_key'] = $bpmMap[$sid]['musical_key'];
         }
-        if (!$row['release_year'] && !empty($bpmMap[$sid]['release_year'])) {
+        if (!empty($bpmMap[$sid]['release_year'])) {
             $row['release_year'] = (int)$bpmMap[$sid]['release_year'];
+        }
+    }
+
+    // Final event-scoped manual override must win over all cache/enrichment paths.
+    $overrideKey = mdjr_core_track_key((string)($row['song_title'] ?? ''), (string)($row['artist'] ?? ''));
+    $overrideTitleCore = mdjr_core_title((string)($row['song_title'] ?? ''));
+    $ov = null;
+    if ($overrideKey !== '' && isset($eventOverrideMap[$overrideKey])) {
+        $ov = $eventOverrideMap[$overrideKey];
+    } elseif ($overrideTitleCore !== '' && isset($eventOverrideTitleMap[$overrideTitleCore])) {
+        $ov = $eventOverrideTitleMap[$overrideTitleCore];
+    }
+
+    if (is_array($ov)) {
+        if (isset($ov['bpm']) && is_numeric($ov['bpm']) && (float)$ov['bpm'] > 0) {
+            $row['bpm'] = (float)$ov['bpm'];
+        }
+        $mKey = trim((string)($ov['musical_key'] ?? ''));
+        if ($mKey !== '') {
+            $row['musical_key'] = $mKey;
+        }
+        if (isset($ov['release_year']) && is_numeric($ov['release_year']) && (int)$ov['release_year'] > 0) {
+            $row['release_year'] = (int)$ov['release_year'];
+        }
+        if ((int)($ov['manual_owned'] ?? 0) === 1) {
+            $row['manual_owned'] = 1;
         }
     }
 
@@ -314,3 +714,206 @@ echo json_encode([
     'ok'   => true,
     'rows' => $rows
 ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+function mdjr_relaxed_track_hash(string $title, string $artist): string
+{
+    $title = mb_strtolower($title, 'UTF-8');
+    $artist = mb_strtolower($artist, 'UTF-8');
+
+    $title = preg_replace('/\\(.*?\\)|\\[.*?\\]/u', ' ', $title);
+    $title = preg_replace('/\\b(feat|ft|featuring|remix|mix|edit|version|remaster(?:ed)?|radio|extended|club|original|live|explicit|clean)\\b/u', ' ', $title);
+    $artist = preg_replace('/\\b(feat|ft|featuring)\\b/u', ' ', $artist);
+
+    $title = preg_replace('/[^\\p{L}\\p{N}\\s]/u', ' ', $title);
+    $artist = preg_replace('/[^\\p{L}\\p{N}\\s]/u', ' ', $artist);
+    $title = preg_replace('/\\s+/u', ' ', trim($title));
+    $artist = preg_replace('/\\s+/u', ' ', trim($artist));
+
+    if ($title === '' && $artist === '') {
+        return '';
+    }
+
+    return hash('sha256', $artist . '|' . $title);
+}
+
+function mdjr_core_track_key(string $title, string $artist): string
+{
+    $artistCore = mdjr_core_artist($artist);
+    $titleCore = mdjr_core_title($title);
+    if ($artistCore === '' || $titleCore === '') {
+        return '';
+    }
+    return $artistCore . '|' . $titleCore;
+}
+
+function mdjr_core_artist(string $artist): string
+{
+    $artist = mb_strtolower($artist, 'UTF-8');
+    $artist = preg_replace('/\\b(feat|ft|featuring|x|vs)\\b/u', ' ', $artist);
+    $artist = preg_replace('/[^\\p{L}\\p{N}\\s]/u', ' ', $artist);
+    $artist = preg_replace('/\\s+/u', ' ', trim($artist));
+    return (string)$artist;
+}
+
+function mdjr_core_title(string $title): string
+{
+    $title = mb_strtolower($title, 'UTF-8');
+
+    // Remove bracketed descriptors first.
+    $title = preg_replace('/\\(.*?\\)|\\[.*?\\]/u', ' ', $title);
+
+    // If there is a dash descriptor, keep the left side (common in remaster strings).
+    if (preg_match('/\\s[-–—]\\s/u', $title)) {
+        $parts = preg_split('/\\s[-–—]\\s/u', $title);
+        if (is_array($parts) && !empty($parts[0])) {
+            $title = (string)$parts[0];
+        }
+    }
+
+    // Remove common non-identity tokens.
+    $title = preg_replace('/\\b(feat|ft|featuring|remix|mix|edit|version|remaster(?:ed)?|radio|extended|club|original|live|explicit|clean|mono|stereo|instrumental|karaoke|rework|dub)\\b/u', ' ', $title);
+
+    // Drop standalone years that often appear in remaster variants.
+    $title = preg_replace('/\\b(19|20)\\d{2}\\b/u', ' ', $title);
+
+    $title = preg_replace('/[^\\p{L}\\p{N}\\s]/u', ' ', $title);
+    $title = preg_replace('/\\s+/u', ' ', trim($title));
+    return (string)$title;
+}
+
+function mdjr_title_tokens(string $coreTitle): array
+{
+    $parts = preg_split('/\\s+/u', trim($coreTitle));
+    if (!is_array($parts)) {
+        return [];
+    }
+
+    $out = [];
+    foreach ($parts as $p) {
+        $t = trim((string)$p);
+        if ($t === '' || mb_strlen($t, 'UTF-8') < 2) {
+            continue;
+        }
+        if (preg_match('/^(the|a|an|and|or|of|to|for|in|on)$/u', $t)) {
+            continue;
+        }
+        $out[$t] = true;
+    }
+
+    return array_keys($out);
+}
+
+function mdjr_tokens_overlap_strong(array $aTokens, array $bTokens): bool
+{
+    if (empty($aTokens) || empty($bTokens)) {
+        return false;
+    }
+
+    $aSet = array_fill_keys($aTokens, true);
+    $bSet = array_fill_keys($bTokens, true);
+    $common = array_intersect_key($aSet, $bSet);
+    $commonCount = count($common);
+    if ($commonCount === 0) {
+        return false;
+    }
+
+    $aCount = count($aSet);
+    $bCount = count($bSet);
+    $minCount = min($aCount, $bCount);
+    $maxCount = max($aCount, $bCount);
+
+    if ($minCount <= 2) {
+        return $commonCount >= $minCount;
+    }
+
+    // Strong overlap requirement to avoid cross-song false ownership.
+    return $commonCount >= 2 && ($commonCount / $maxCount) >= 0.6;
+}
+
+function mdjr_artist_tokens(string $artistCore): array
+{
+    $parts = preg_split('/\\s+/u', trim($artistCore));
+    if (!is_array($parts)) {
+        return [];
+    }
+
+    $out = [];
+    foreach ($parts as $p) {
+        $t = trim((string)$p);
+        if ($t === '' || mb_strlen($t, 'UTF-8') < 2) {
+            continue;
+        }
+        if (preg_match('/^(the|dj|mc|mr|mrs|ms|and|or|of)$/u', $t)) {
+            continue;
+        }
+        $out[$t] = true;
+    }
+
+    return array_keys($out);
+}
+
+function mdjr_tokens_overlap_artist(array $aTokens, array $bTokens): bool
+{
+    if (empty($aTokens) || empty($bTokens)) {
+        return false;
+    }
+
+    $aSet = array_fill_keys($aTokens, true);
+    $bSet = array_fill_keys($bTokens, true);
+    $commonCount = count(array_intersect_key($aSet, $bSet));
+    if ($commonCount === 0) {
+        return false;
+    }
+
+    $minCount = min(count($aSet), count($bSet));
+    if ($minCount <= 2) {
+        return $commonCount >= 1;
+    }
+
+    return ($commonCount / $minCount) >= 0.5;
+}
+
+function ensureDjOwnedTrackOverridesTable(PDO $db): void
+{
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS dj_owned_track_overrides (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            dj_id BIGINT UNSIGNED NOT NULL,
+            spotify_track_id VARCHAR(128) NOT NULL,
+            source VARCHAR(64) NOT NULL DEFAULT 'manual_metadata_match',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_dj_owned_track_overrides_dj_spotify (dj_id, spotify_track_id),
+            KEY idx_dj_owned_track_overrides_spotify (spotify_track_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+function ensureDjEventTrackOverridesTable(PDO $db): void
+{
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS dj_event_track_overrides (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            dj_id BIGINT UNSIGNED NOT NULL,
+            event_id BIGINT UNSIGNED NOT NULL,
+            override_key VARCHAR(512) NOT NULL,
+            bpm DECIMAL(6,2) NULL,
+            musical_key VARCHAR(32) NULL,
+            release_year INT NULL,
+            manual_owned TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_dj_event_track_overrides (dj_id, event_id, override_key),
+            KEY idx_dj_event_track_overrides_event (event_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+function mdjr_override_title_from_key(string $overrideKey): string
+{
+    $parts = explode('|', $overrideKey, 2);
+    if (count($parts) !== 2) {
+        return '';
+    }
+    return trim((string)$parts[1]);
+}

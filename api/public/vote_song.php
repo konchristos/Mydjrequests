@@ -29,7 +29,7 @@ if (!$eventUuid || !$guestToken || !$trackKey) {
 
 // Resolve event + DJ
 $stmt = $pdo->prepare("
-    SELECT id, user_id
+    SELECT id, user_id, event_state
     FROM events
     WHERE uuid = ?
 ");
@@ -41,6 +41,15 @@ $djId    = (int)($event['user_id'] ?? 0);
 
 if (!$eventId || !$djId) {
     echo json_encode(['success' => false, 'message' => 'Event not found']);
+    exit;
+}
+
+$eventState = strtolower((string)($event['event_state'] ?? 'upcoming'));
+if ($eventState === 'ended') {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Voting is closed because this event has ended.'
+    ]);
     exit;
 }
 

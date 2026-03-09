@@ -3,9 +3,35 @@
 require_once __DIR__ . '/../app/bootstrap.php';
 require_once APP_ROOT . '/app/config/spotify.php';
 
+function spotifyRedirectToReturn(string $status): void
+{
+    $fallback = '/dj/dashboard.php';
+    $returnTo = $_SESSION['spotify_return_to'] ?? $fallback;
+    unset($_SESSION['spotify_return_to'], $_SESSION['spotify_oauth_state']);
+
+    $parts = parse_url((string)$returnTo);
+    $path = isset($parts['path']) && str_starts_with((string)$parts['path'], '/')
+        ? (string)$parts['path']
+        : $fallback;
+    $query = isset($parts['query']) ? (string)$parts['query'] : '';
+
+    parse_str($query, $qp);
+    $qp['spotify_auth'] = $status;
+    $qs = http_build_query($qp);
+
+    header('Location: ' . $path . ($qs !== '' ? ('?' . $qs) : ''));
+    exit;
+}
+
 // Require DJ session
 if (empty($_SESSION['dj_id'])) {
     exit('DJ session missing.');
+}
+
+// User pressed "Cancel" on Spotify consent screen.
+if (!empty($_GET['error'])) {
+    $oauthError = (string)$_GET['error'];
+    spotifyRedirectToReturn($oauthError === 'access_denied' ? 'cancelled' : 'invalid');
 }
 
 if (
@@ -13,7 +39,7 @@ if (
     empty($_GET['state']) ||
     $_GET['state'] !== ($_SESSION['spotify_oauth_state'] ?? null)
 ) {
-    exit('Invalid Spotify authorization.');
+    spotifyRedirectToReturn('invalid');
 }
 
 unset($_SESSION['spotify_oauth_state']);
@@ -42,7 +68,7 @@ curl_close($ch);
 $data = json_decode($response, true);
 
 if (empty($data['access_token'])) {
-    exit('Spotify token exchange failed.');
+    spotifyRedirectToReturn('token_failed');
 }
 
 // Fetch Spotify user profile
@@ -79,7 +105,7 @@ if (
     error_log('Spotify profile fetch failed');
     error_log('HTTP: ' . $httpCode);
     error_log('Response: ' . $userJson);
-    exit('Failed to retrieve Spotify user profile.');
+    spotifyRedirectToReturn('profile_failed');
 }
 
 
@@ -118,7 +144,4 @@ $stmt->execute([
     ':scope'           => $data['scope'] ?? '',
 ]);
 
-$returnTo = $_SESSION['spotify_return_to'] ?? '/dj/dashboard.php';
-unset($_SESSION['spotify_return_to']);
-header('Location: ' . $returnTo);
-exit;
+spotifyRedirectToReturn('connected');

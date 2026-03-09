@@ -4,6 +4,13 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/bootstrap.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/parse_rekordbox_txt.php';
+require_dj_login();
+
+$db = db();
+if (!bpmCurrentUserHasAccess($db)) {
+    http_response_code(403);
+    die('BPM import is not enabled for this account.');
+}
 
 function canonicalHeader(string $header): string
 {
@@ -157,7 +164,7 @@ select { width: 100%; }
     <td>
   <strong><?= htmlspecialchars($header) ?></strong>
   <div class="sample"><?= htmlspecialchars(canonicalHeader($header)) ?></div>
-</td>c
+</td>
 
     <td class="sample">
         <?= htmlspecialchars(implode(', ', array_slice($samples[$header] ?? [], 0, 3))) ?>

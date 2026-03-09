@@ -118,14 +118,38 @@ function similarityPercent(string $a, string $b): float
     return (float)$pct;
 }
 
-$matchTitle = $manualMode ? $search : $baseTitle;
-$matchArtist = $manualMode ? $search : $baseArtist;
+function splitManualQuery(string $search, string $baseTitle, string $baseArtist): array
+{
+    $search = trim($search);
+    if ($search === '') {
+        return [$baseTitle, $baseArtist];
+    }
+
+    // Preferred typed format is "Artist - Title".
+    if (preg_match('/\s[-–—]\s/u', $search)) {
+        $parts = preg_split('/\s[-–—]\s/u', $search, 2);
+        $left = trim((string)($parts[0] ?? ''));
+        $right = trim((string)($parts[1] ?? ''));
+        if ($left !== '' && $right !== '') {
+            return [$right, $left];
+        }
+    }
+
+    return [$search, $baseArtist];
+}
+
+[$manualTitle, $manualArtist] = $manualMode
+    ? splitManualQuery($search, $baseTitle, $baseArtist)
+    : [$baseTitle, $baseArtist];
+
+$matchTitle = $manualTitle;
+$matchArtist = $manualArtist;
 
 $titleTokens = tokeniseForMatch($matchTitle);
 $artistTokens = tokeniseForMatch($matchArtist);
 $searchTokens = tokeniseForMatch($search);
 $tokens = $manualMode
-    ? array_values(array_unique($searchTokens))
+    ? array_values(array_unique(array_merge($titleTokens, $searchTokens)))
     : array_values(array_unique(array_merge($titleTokens, $artistTokens, $searchTokens)));
 
 $rowsById = [];
@@ -219,9 +243,9 @@ if (!$where) {
 $sql3 = "
     SELECT id, title, artist, bpm, key_text, year, genre
     FROM bpm_test_tracks
-    WHERE " . implode($manualMode ? ' AND ' : ' OR ', $where) . "
+    WHERE " . implode(' OR ', $where) . "
     ORDER BY id DESC
-    LIMIT 300
+    LIMIT 500
 ";
 
 $st3 = $db->prepare($sql3);
@@ -327,8 +351,15 @@ foreach ($rows as $row) {
         ($exactPairHit * 25);
 
     if ($manualMode) {
-        $tokenMinHits = max(1, min(2, count($tokens)));
-        $hasStrongTokenMatch = ($tokenHit >= $tokenMinHits);
+        $titleTokenMinHits = max(1, min(2, count($titleTokens)));
+        $titleTokenHits = 0;
+        $rowTitleTokens = tokeniseForMatch($title);
+        foreach ($titleTokens as $tk) {
+            if (in_array($tk, $rowTitleTokens, true)) {
+                $titleTokenHits++;
+            }
+        }
+        $hasStrongTokenMatch = ($titleTokenHits >= $titleTokenMinHits);
         $hasDirectMatch = ($rawTitleHit === 1 || $directTitleHit === 1 || $directArtistHit === 1);
         if (!$hasStrongTokenMatch && !$hasDirectMatch) {
             continue;
@@ -373,7 +404,7 @@ usort($scored, static function (array $a, array $b): int {
     return $b['match_score'] <=> $a['match_score'];
 });
 
-$scored = array_slice($scored, 0, $manualMode ? 40 : 100);
+$scored = array_slice($scored, 0, $manualMode ? 80 : 100);
 
 echo json_encode([
     'ok' => true,

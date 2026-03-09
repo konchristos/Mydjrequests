@@ -3,6 +3,13 @@
 require_once __DIR__ . '/../app/bootstrap.php';
 require_once __DIR__ . '/parse_rekordbox_txt.php';
 require_once __DIR__ . '/helpers.php';
+require_dj_login();
+
+$db = db();
+if (!bpmCurrentUserHasAccess($db)) {
+    http_response_code(403);
+    die('BPM import is not enabled for this account.');
+}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     die('Invalid request');
@@ -24,7 +31,6 @@ if (!is_file($path)) {
 $data = parseRekordboxTxt($path);
 $rows = $data['rows'] ?? [];
 
-$db = db();
 $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 // Prepare insert
@@ -126,7 +132,7 @@ echo "<p>Skipped: $skipped</p>";
 echo '<hr>';
 
 echo '<p style="margin-top:20px;">';
-echo '<a href="index.php" style="
+echo '<a href="rekordbox.php" style="
     display:inline-block;
     padding:10px 16px;
     background:#007bff;

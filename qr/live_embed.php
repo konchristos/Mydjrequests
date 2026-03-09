@@ -1,10 +1,14 @@
 <?php
 require_once __DIR__ . '/../app/bootstrap_public.php';
+require_once __DIR__ . '/../app/helpers/dj_theme.php';
 
 $djUuid = $_GET['dj'] ?? '';
 $djName = 'UNKNOWN DJ';
 $overlayAnimated = false;
 $obsQrScalePct = 100;
+$overlayAccent = '#ff2fd2';
+$overlayAccentRgb = '255, 47, 210';
+$overlayAccentStrong = '#ff44de';
 
 if ($djUuid) {
     $db = db();
@@ -25,6 +29,10 @@ if ($djUuid) {
             $settings = mdjr_get_user_qr_settings($db, $djId) ?: [];
             $overlayAnimated = !empty($settings['animated_overlay']);
             $obsQrScalePct = max(70, min(115, (int)($settings['obs_qr_scale_pct'] ?? 100)));
+            $theme = mdjr_get_dj_theme_config($db, $djId);
+            $overlayAccent = (string)($theme['accent'] ?? '#ff2fd2');
+            $overlayAccentStrong = (string)($theme['accent_strong'] ?? '#ff44de');
+            $overlayAccentRgb = (string)($theme['accent_rgb'] ?? '255, 47, 210');
         }
     }
 }
@@ -36,6 +44,12 @@ $qrImg = 'https://mydjrequests.com/qr/live.php?dj=' . urlencode($djUuid);
 <head>
 <meta charset="utf-8">
 <style>
+:root {
+    --overlay-accent: <?php echo htmlspecialchars($overlayAccent, ENT_QUOTES, 'UTF-8'); ?>;
+    --overlay-accent-strong: <?php echo htmlspecialchars($overlayAccentStrong, ENT_QUOTES, 'UTF-8'); ?>;
+    --overlay-accent-rgb: <?php echo htmlspecialchars($overlayAccentRgb, ENT_QUOTES, 'UTF-8'); ?>;
+}
+
 html, body {
     margin: 0;
     padding: 0;
@@ -49,8 +63,8 @@ html, body {
     position: relative;
     background: #0c0c11;
     border-radius: 16px;
-    border: 2px solid #ff2fd2;
-    box-shadow: 0 0 22px rgba(255,47,210,.45);
+    border: 2px solid var(--overlay-accent);
+    box-shadow: 0 0 22px rgba(var(--overlay-accent-rgb), .45);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -68,13 +82,13 @@ html, body {
     color: #ffffff;
     background: linear-gradient(
         90deg,
-        rgba(255,47,210,0.45),
+        rgba(var(--overlay-accent-rgb), 0.45),
         rgba(106,227,255,0.45)
     );
     letter-spacing: 0.10em;    /* logo-style spacing */
     text-shadow:
-        0 0 8px rgba(255,47,210,0.7),
-        0 0 16px rgba(255,47,210,0.35);
+        0 0 8px rgba(var(--overlay-accent-rgb), 0.7),
+        0 0 16px rgba(var(--overlay-accent-rgb), 0.35);
 }
 
 /* QR CONTAINER (NO SIDE PADDING) */
@@ -104,12 +118,12 @@ html, body {
     margin-top: 0px;
     font-size: 28px;           /* ðŸ‘ˆ BIG CTA */
     font-weight: 900;
-    color: #ff2fd2;
+    color: var(--overlay-accent);
     letter-spacing: 0.26em;
     animation: scanPulse 1.4s infinite;
     text-shadow:
-        0 0 10px rgba(255,47,210,0.8),
-        0 0 18px rgba(255,47,210,0.4);
+        0 0 10px rgba(var(--overlay-accent-rgb), 0.8),
+        0 0 18px rgba(var(--overlay-accent-rgb), 0.4);
 }
 
 @keyframes scanPulse {
@@ -127,8 +141,8 @@ html, body {
     color: #ffffff;
     letter-spacing: 0.10em;
     text-shadow:
-        0 0 8px rgba(255,47,210,0.9),
-        0 0 18px rgba(255,47,210,0.4);
+        0 0 8px rgba(var(--overlay-accent-rgb), 0.9),
+        0 0 18px rgba(var(--overlay-accent-rgb), 0.4);
 }
 
 .qr-tile.animated::after {

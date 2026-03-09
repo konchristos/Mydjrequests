@@ -48,6 +48,15 @@ if (!$event) {
     exit;
 }
 
+$eventState = strtolower((string)($event['event_state'] ?? 'upcoming'));
+if ($eventState === 'ended') {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Messaging is closed because this event has ended.'
+    ]);
+    exit;
+}
+
 $pdo = db();
 
 // Blocked guests cannot send new private messages for this event.

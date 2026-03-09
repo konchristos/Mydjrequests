@@ -25,6 +25,12 @@ if (!$event) {
     exit;
 }
 
+$eventState = strtolower((string)($event['event_state'] ?? 'upcoming'));
+if ($eventState === 'ended') {
+    echo json_encode(['ok' => false, 'error' => 'Poll voting is closed because this event has ended.']);
+    exit;
+}
+
 $db = db();
 $eventId = (int)$event['id'];
 

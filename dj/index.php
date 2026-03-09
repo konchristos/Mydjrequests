@@ -8,6 +8,7 @@ if (!$eventUuid) {
 }
 
 $db = db();
+$bpmAccessEnabled = bpmCurrentUserHasAccess($db);
 
 function djHasColumn(PDO $db, string $table, string $column): bool
 {
@@ -154,7 +155,7 @@ try {
   <div class="dj-controls">
     <select id="djSort">
       <option value="popularity">Popularity</option>
-      <?php if (is_admin()): ?>
+      <?php if ($bpmAccessEnabled): ?>
         <option value="bpm">BPM (Low to High)</option>
       <?php endif; ?>
       <option value="last">Last Requested</option>
@@ -367,6 +368,7 @@ window.DJ_CONFIG = {
   eventDate: "<?= htmlspecialchars($event['event_date'] ?? '') ?>",
   eventState: "<?= htmlspecialchars($event['event_state']) ?>",
   isAdmin: <?= is_admin() ? 'true' : 'false' ?>,
+  bpmAccessEnabled: <?= $bpmAccessEnabled ? 'true' : 'false' ?>,
   tipsBoostVisible: <?= $tipsBoostVisible ? 'true' : 'false' ?>,
   pollsPremiumEnabled: <?= $pollsPremiumEnabled ? 'true' : 'false' ?>,
   spotifySyncEnabled: <?= $spotifySyncEnabled ? 'true' : 'false' ?>,

@@ -165,6 +165,28 @@ function normalizeTitle(title) {
     .trim();
 }
 
+function buildManualSearchSeed(track) {
+  const artist = String(track?.artist || "").trim();
+  const title = normalizeTitle(String(track?.song_title || "").trim());
+  if (artist && title) return `${artist} - ${title}`;
+  if (artist) return artist;
+  return title;
+}
+
+function getManualMatchSpotifyIds(track) {
+  const ids = new Set();
+  const primaryId = String(track?.spotify_track_id || "").trim();
+  if (primaryId) ids.add(primaryId);
+
+  const groupRows = Array.isArray(track?.__group_rows) ? track.__group_rows : [];
+  groupRows.forEach((r) => {
+    const sid = String(r?.spotify_track_id || "").trim();
+    if (sid) ids.add(sid);
+  });
+
+  return [...ids];
+}
+
 function buildDjGroupKey(row) {
   return `${normalizeTitle(row.song_title || "")}::${(row.artist || "").trim().toLowerCase()}`;
 }
@@ -234,6 +256,7 @@ function groupDjRows(rows) {
       voters: group.rows.flatMap((r) => Array.isArray(r.voters) ? r.voters : []),
       boosters: group.rows.flatMap((r) => Array.isArray(r.boosters) ? r.boosters : []),
       dj_track_id: (group.rows.find((r) => Number(r.dj_track_id || 0) > 0)?.dj_track_id) || primary.dj_track_id || null,
+      manual_owned: group.rows.some((r) => Number(r.manual_owned || 0) === 1) ? 1 : Number(primary.manual_owned || 0),
       track_status: allPlayed ? "played" : (allSkipped ? "skipped" : "active"),
       group_has_played: anyPlayed,
       group_has_skipped: anySkipped,
@@ -337,10 +360,15 @@ async function applyManualMatch(bpmTrackId) {
   statusEl.textContent = "Applying metadata match...";
 
   try {
+    const spotifyTrackIds = getManualMatchSpotifyIds(manualMatchTrack);
+    const groupKeys = new Set((manualMatchTrack.__group_rows || []).map((r) => r.track_key).filter(Boolean));
+    if (manualMatchTrack.track_key) groupKeys.add(manualMatchTrack.track_key);
+
     const body = new URLSearchParams({
       event_uuid: EVENT_UUID || "",
       track_key: manualMatchTrack.track_key || "",
       spotify_track_id: manualMatchTrack.spotify_track_id || "",
+      spotify_track_ids_json: JSON.stringify(spotifyTrackIds),
       bpm_track_id: String(Number(bpmTrackId || 0)),
     });
     const res = await fetch("/api/dj/apply_manual_bpm_match.php", {
@@ -354,13 +382,17 @@ async function applyManualMatch(bpmTrackId) {
     }
 
     const applied = data.applied || {};
+    const appliedSpotifyIds = new Set((data.applied_spotify_track_ids || []).map((v) => String(v || "").trim()).filter(Boolean));
     djRequestsCache = djRequestsCache.map((r) => {
-      if (r.track_key !== manualMatchTrack.track_key) return r;
+      const sameGroup = groupKeys.has(r.track_key);
+      const sameSpotify = appliedSpotifyIds.has(String(r.spotify_track_id || "").trim());
+      if (!sameGroup && !sameSpotify) return r;
       return {
         ...r,
         bpm: applied.bpm ?? r.bpm,
         musical_key: applied.musical_key ?? r.musical_key,
         release_year: applied.release_year ?? r.release_year,
+        manual_owned: 1,
       };
     });
 
@@ -392,12 +424,13 @@ function openManualMatchModal(track) {
     <strong>${escapeHtml(track.song_title || "Unknown title")}</strong>
     <span> · ${escapeHtml(track.artist || "Unknown artist")}</span>
   `;
-  searchEl.value = "";
+  const defaultQuery = buildManualSearchSeed(track);
+  searchEl.value = defaultQuery;
   statusEl.textContent = "";
   resultsEl.innerHTML = "";
   modal.classList.remove("hidden");
 
-  loadManualMatchCandidates(track, "");
+  loadManualMatchCandidates(track, defaultQuery);
 }
 
 function formatThreadTime(ts) {
@@ -1087,7 +1120,7 @@ const el = document.createElement("div");
 el.className = "request-row";
 const isPlayed = row.track_status === "played" || row.group_has_played === true;
 const isSkipped = row.track_status === "skipped" || row.group_has_skipped === true;
-const isOwned = Number(row.dj_track_id || 0) > 0;
+const isOwned = Number(row.dj_track_id || 0) > 0 || Number(row.manual_owned || 0) === 1;
 const variants = Array.isArray(row.__group_rows) ? row.__group_rows : [];
 const expandable = variants.length > 1;
 

@@ -38,6 +38,24 @@ function perfEnsureQueueTable(PDO $db): void
     ");
 }
 
+function perfEnsureBpmAccessColumn(PDO $db): void
+{
+    $stmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'users'
+          AND COLUMN_NAME = 'bpm_access_enabled'
+    ");
+    $stmt->execute();
+    $exists = ((int)$stmt->fetchColumn()) > 0;
+
+    if (!$exists) {
+        $db->exec("ALTER TABLE users ADD COLUMN bpm_access_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER is_admin");
+        $db->exec("CREATE INDEX idx_users_bpm_access_enabled ON users (bpm_access_enabled)");
+    }
+}
+
 function perfGetSetting(PDO $db, string $key, string $default): string
 {
     $stmt = $db->prepare("SELECT `value` FROM app_settings WHERE `key` = ? LIMIT 1");
@@ -95,6 +113,7 @@ function perfApplyRecommendedIndexes(PDO $db): array
 
 perfEnsureSettingsTable($db);
 perfEnsureQueueTable($db);
+perfEnsureBpmAccessColumn($db);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token()) {
@@ -107,14 +126,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $requestFuzzy = isset($_POST['bpm_fuzzy_on_request_enabled']) ? '1' : '0';
             $yearFill = isset($_POST['bpm_on_request_fill_year_enabled']) ? '1' : '0';
             $queueWorker = isset($_POST['track_enrichment_worker_enabled']) ? '1' : '0';
+            $bpmRolloutAll = isset($_POST['bpm_rollout_all_enabled']) ? '1' : '0';
 
             perfSetSetting($db, 'bpm_backfill_enabled', $backfill);
             perfSetSetting($db, 'bpm_fuzzy_on_request_enabled', $requestFuzzy);
             perfSetSetting($db, 'bpm_on_request_fill_year_enabled', $yearFill);
             perfSetSetting($db, 'track_enrichment_worker_enabled', $queueWorker);
+            perfSetSetting($db, 'bpm_rollout_all_enabled', $bpmRolloutAll);
             perfSetSetting($db, 'bpm_owner_user_id', (string)((int)($_SESSION['dj_id'] ?? 0)));
 
             $success = 'Performance toggles updated.';
+        } elseif ($action === 'set_bpm_user_access') {
+            $targetUserId = (int)($_POST['target_user_id'] ?? 0);
+            $enabled = isset($_POST['bpm_access_enabled']) ? 1 : 0;
+
+            if ($targetUserId <= 0) {
+                $error = 'Provide a valid user ID.';
+            } else {
+                $upd = $db->prepare("UPDATE users SET bpm_access_enabled = :enabled WHERE id = :id LIMIT 1");
+                $upd->execute([
+                    ':enabled' => $enabled,
+                    ':id' => $targetUserId,
+                ]);
+
+                if ($upd->rowCount() === 0) {
+                    $existsStmt = $db->prepare("SELECT id FROM users WHERE id = ? LIMIT 1");
+                    $existsStmt->execute([$targetUserId]);
+                    if (!$existsStmt->fetchColumn()) {
+                        $error = 'User not found.';
+                    } else {
+                        $success = 'No change needed; user already had that BPM access setting.';
+                    }
+                } else {
+                    $success = $enabled === 1
+                        ? "BPM access enabled for user #{$targetUserId}."
+                        : "BPM access disabled for user #{$targetUserId}.";
+                }
+            }
         } elseif ($action === 'apply_indexes') {
             [$applied, $already, $errs] = perfApplyRecommendedIndexes($db);
             if (!empty($errs)) {
@@ -130,11 +178,26 @@ $settings = [
     'bpm_backfill_enabled' => perfGetSetting($db, 'bpm_backfill_enabled', '1'),
     'bpm_fuzzy_on_request_enabled' => perfGetSetting($db, 'bpm_fuzzy_on_request_enabled', '0'),
     'bpm_on_request_fill_year_enabled' => perfGetSetting($db, 'bpm_on_request_fill_year_enabled', '0'),
+    'bpm_rollout_all_enabled' => perfGetSetting($db, 'bpm_rollout_all_enabled', '0'),
     'track_enrichment_worker_enabled' => perfGetSetting($db, 'track_enrichment_worker_enabled', '1'),
     'bpm_owner_user_id' => perfGetSetting($db, 'bpm_owner_user_id', (string)((int)($_SESSION['dj_id'] ?? 0))),
     'patron_payments_enabled_prod' => perfGetSetting($db, 'patron_payments_enabled_prod', perfGetSetting($db, 'patron_payments_enabled', '0')),
     'patron_payments_enabled_dev' => perfGetSetting($db, 'patron_payments_enabled_dev', perfGetSetting($db, 'patron_payments_enabled', '0')),
 ];
+
+$bpmAccessUsers = [];
+try {
+    $uStmt = $db->query("
+        SELECT id, name, email, is_admin, bpm_access_enabled
+        FROM users
+        WHERE is_admin = 1 OR bpm_access_enabled = 1
+        ORDER BY is_admin DESC, id ASC
+        LIMIT 200
+    ");
+    $bpmAccessUsers = $uStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {
+    $bpmAccessUsers = [];
+}
 
 $queueCounts = [
     'pending' => 0,
@@ -211,7 +274,11 @@ include APP_ROOT . '/dj/layout.php';
             </div>
 
             <div class="perf-row">
-                <div class="perf-help">BPM/Year display owner user ID: <strong><?php echo (int)$settings['bpm_owner_user_id']; ?></strong> (set to current admin when saving toggles)</div>
+                <label>
+                    <input type="checkbox" name="bpm_rollout_all_enabled" value="1" <?php echo $settings['bpm_rollout_all_enabled'] === '1' ? 'checked' : ''; ?>>
+                    Enable BPM tools and BPM metadata for all DJs
+                </label>
+                <div class="perf-help">When OFF, access is restricted to admin users and DJs flagged individually below.</div>
             </div>
 
             <div class="perf-row">
@@ -240,6 +307,71 @@ include APP_ROOT . '/dj/layout.php';
 
             <button type="submit" class="perf-btn">Save Toggles</button>
         </form>
+    </div>
+
+    <div class="perf-card">
+        <h3 style="margin-top:0;">BPM Rollout Access (Per User)</h3>
+        <div class="perf-help" style="margin-bottom:12px;">
+            Use this when global rollout is OFF. Add DJs one at a time by user ID.
+        </div>
+
+        <form method="POST" style="margin-bottom:14px;">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="action" value="set_bpm_user_access">
+
+            <div class="perf-row">
+                <label for="target_user_id"><strong>User ID</strong></label><br>
+                <input
+                    id="target_user_id"
+                    name="target_user_id"
+                    type="number"
+                    min="1"
+                    step="1"
+                    required
+                    style="width:180px; padding:8px; border-radius:8px; border:1px solid #2a2a3f; background:#0e0e14; color:#fff;"
+                >
+            </div>
+
+            <div class="perf-row">
+                <label>
+                    <input type="checkbox" name="bpm_access_enabled" value="1" checked>
+                    Grant BPM access to this user
+                </label>
+                <div class="perf-help">Uncheck and submit to revoke access for that user.</div>
+            </div>
+
+            <button type="submit" class="perf-btn">Save User Access</button>
+        </form>
+
+        <div class="perf-help"><strong>Current BPM-enabled users</strong> (admins are always enabled):</div>
+        <?php if (empty($bpmAccessUsers)): ?>
+            <div class="perf-help">No users currently enabled.</div>
+        <?php else: ?>
+            <div style="overflow-x:auto; margin-top:10px;">
+                <table style="width:100%; border-collapse:collapse; font-size:14px;">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left; border-bottom:1px solid #2a2a3f; padding:8px 6px;">ID</th>
+                            <th style="text-align:left; border-bottom:1px solid #2a2a3f; padding:8px 6px;">Name</th>
+                            <th style="text-align:left; border-bottom:1px solid #2a2a3f; padding:8px 6px;">Email</th>
+                            <th style="text-align:left; border-bottom:1px solid #2a2a3f; padding:8px 6px;">Admin</th>
+                            <th style="text-align:left; border-bottom:1px solid #2a2a3f; padding:8px 6px;">Per-user BPM Flag</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($bpmAccessUsers as $u): ?>
+                        <tr>
+                            <td style="border-bottom:1px solid #1b1b25; padding:8px 6px;"><?php echo (int)$u['id']; ?></td>
+                            <td style="border-bottom:1px solid #1b1b25; padding:8px 6px;"><?php echo e((string)($u['name'] ?? '')); ?></td>
+                            <td style="border-bottom:1px solid #1b1b25; padding:8px 6px;"><?php echo e((string)($u['email'] ?? '')); ?></td>
+                            <td style="border-bottom:1px solid #1b1b25; padding:8px 6px;"><?php echo ((int)($u['is_admin'] ?? 0) === 1) ? 'Yes' : 'No'; ?></td>
+                            <td style="border-bottom:1px solid #1b1b25; padding:8px 6px;"><?php echo ((int)($u['bpm_access_enabled'] ?? 0) === 1) ? 'Enabled' : 'Off'; ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
     </div>
 
     <div class="perf-card">

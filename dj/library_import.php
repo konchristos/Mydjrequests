@@ -71,6 +71,16 @@ include __DIR__ . '/layout.php';
     transition: width 0.15s ease;
 }
 
+.library-upload-progress-bar.is-indeterminate {
+    width: 35% !important;
+    animation: library-progress-indeterminate 1.05s ease-in-out infinite;
+}
+
+@keyframes library-progress-indeterminate {
+    0% { transform: translateX(-115%); }
+    100% { transform: translateX(285%); }
+}
+
 .library-status {
     margin-top: 14px;
     min-height: 24px;
@@ -80,6 +90,30 @@ include __DIR__ . '/layout.php';
 
 .library-status.is-error {
     color: #ff8686;
+}
+
+.library-actions {
+    margin-top: 10px;
+    display: none;
+}
+
+.library-run-btn {
+    border: 1px solid rgba(var(--brand-accent-rgb), 0.55);
+    border-radius: 10px;
+    padding: 9px 14px;
+    background: rgba(var(--brand-accent-rgb), 0.12);
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.library-run-btn:hover:not(:disabled) {
+    background: rgba(var(--brand-accent-rgb), 0.20);
+}
+
+.library-run-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 .library-results {
@@ -147,6 +181,9 @@ include __DIR__ . '/layout.php';
     </div>
 
     <div id="libraryStatus" class="library-status" aria-live="polite"></div>
+    <div id="libraryActions" class="library-actions">
+        <button id="runQueuedImportBtn" type="button" class="library-run-btn">Process Queued Import Now</button>
+    </div>
 
     <div id="libraryResults" class="library-results">
         <h3>Import Summary</h3>
@@ -167,23 +204,32 @@ include __DIR__ . '/layout.php';
                 <p class="library-stat-label">DJ Tracks Added</p>
                 <p id="statDjTracksAdded" class="library-stat-value">0</p>
             </div>
+            <div class="library-stat">
+                <p class="library-stat-label">DJ Tracks Updated</p>
+                <p id="statDjTracksUpdated" class="library-stat-value">0</p>
+            </div>
         </div>
     </div>
 </div>
 
 <script>
 (function () {
+    const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
     const dropzone = document.getElementById('libraryDropzone');
     const input = document.getElementById('libraryFileInput');
     const statusEl = document.getElementById('libraryStatus');
     const progressWrap = document.getElementById('libraryUploadProgress');
     const progressBar = document.getElementById('libraryUploadProgressBar');
     const results = document.getElementById('libraryResults');
+    const actions = document.getElementById('libraryActions');
+    const runQueuedBtn = document.getElementById('runQueuedImportBtn');
+    let activeJobId = 0;
 
     const statTracks = document.getElementById('statTracksProcessed');
     const statNewIds = document.getElementById('statNewIdentities');
     const statExistingIds = document.getElementById('statExistingIdentities');
     const statTracksAdded = document.getElementById('statDjTracksAdded');
+    const statTracksUpdated = document.getElementById('statDjTracksUpdated');
 
     function setStatus(text, isError) {
         statusEl.textContent = text || '';
@@ -192,11 +238,16 @@ include __DIR__ . '/layout.php';
 
     function resetProgress() {
         progressWrap.style.display = 'none';
+        progressBar.classList.remove('is-indeterminate');
         progressBar.style.width = '0%';
+        actions.style.display = 'none';
+        runQueuedBtn.disabled = false;
+        activeJobId = 0;
     }
 
     function showProgress() {
         progressWrap.style.display = 'block';
+        progressBar.classList.remove('is-indeterminate');
         progressBar.style.width = '0%';
     }
 
@@ -211,64 +262,197 @@ include __DIR__ . '/layout.php';
         statNewIds.textContent = String(payload.new_identities || 0);
         statExistingIds.textContent = String(payload.existing_identities || 0);
         statTracksAdded.textContent = String(payload.dj_tracks_added || 0);
+        statTracksUpdated.textContent = String(payload.dj_tracks_updated || 0);
         results.style.display = 'block';
     }
 
-    function uploadFile(file) {
+    function postForm(formData) {
+        return fetch('/api/dj/import_rekordbox_xml.php', {
+            method: 'POST',
+            body: formData
+        }).then(async function (resp) {
+            const rawText = await resp.text();
+            let payload = null;
+            try {
+                payload = JSON.parse(rawText || '{}');
+            } catch (e) {
+                payload = null;
+            }
+            if (!resp.ok || !payload || payload.error) {
+                let msg = payload && payload.error ? payload.error : '';
+                if (!msg) {
+                    const snippet = (rawText || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+                    if (snippet) {
+                        msg = 'HTTP ' + resp.status + ': ' + snippet;
+                    } else {
+                        msg = 'HTTP ' + resp.status + ' upload failed.';
+                    }
+                }
+                throw new Error(msg);
+            }
+            return payload;
+        });
+    }
+
+    function uploadChunk(uploadId, chunkBlob, chunkIndex, totalChunks) {
+        return new Promise(function (resolve, reject) {
+            const formData = new FormData();
+            formData.append('action', 'chunk');
+            formData.append('upload_id', uploadId);
+            formData.append('chunk_index', String(chunkIndex));
+            formData.append('total_chunks', String(totalChunks));
+            formData.append('chunk', chunkBlob, 'chunk_' + chunkIndex + '.bin');
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/dj/import_rekordbox_xml.php', true);
+
+            xhr.upload.addEventListener('progress', function (event) {
+                if (!event.lengthComputable) {
+                    progressBar.classList.add('is-indeterminate');
+                    setStatus('Uploading chunk ' + (chunkIndex + 1) + '/' + totalChunks + '...', false);
+                    return;
+                }
+
+                progressBar.classList.remove('is-indeterminate');
+                const chunkRatio = Math.max(0, Math.min(1, event.loaded / event.total));
+                const overallRatio = (chunkIndex + chunkRatio) / totalChunks;
+                const pct = Math.max(0, Math.min(100, Math.round(overallRatio * 100)));
+                progressBar.style.width = pct + '%';
+                setStatus('Uploading... ' + pct + '%', false);
+            });
+
+            xhr.onload = function () {
+                let payload = null;
+                try {
+                    payload = JSON.parse(xhr.responseText || '{}');
+                } catch (e) {
+                    payload = null;
+                }
+                if (xhr.status >= 200 && xhr.status < 300 && payload && !payload.error) {
+                    resolve(payload);
+                    return;
+                }
+                reject(new Error(payload && payload.error ? payload.error : 'Chunk upload failed.'));
+            };
+
+            xhr.onerror = function () {
+                reject(new Error('Network error during chunk upload.'));
+            };
+
+            xhr.send(formData);
+        });
+    }
+
+    async function pollImportJob(jobId) {
+        const startedAt = Date.now();
+        const maxWaitMs = 45 * 60 * 1000; // 45 minutes
+
+        while (true) {
+            if ((Date.now() - startedAt) > maxWaitMs) {
+                throw new Error('Import is taking longer than expected. Check again in a few minutes.');
+            }
+
+            const resp = await fetch('/api/dj/import_rekordbox_xml_status.php?job_id=' + encodeURIComponent(jobId), {
+                method: 'GET',
+                cache: 'no-store'
+            });
+
+            const text = await resp.text();
+            let payload = null;
+            try {
+                payload = JSON.parse(text || '{}');
+            } catch (e) {
+                payload = null;
+            }
+
+            if (!resp.ok || !payload) {
+                const snippet = (text || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+                throw new Error(snippet ? ('Status check failed: ' + snippet) : ('Status check failed (HTTP ' + resp.status + ').'));
+            }
+
+            const status = String(payload.status || '');
+            if (status === 'done') {
+                progressBar.classList.remove('is-indeterminate');
+                progressBar.style.width = '100%';
+                setStatus('Import complete.', false);
+                actions.style.display = 'none';
+                setResults(payload);
+                return;
+            }
+
+            if (status === 'failed') {
+                const err = payload.error_message ? String(payload.error_message) : 'Import failed.';
+                throw new Error(err);
+            }
+
+            if (status === 'processing') {
+                actions.style.display = 'none';
+                setStatus('Processing library... this can take several minutes for large XML files.', false);
+            } else {
+                actions.style.display = 'block';
+                setStatus('Queued for processing...', false);
+            }
+
+            await new Promise(function (resolve) {
+                setTimeout(resolve, 2500);
+            });
+        }
+    }
+
+    async function uploadFile(file) {
         if (!isXmlFile(file)) {
             setStatus('Please select a valid .xml file.', true);
             return;
         }
 
+        const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
         results.style.display = 'none';
         showProgress();
-        setStatus('Uploading...', false);
+        setStatus('Preparing upload...', false);
 
-        const formData = new FormData();
-        formData.append('library_xml', file);
+        try {
+            const startFd = new FormData();
+            startFd.append('action', 'start');
+            startFd.append('file_name', file.name);
+            startFd.append('file_size', String(file.size));
+            startFd.append('total_chunks', String(totalChunks));
 
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/dj/import_rekordbox_xml.php', true);
-
-        xhr.upload.addEventListener('progress', function (event) {
-            if (!event.lengthComputable) return;
-            const pct = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
-            progressBar.style.width = pct + '%';
-            if (pct >= 100) {
-                setStatus('Processing library...', false);
-            } else {
-                setStatus('Uploading... ' + pct + '%', false);
+            const started = await postForm(startFd);
+            const uploadId = started.upload_id;
+            if (!uploadId) {
+                throw new Error('Failed to initialize upload session.');
             }
-        });
 
-        xhr.onload = function () {
-            progressBar.style.width = '100%';
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * CHUNK_SIZE;
+                const end = Math.min(file.size, start + CHUNK_SIZE);
+                const chunk = file.slice(start, end);
+                await uploadChunk(uploadId, chunk, i, totalChunks);
+            }
+
+            progressBar.classList.add('is-indeterminate');
             setStatus('Processing library...', false);
 
-            let payload = null;
-            try {
-                payload = JSON.parse(xhr.responseText || '{}');
-            } catch (e) {
-                payload = null;
-            }
+            const finishFd = new FormData();
+            finishFd.append('action', 'finish');
+            finishFd.append('upload_id', uploadId);
 
-            if (xhr.status >= 200 && xhr.status < 300 && payload && !payload.error) {
+            const payload = await postForm(finishFd);
+            const jobId = Number(payload.job_id || 0);
+            if (jobId > 0) {
+                activeJobId = jobId;
+                await pollImportJob(jobId);
+            } else {
+                progressBar.classList.remove('is-indeterminate');
+                progressBar.style.width = '100%';
                 setStatus('Import complete.', false);
                 setResults(payload);
-                return;
             }
-
-            const msg = payload && payload.error ? payload.error : 'Upload failed. Please try again.';
+        } catch (err) {
+            const msg = err && err.message ? err.message : 'Upload failed. Please try again.';
             setStatus(msg, true);
             resetProgress();
-        };
-
-        xhr.onerror = function () {
-            setStatus('Network error during upload.', true);
-            resetProgress();
-        };
-
-        xhr.send(formData);
+        }
     }
 
     dropzone.addEventListener('click', function () {
@@ -285,6 +469,34 @@ include __DIR__ . '/layout.php';
     input.addEventListener('change', function () {
         const file = input.files && input.files[0] ? input.files[0] : null;
         if (file) uploadFile(file);
+    });
+
+    runQueuedBtn.addEventListener('click', async function () {
+        if (!activeJobId) {
+            return;
+        }
+        runQueuedBtn.disabled = true;
+        try {
+            const fd = new FormData();
+            fd.append('job_id', String(activeJobId));
+            const payload = await fetch('/api/dj/import_rekordbox_xml_run.php', {
+                method: 'POST',
+                body: fd
+            }).then(async function (resp) {
+                const text = await resp.text();
+                let json = null;
+                try { json = JSON.parse(text || '{}'); } catch (e) { json = null; }
+                if (!resp.ok || !json || json.error) {
+                    throw new Error((json && json.error) ? json.error : ('HTTP ' + resp.status + ' manual trigger failed.'));
+                }
+                return json;
+            });
+            setStatus(payload.message || 'Manual processing started.', false);
+        } catch (err) {
+            setStatus(err && err.message ? err.message : 'Manual processing failed.', true);
+        } finally {
+            runQueuedBtn.disabled = false;
+        }
     });
 
     ['dragenter', 'dragover'].forEach(function (evtName) {

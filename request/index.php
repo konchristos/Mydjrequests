@@ -1808,7 +1808,10 @@ const STRIPE_PUBLISHABLE_KEY = "<?= e(STRIPE_PUBLISHABLE_KEY); ?>";
 const ENABLE_PATRON_PAYMENTS = <?= $ENABLE_PATRON_PAYMENTS ? 'true' : 'false'; ?>;
 const TIP_CURRENCY = "<?= e($tipBoostCurrency); ?>";
 const BOOST_AMOUNT_CENTS = 500;
+const EVENT_STATE = <?= json_encode($eventState); ?>;
 const CAN_REQUEST_SONGS = <?= in_array($eventState, ['upcoming', 'live'], true) ? 'true' : 'false'; ?>;
+const CAN_INTERACT_DURING_EVENT = <?= in_array($eventState, ['upcoming', 'live'], true) ? 'true' : 'false'; ?>;
+const EVENT_ENDED_INTERACTION_MSG = "This event has ended. New interactions are closed.";
 let currentActiveTab = "section-home";
 const MESSAGE_SEEN_KEY = "mdjr_message_seen_<?= e($uuid); ?>";
 const messageUnreadBadgeEl = document.getElementById("messageUnreadBadge");
@@ -2212,7 +2215,7 @@ function renderMessageThread(rows) {
             const optionsHtml = options.map(opt => {
                 const optionId = Number(opt.id || 0);
                 const isSelected = selected === optionId;
-                return `<button type="button" class="poll-option-btn ${isSelected ? 'selected' : ''}" data-poll-id="${pollId}" data-option-id="${optionId}" ${closed ? 'disabled' : ''}>${isSelected ? '✅ ' : ''}${escapeHtml(opt.option_text || "")}<span class="poll-option-meta">${Number(opt.vote_count || 0)} votes</span></button>`;
+                return `<button type="button" class="poll-option-btn ${isSelected ? 'selected' : ''}" data-poll-id="${pollId}" data-option-id="${optionId}" ${(closed || !CAN_INTERACT_DURING_EVENT) ? 'disabled' : ''}>${isSelected ? '✅ ' : ''}${escapeHtml(opt.option_text || "")}<span class="poll-option-meta">${Number(opt.vote_count || 0)} votes</span></button>`;
             }).join("");
 
             return `<div class="thread-row poll"><div class="thread-bubble"><div class="poll-title">${escapeHtml(poll.question || row.body || "")}</div>${optionsHtml || '<div class="poll-option-btn poll-option-static">No responses configured</div>'}<span class="thread-time">${formatThreadTime(row.created_at)}</span></div></div>`;
@@ -2233,6 +2236,9 @@ function renderMessageThread(rows) {
 }
 
 async function submitPollVote(pollId, optionId) {
+    if (!CAN_INTERACT_DURING_EVENT) {
+        throw new Error(EVENT_ENDED_INTERACTION_MSG);
+    }
     const fd = new FormData();
     fd.append("event_uuid", "<?= e($uuid); ?>");
     fd.append("poll_id", String(pollId));
@@ -2261,17 +2267,20 @@ async function loadMessageThread() {
         recomputeMessageUnread(rows);
 
         const blocked = data.guest_status === "blocked";
+        const messageClosed = !CAN_INTERACT_DURING_EVENT;
         const textEl = document.getElementById("message");
         const sendBtn = messageForm?.querySelector('button[type="submit"]');
         if (textEl) {
-            textEl.disabled = blocked;
-            textEl.placeholder = blocked
+            textEl.disabled = (blocked || messageClosed);
+            textEl.placeholder = messageClosed
+                ? "Messaging is closed because this event has ended."
+                : (blocked
                 ? "Messaging is unavailable for this event."
-                : "Type your message…";
+                : "Type your message…");
         }
         if (sendBtn) {
-            sendBtn.disabled = blocked;
-            sendBtn.style.opacity = blocked ? "0.55" : "1";
+            sendBtn.disabled = (blocked || messageClosed);
+            sendBtn.style.opacity = (blocked || messageClosed) ? "0.55" : "1";
         }
     } catch (e) {
         console.warn("Message thread load failed", e);
@@ -2281,6 +2290,10 @@ async function loadMessageThread() {
 
 messageForm.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (!CAN_INTERACT_DURING_EVENT) {
+        msgStatus.textContent = "Messaging is closed because this event has ended.";
+        return;
+    }
     msgStatus.textContent = "Sending…";
 
     syncGuestName();
@@ -2303,6 +2316,7 @@ messageForm.addEventListener("submit", async (e) => {
 });
 
 messageThreadEl?.addEventListener("click", async (e) => {
+    if (!CAN_INTERACT_DURING_EVENT) return;
     const btn = e.target.closest(".poll-option-btn");
     if (!btn) return;
 
@@ -2832,8 +2846,9 @@ ${
                     data-trackkey="${tk}"
                     data-song="${group.base_title.replace(/"/g, '&quot;')}"
                     data-artist="${(group.artist || '').replace(/"/g, '&quot;')}"
+                    ${!CAN_INTERACT_DURING_EVENT ? 'disabled' : ''}
                 >
-                    ${voted ? "👍 Voted" : "👍 Vote"}
+                    ${CAN_INTERACT_DURING_EVENT ? (voted ? "👍 Voted" : "👍 Vote") : "Voting closed"}
                 </button>
               `
     }
@@ -2947,6 +2962,9 @@ if (requestsSortMy) {
 // VOTE
 // =============================
 async function voteTrack(track) {
+    if (!CAN_INTERACT_DURING_EVENT) {
+        return;
+    }
     const fd = new FormData();
 
     fd.append("event_uuid", "<?= e($uuid); ?>");
@@ -2974,6 +2992,9 @@ async function voteTrack(track) {
 }
 
 async function unvoteTrack(track) {
+    if (!CAN_INTERACT_DURING_EVENT) {
+        return;
+    }
     const fd = new FormData();
     fd.append("event_uuid", "<?= e($uuid); ?>");
     fd.append("song_title", track.song_title);
@@ -2995,6 +3016,9 @@ document.addEventListener("click", async (e) => {
     if (e.target.classList.contains("vote-btn")) {
         e.preventDefault();
         e.stopPropagation();
+        if (!CAN_INTERACT_DURING_EVENT) {
+            return;
+        }
 
         const track = {
             track_key: e.target.dataset.trackkey,
@@ -3062,9 +3086,13 @@ let livePollTimer = null;
 let livePollingActive = false;
 let messageBadgePollTimer = null;
 let messageBadgePollingActive = false;
-const MESSAGE_BADGE_POLL_MS = 6000;
+const MESSAGE_BADGE_POLL_MS = CAN_INTERACT_DURING_EVENT ? 6000 : 60000;
 
 function getPollIntervalForTab(tabId) {
+    if (!CAN_INTERACT_DURING_EVENT) {
+        if (tabId === "section-message") return 60000; // final broadcast updates only
+        return 0;
+    }
     switch (tabId) {
         case "section-message":
             return 8000;
@@ -3082,7 +3110,7 @@ function getPollIntervalForTab(tabId) {
 
 async function runTabPollCycle() {
     // Always keep event notice current except on Contact tab.
-    if (currentActiveTab !== "section-contact" && typeof fetchEventNotice === "function") {
+    if (CAN_INTERACT_DURING_EVENT && currentActiveTab !== "section-contact" && typeof fetchEventNotice === "function") {
         fetchEventNotice();
     }
 
@@ -3128,6 +3156,9 @@ function stopLivePolling() {
 }
 
 async function runMessageBadgePoll() {
+    if (!CAN_INTERACT_DURING_EVENT && currentActiveTab !== "section-message") {
+        return;
+    }
     await loadMessageThread();
 }
 
@@ -3176,6 +3207,7 @@ document.addEventListener("visibilitychange", () => {
 
 // Initial state
 if (document.visibilityState === "visible") {
+    loadMessageThread();
     startLivePolling();
     startMessageBadgePolling();
 }
@@ -4014,6 +4046,7 @@ function activateTab(targetId) {
 
         if (targetId === "section-message") {
             scheduleMarkMessagesRead();
+            loadMessageThread();
         } else {
             cancelMarkMessagesRead();
         }
