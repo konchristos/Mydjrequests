@@ -28,36 +28,14 @@ if (!$row) {
 
 $eventId = (int)$row['id'];
 
-function getAppSettingValue(PDO $db, string $key, ?string $default = null): ?string
-{
-    try {
-        $stmt = $db->prepare("SELECT `value` FROM app_settings WHERE `key` = ? LIMIT 1");
-        $stmt->execute([$key]);
-        $v = $stmt->fetchColumn();
-        if ($v === false) {
-            return $default;
-        }
-        return (string)$v;
-    } catch (Throwable $e) {
-        return $default;
-    }
-}
-
-function isTruthySetting(?string $v, bool $default = false): bool
-{
-    if ($v === null) return $default;
-    return in_array(strtolower(trim($v)), ['1', 'true', 'yes', 'on'], true);
-}
-
-$bpmOwnerId = (int)(getAppSettingValue($db, 'bpm_owner_user_id', '0') ?? '0');
-$currentDjId = (int)($_SESSION['dj_id'] ?? 0);
 // BPM display in DJ view is independent from queue-fuzzy toggle.
 // Queue toggle controls ingestion only (submit_song + worker), not display.
-$allowBpmMeta = is_admin() && $bpmOwnerId > 0 && $currentDjId === $bpmOwnerId;
+$allowBpmMeta = bpmCurrentUserHasAccess($db);
 
 $sql = "
 SELECT
   r_group.track_key,
+  r_group.track_identity_id,
   r_group.spotify_track_id,
   r_group.song_title,
   r_group.artist,
@@ -66,6 +44,7 @@ SELECT
   r_group.last_requested_at,
   r_group.requester_data,
   r_group.track_status,
+  r_group.dj_track_id,
 
   COALESCE(v.vote_count, 0) AS vote_count,
   v.voter_data,
@@ -77,46 +56,57 @@ SELECT
 
 FROM (
     SELECT
+      e.track_identity_id,
       COALESCE(
-        NULLIF(r.spotify_track_id, ''),
-        CONCAT(r.song_title, '::', r.artist)
+        NULLIF(sr.spotify_track_id, ''),
+        NULLIF(s.spotify_track_id, ''),
+        CONCAT(
+          COALESCE(NULLIF(sr.song_title, ''), NULLIF(s.track_name, ''), 'Unknown title'),
+          '::',
+          COALESCE(NULLIF(sr.artist, ''), NULLIF(s.artist_name, ''), 'Unknown artist')
+        )
       ) AS track_key,
-
-      MAX(NULLIF(r.spotify_track_id, '')) AS spotify_track_id,
-
-      COALESCE(MAX(st.track_name), MAX(r.song_title)) AS song_title,
-      COALESCE(MAX(st.artist_name), MAX(r.artist)) AS artist,
-      COALESCE(MAX(st.album_art_url), MAX(r.spotify_album_art_url)) AS album_art,
-      MAX(st.bpm) AS cache_bpm,
-      MAX(st.musical_key) AS cache_musical_key,
-      COALESCE(MAX(st.release_year), 0) AS release_year,
-
-      COUNT(*) AS request_count,
-      MAX(r.created_at) AS last_requested_at,
-
-      GROUP_CONCAT(
-        DISTINCT CONCAT(r.requester_name, '::', r.created_at)
-        ORDER BY r.created_at DESC
-        SEPARATOR '||'
-      ) AS requester_data,
-
-      CASE
-        WHEN SUM(r.status = 'played') > 0 THEN 'played'
-        WHEN SUM(r.status = 'skipped') = COUNT(*) THEN 'skipped'
-        ELSE 'active'
-      END AS track_status
-
-    FROM song_requests r
-    LEFT JOIN spotify_tracks st
-      ON st.spotify_track_id = NULLIF(r.spotify_track_id, '')
-    WHERE r.event_id = ?
-    GROUP BY
-      COALESCE(
-        NULLIF(r.spotify_track_id, ''),
-        CONCAT(r.song_title, '::', r.artist)
-      ),
-      COALESCE(st.track_name, r.song_title),
-      COALESCE(st.artist_name, r.artist)
+      COALESCE(NULLIF(sr.spotify_track_id, ''), NULLIF(s.spotify_track_id, ''), '') AS spotify_track_id,
+      COALESCE(NULLIF(s.track_name, ''), NULLIF(sr.song_title, ''), 'Unknown title') AS song_title,
+      COALESCE(NULLIF(s.artist_name, ''), NULLIF(sr.artist, ''), 'Unknown artist') AS artist,
+      COALESCE(NULLIF(s.album_art_url, ''), NULLIF(sr.album_art, '')) AS album_art,
+      COALESCE(s.bpm, NULL) AS cache_bpm,
+      COALESCE(s.musical_key, '') AS cache_musical_key,
+      COALESCE(s.release_year, 0) AS release_year,
+      e.request_count,
+      e.last_requested_at,
+      sr.requester_data,
+      COALESCE(sr.track_status, 'active') AS track_status,
+      d.id AS dj_track_id
+    FROM event_tracks e
+    LEFT JOIN spotify_tracks s
+      ON s.track_identity_id = e.track_identity_id
+    LEFT JOIN dj_tracks d
+      ON d.track_identity_id = e.track_identity_id
+     AND d.dj_id = ?
+    LEFT JOIN (
+      SELECT
+        track_identity_id,
+        MAX(NULLIF(spotify_track_id, '')) AS spotify_track_id,
+        MAX(song_title) AS song_title,
+        MAX(artist) AS artist,
+        MAX(spotify_album_art_url) AS album_art,
+        GROUP_CONCAT(
+          DISTINCT CONCAT(requester_name, '::', created_at)
+          ORDER BY created_at DESC
+          SEPARATOR '||'
+        ) AS requester_data,
+        CASE
+          WHEN SUM(status = 'played') > 0 THEN 'played'
+          WHEN SUM(status = 'skipped') = COUNT(*) THEN 'skipped'
+          ELSE 'active'
+        END AS track_status
+      FROM song_requests
+      WHERE event_id = ?
+        AND track_identity_id IS NOT NULL
+      GROUP BY track_identity_id
+    ) sr ON sr.track_identity_id = e.track_identity_id
+    WHERE e.event_id = ?
 ) r_group
 
 LEFT JOIN (
@@ -153,7 +143,7 @@ ORDER BY popularity DESC, r_group.last_requested_at DESC
 
 try {
     $stmt = $db->prepare($sql);
-    $stmt->execute([$eventId, $eventId, $eventId]);
+    $stmt->execute([(int)$_SESSION['dj_id'], $eventId, $eventId, $eventId, $eventId]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {
     http_response_code(500);
