@@ -947,6 +947,13 @@ button.send-btn:hover {
     font-weight: 600;
 }
 
+.danger-btn {
+    color: #ffdede;
+    border-color: rgba(255, 91, 91, 0.55);
+    background: linear-gradient(135deg, #3f1616, #651b1b);
+    font-weight: 600;
+}
+
 
 .track-btn.voted {
     background: linear-gradient(135deg,#ff2fd2,#ff44de);
@@ -2616,11 +2623,13 @@ function renderMyRequests() {
         el.className = "all-request-item is-mine";
         const trackKey = row.track_key || "";
         const boosted = row.has_boosted == 1;
+        const voted = row.has_voted == 1;
         const isPlayed =
             row.is_played == 1 ||
             row.track_status === "played" ||
             (trackKey && playedKeys.has(`key:${trackKey}`)) ||
             playedKeys.has(`name:${buildGroupKey(row.song_title, row.artist)}`);
+        const canDelete = !isPlayed && !boosted && !voted && Number(row.id || 0) > 0;
 
         if (isPlayed) {
             el.classList.add("is-played");
@@ -2643,7 +2652,7 @@ function renderMyRequests() {
                 <div class="my-request-time">
                     Requested ${timeAgo(row.created_at)}
                 </div>
-                ${(ENABLE_PATRON_PAYMENTS && trackKey) || isPlayed ? `
+                ${(ENABLE_PATRON_PAYMENTS && trackKey) || isPlayed || canDelete ? `
                 <div class="track-actions">
                     ${ENABLE_PATRON_PAYMENTS && trackKey ? `
                     <button
@@ -2656,6 +2665,14 @@ function renderMyRequests() {
                         ${boosted ? 'disabled' : ''}
                     >
                         ${boosted ? '⚡ BOOSTED' : '🚀 BOOST'}
+                    </button>` : ``}
+                    ${canDelete ? `
+                    <button
+                        type="button"
+                        class="track-btn danger-btn delete-request-btn"
+                        data-request-id="${Number(row.id || 0)}"
+                    >
+                        🗑 Delete
                     </button>` : ``}
                     ${isPlayed ? `<span class="played-badge">Played</span>` : ``}
                 </div>` : ``}
@@ -3009,8 +3026,47 @@ async function unvoteTrack(track) {
     refreshRequests();
 }
 
+async function deleteMyRequestById(requestId) {
+    const fd = new FormData();
+    fd.append("event_uuid", "<?= e($uuid); ?>");
+    fd.append("request_id", String(requestId));
+
+    const res = await fetch("/api/public/delete_my_request.php", {
+        method: "POST",
+        body: fd
+    });
+    const data = await res.json();
+    if (!data.ok) {
+        throw new Error(data.error || "Failed to delete request");
+    }
+}
+
 
 document.addEventListener("click", async (e) => {
+
+    // 🗑 Delete my request row
+    if (e.target.classList.contains("delete-request-btn")) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const requestId = Number(e.target.dataset.requestId || 0);
+        if (!requestId) {
+            console.error("Delete blocked: missing request_id", e.target);
+            return;
+        }
+
+        const confirmed = window.confirm("Delete this request?");
+        if (!confirmed) return;
+
+        try {
+            await deleteMyRequestById(requestId);
+            await refreshRequests();
+        } catch (err) {
+            console.error("Delete request failed", err);
+            alert(err.message || "Failed to delete request.");
+        }
+        return;
+    }
 
     // 👍 Vote / Unvote
     if (e.target.classList.contains("vote-btn")) {

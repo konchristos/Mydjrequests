@@ -47,6 +47,7 @@ $db = db();
 
 $sql = "
     SELECT
+        sr.id,
         COALESCE(
             NULLIF(sr.spotify_track_id, ''),
             CONCAT(LOWER(sr.song_title), '::', LOWER(sr.artist))
@@ -68,6 +69,17 @@ $sql = "
                   )
               AND sb.status = 'succeeded'
         ) AS has_boosted
+        ,
+        EXISTS(
+            SELECT 1
+            FROM song_votes sv
+            WHERE sv.event_id = sr.event_id
+              AND sv.guest_token = ?
+              AND sv.track_key = COALESCE(
+                    NULLIF(sr.spotify_track_id, ''),
+                    CONCAT(LOWER(sr.song_title), '::', LOWER(sr.artist))
+                  )
+        ) AS has_voted
     FROM song_requests sr
     WHERE sr.event_id = ?
       AND sr.guest_token = ?
@@ -75,7 +87,7 @@ $sql = "
 ";
 
 $stmt = $db->prepare($sql);
-$stmt->execute([$guestToken, $eventId, $guestToken]);
+$stmt->execute([$guestToken, $guestToken, $eventId, $guestToken]);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // --------------------------------------------------

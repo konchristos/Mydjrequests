@@ -53,3 +53,68 @@ function eventTracksProjectionIncrementRequest(PDO $db, int $eventId, ?int $trac
     ]);
 }
 
+function eventTracksProjectionDecrementRequest(PDO $db, int $eventId, ?int $trackIdentityId): void
+{
+    if ($eventId <= 0 || $trackIdentityId === null || $trackIdentityId <= 0) {
+        return;
+    }
+
+    eventTracksProjectionEnsureTable($db);
+
+    // Decrement the aggregate counter for this event/identity pair.
+    $decStmt = $db->prepare("
+        UPDATE event_tracks
+        SET request_count = request_count - 1
+        WHERE event_id = :event_id
+          AND track_identity_id = :track_identity_id
+    ");
+    $decStmt->execute([
+        ':event_id' => $eventId,
+        ':track_identity_id' => $trackIdentityId,
+    ]);
+
+    // Remove dead/invalid rows to keep projection clean.
+    $delStmt = $db->prepare("
+        DELETE FROM event_tracks
+        WHERE event_id = :event_id
+          AND track_identity_id = :track_identity_id
+          AND request_count <= 0
+    ");
+    $delStmt->execute([
+        ':event_id' => $eventId,
+        ':track_identity_id' => $trackIdentityId,
+    ]);
+}
+
+/**
+ * Use this when a single song_requests row is physically removed or soft-deleted.
+ * Returns true when a decrement was applied, false when request/identity was not eligible.
+ */
+function eventTracksProjectionDecrementForRequestId(PDO $db, int $songRequestId): bool
+{
+    if ($songRequestId <= 0) {
+        return false;
+    }
+
+    $lookupStmt = $db->prepare("
+        SELECT event_id, track_identity_id
+        FROM song_requests
+        WHERE id = :id
+        LIMIT 1
+    ");
+    $lookupStmt->execute([':id' => $songRequestId]);
+    $row = $lookupStmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$row) {
+        return false;
+    }
+
+    $eventId = (int)($row['event_id'] ?? 0);
+    $trackIdentityId = isset($row['track_identity_id']) ? (int)$row['track_identity_id'] : 0;
+    if ($eventId <= 0 || $trackIdentityId <= 0) {
+        return false;
+    }
+
+    eventTracksProjectionDecrementRequest($db, $eventId, $trackIdentityId);
+    return true;
+}
