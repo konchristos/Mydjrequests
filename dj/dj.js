@@ -6,12 +6,15 @@ const djMessageThreadEl = document.getElementById("djMessageThread");
 const DJ_CONFIG = window.DJ_CONFIG || {};
 const EVENT_ID  = DJ_CONFIG.eventId || null;
 const EVENT_UUID = DJ_CONFIG.eventUuid || null;
+const EVENT_STATE = String(DJ_CONFIG.eventState || "").toLowerCase();
 const POLL_MS   = DJ_CONFIG.pollInterval || 10000
 const SPOTIFY_SYNC_MS = 30000;
 const TIPS_BOOST_VISIBLE = !!DJ_CONFIG.tipsBoostVisible;
 const POLLS_PREMIUM_ENABLED = !!DJ_CONFIG.pollsPremiumEnabled;
 const IS_ADMIN = !!DJ_CONFIG.isAdmin;
 const SPOTIFY_SYNC_ENABLED = !!DJ_CONFIG.spotifySyncEnabled;
+const REQUESTS_OPEN_FOR_PATRONS = (EVENT_STATE === "upcoming" || EVENT_STATE === "live");
+const EVENT_IS_ENDED = (EVENT_STATE === "ended");
 
 if (!EVENT_ID) {
   console.error("❌ EVENT_ID missing — DJ page cannot function");
@@ -26,6 +29,7 @@ let activeTrackKey = null;
 let firstLoad = true;
 let searchQuery = "";
 let manualMatchTrack = null;
+const trackStatusMutationInFlight = new Set();
 
 
 /* ===============================
@@ -60,6 +64,14 @@ const guestStatusOverrides = new Map(); // guest_token -> active|muted|blocked
 let messageFetchSeq = 0;
 let lastAppliedMessageFetchSeq = 0;
 let spotifySyncInFlight = false;
+let requestsPollCooldownUntil = 0;
+
+const POLL_JITTER_MS = 800;
+const REQUESTS_POLL_VISIBLE_MS = Math.max(3000, Math.min(POLL_MS, 5000));
+const MESSAGES_POLL_VISIBLE_MS = REQUESTS_POLL_VISIBLE_MS;
+const SECONDARY_POLL_VISIBLE_MS = Math.max(15000, POLL_MS);
+const HIDDEN_POLL_MULTIPLIER = 4;
+const REQUESTS_MUTATION_COOLDOWN_MS = 2000;
 
 
 // ===============================
@@ -221,6 +233,7 @@ function groupDjRows(rows) {
       requesters: group.rows.flatMap((r) => Array.isArray(r.requesters) ? r.requesters : []),
       voters: group.rows.flatMap((r) => Array.isArray(r.voters) ? r.voters : []),
       boosters: group.rows.flatMap((r) => Array.isArray(r.boosters) ? r.boosters : []),
+      dj_track_id: (group.rows.find((r) => Number(r.dj_track_id || 0) > 0)?.dj_track_id) || primary.dj_track_id || null,
       track_status: allPlayed ? "played" : (allSkipped ? "skipped" : "active"),
       group_has_played: anyPlayed,
       group_has_skipped: anySkipped,
@@ -1074,6 +1087,7 @@ const el = document.createElement("div");
 el.className = "request-row";
 const isPlayed = row.track_status === "played" || row.group_has_played === true;
 const isSkipped = row.track_status === "skipped" || row.group_has_skipped === true;
+const isOwned = Number(row.dj_track_id || 0) > 0;
 const variants = Array.isArray(row.__group_rows) ? row.__group_rows : [];
 const expandable = variants.length > 1;
 
@@ -1100,6 +1114,7 @@ const trackKey = row.track_key;
       ${row.album_art ? `<img src="${row.album_art}" alt="">` : ``}
       <div class="req-meta">
         <div class="req-title">
+  <span class="${isOwned ? 'owned-track' : 'missing-track'}" title="${isOwned ? 'In your library' : 'Not in your library'}">${isOwned ? '✔' : '❌'}</span>
   ${row.song_title}
   ${(row.boost_count || 0) > 0
     ? `<span class="boost-badge">🚀</span>`
@@ -1281,7 +1296,7 @@ if (isPlayed) {
 } else if (isSkipped) {
   primaryButton = `<button id="markActiveBtn" class="btn-undo-skipped">↩ Mark Active</button>`;
 } else {
-  primaryButton = `<button id="markPlayingBtn">▶ Mark Playing</button>`;
+  primaryButton = `<button id="markPlayingBtn">▶ Mark Playing/Played</button>`;
 }
 
 
@@ -1399,7 +1414,7 @@ ${track.boost_count > 0 ? `
 
 <div class="track-actions">
   ${primaryButton}
-  ${!isPlayed ? `<button id="skipBtn">⏭ Skip</button>` : ``}
+  ${(!isPlayed && !isSkipped) ? `<button id="skipBtn">⏭ Skip</button>` : ``}
 </div>
   </div>
 `;
@@ -1411,50 +1426,109 @@ ${track.boost_count > 0 ? `
 ============================== */
 const markPlayingBtn = document.getElementById("markPlayingBtn");
 
+async function postTrackStatusMutation(endpoint, trackKey) {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      event_id: EVENT_ID,
+      track_key: trackKey
+    })
+  });
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || "Status update failed");
+  }
+}
+
+function captureTrackStatusSnapshot(targetKeys) {
+  const keys = new Set(targetKeys);
+  const snapshot = [];
+
+  djRequestsCache.forEach((row, index) => {
+    if (keys.has(row.track_key)) {
+      snapshot.push({ index, status: row.track_status });
+    }
+  });
+
+  return snapshot;
+}
+
+function applyOptimisticTrackStatus(targetKeys, nextStatus) {
+  const keys = new Set(targetKeys);
+  djRequestsCache.forEach((row) => {
+    if (keys.has(row.track_key)) {
+      row.track_status = nextStatus;
+    }
+  });
+}
+
+function restoreTrackStatusSnapshot(snapshot) {
+  snapshot.forEach((entry) => {
+    if (djRequestsCache[entry.index]) {
+      djRequestsCache[entry.index].track_status = entry.status;
+    }
+  });
+}
+
+function refreshTrackRequestUi(track) {
+  updateRequestTabCounts();
+  renderDjRequests();
+
+  const updatedTrack = findGroupedRowByTrackKey(activeTrackKey || track.track_key);
+  if (updatedTrack) {
+    loadTrackPanel(updatedTrack);
+  }
+}
+
+async function runTrackStatusMutation({ track, targetKeys, nextStatus, endpoint, spotifyMode, onErrorMessage }) {
+  if (!targetKeys.length) return;
+  if (targetKeys.some((key) => trackStatusMutationInFlight.has(key))) return;
+
+  targetKeys.forEach((key) => trackStatusMutationInFlight.add(key));
+
+  const currentFilter = requestStatusFilter;
+  const snapshot = captureTrackStatusSnapshot(targetKeys);
+
+  applyOptimisticTrackStatus(targetKeys, nextStatus);
+  requestsPollCooldownUntil = Date.now() + REQUESTS_MUTATION_COOLDOWN_MS;
+  requestStatusFilter = currentFilter;
+  refreshTrackRequestUi(track);
+
+  try {
+    await Promise.all(targetKeys.map(async (key) => {
+      await postTrackStatusMutation(endpoint, key);
+      await syncSpotifyTrackMutation(key, spotifyMode);
+    }));
+  } catch (err) {
+    restoreTrackStatusSnapshot(snapshot);
+    requestStatusFilter = currentFilter;
+    refreshTrackRequestUi(track);
+    showToast(onErrorMessage, "error");
+    console.error(onErrorMessage, err);
+  } finally {
+    targetKeys.forEach((key) => trackStatusMutationInFlight.delete(key));
+  }
+}
+
 if (markPlayingBtn) {
   markPlayingBtn.onclick = async () => {
-    try {
-      const currentFilter = requestStatusFilter; // remember tab
-      const targetKeys = getGroupTrackKeys(track);
-      if (!targetKeys.length) return;
-
-      for (const key of targetKeys) {
-        // 1️⃣ Mark played in DB (authoritative)
-        await fetch("/api/dj/mark_played.php", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            event_id: EVENT_ID,
-            track_key: key
-          })
-        });
-
-        // 2️⃣ Remove from Spotify playlist
-        await syncSpotifyTrackMutation(key, "remove");
-      }
-
-      // 3️⃣ Update cache
-      djRequestsCache.forEach(r => {
-        if (targetKeys.includes(r.track_key)) {
-          r.track_status = "played";
-        }
-      });
-
-      // ✅ Stay on same tab
-      requestStatusFilter = currentFilter;
-
-      updateRequestTabCounts();
-      renderDjRequests();
-
-      // Reload panel
-      const updatedTrack = findGroupedRowByTrackKey(activeTrackKey || track.track_key);
-      if (updatedTrack) {
-        loadTrackPanel(updatedTrack);
-      }
-
-    } catch (err) {
-      console.error("Failed to mark playing", err);
-    }
+    const targetKeys = getGroupTrackKeys(track);
+    await runTrackStatusMutation({
+      track,
+      targetKeys,
+      nextStatus: "played",
+      endpoint: "/api/dj/mark_played.php",
+      spotifyMode: "remove",
+      onErrorMessage: "Failed to mark track as played. Reverted."
+    });
   };
 }
 
@@ -1465,47 +1539,15 @@ const markActiveBtn = document.getElementById("markActiveBtn");
 
 if (markActiveBtn) {
   markActiveBtn.onclick = async () => {
-    try {
-      const currentFilter = requestStatusFilter; // remember tab
-      const targetKeys = getGroupTrackKeys(track);
-      if (!targetKeys.length) return;
-
-      for (const key of targetKeys) {
-        // 1️⃣ Mark active in DB (authoritative)
-        await fetch("/api/dj/mark_active.php", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            event_id: EVENT_ID,
-            track_key: key
-          })
-        });
-
-        // 2️⃣ Re-add to Spotify playlist (ONLY if Spotify-backed)
-        await syncSpotifyTrackMutation(key, "add");
-      }
-
-      // 3️⃣ Update cache
-      djRequestsCache.forEach(r => {
-        if (targetKeys.includes(r.track_key)) {
-          r.track_status = "active";
-        }
-      });
-
-      // ✅ DO NOT TOUCH TABS
-      requestStatusFilter = currentFilter;
-
-      updateRequestTabCounts();
-      renderDjRequests();
-
-      const updatedTrack = findGroupedRowByTrackKey(activeTrackKey || track.track_key);
-      if (updatedTrack) {
-        loadTrackPanel(updatedTrack);
-      }
-
-    } catch (err) {
-      console.error("Failed to mark active", err);
-    }
+    const targetKeys = getGroupTrackKeys(track);
+    await runTrackStatusMutation({
+      track,
+      targetKeys,
+      nextStatus: "active",
+      endpoint: "/api/dj/mark_active.php",
+      spotifyMode: "add",
+      onErrorMessage: "Failed to mark track as active. Reverted."
+    });
   };
 }
   
@@ -1517,44 +1559,15 @@ const skipBtn = document.getElementById("skipBtn");
 
 if (skipBtn) {
   skipBtn.onclick = async () => {
-    try {
-      const targetKeys = getGroupTrackKeys(track);
-      if (!targetKeys.length) return;
-
-      // 1️⃣ Mark skipped in DB (authoritative)
-      for (const key of targetKeys) {
-        await fetch("/api/dj/mark_skipped.php", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            event_id: EVENT_ID,
-            track_key: key
-          })
-        });
-
-        // 2️⃣ Remove from Spotify playlist
-        await syncSpotifyTrackMutation(key, "remove");
-      }
-
-      // 3️⃣ Optimistic UI update
-      djRequestsCache.forEach(r => {
-        if (targetKeys.includes(r.track_key)) {
-          r.track_status = "skipped";
-        }
-      });
-
-      updateRequestTabCounts();
-      renderDjRequests();
-
-      const updatedTrack = findGroupedRowByTrackKey(activeTrackKey || track.track_key);
-
-      if (updatedTrack) {
-        loadTrackPanel(updatedTrack);
-      }
-
-    } catch (err) {
-      console.error("Failed to skip track", err);
-    }
+    const targetKeys = getGroupTrackKeys(track);
+    await runTrackStatusMutation({
+      track,
+      targetKeys,
+      nextStatus: "skipped",
+      endpoint: "/api/dj/mark_skipped.php",
+      spotifyMode: "remove",
+      onErrorMessage: "Failed to skip track. Reverted."
+    });
   };
 }
   
@@ -2641,32 +2654,89 @@ async function loadDjInsights() {
 /* =========================================
    POLLING
 ========================================= */
-loadDjRequests();
-loadDjMessages();
-loadBroadcasts();
-if (POLLS_PREMIUM_ENABLED) {
-  loadPolls();
+const pollInFlight = new Set();
+
+function nextPollDelayMs(visibleMs) {
+  const base = document.visibilityState === "visible"
+    ? visibleMs
+    : Math.max(visibleMs * HIDDEN_POLL_MULTIPLIER, visibleMs);
+  return base + Math.floor(Math.random() * POLL_JITTER_MS);
 }
-loadDjMood();
+
+async function runPollTask(name, task, options = {}) {
+  const runWhenHidden = options.runWhenHidden === true;
+
+  if (!runWhenHidden && document.visibilityState !== "visible") {
+    return;
+  }
+  if (pollInFlight.has(name)) {
+    return;
+  }
+  if (name === "requests" && Date.now() < requestsPollCooldownUntil) {
+    return;
+  }
+
+  pollInFlight.add(name);
+  try {
+    await task();
+  } finally {
+    pollInFlight.delete(name);
+  }
+}
+
+function startAdaptivePoll(name, task, visibleMs, options = {}) {
+  const loop = async () => {
+    await runPollTask(name, task, options);
+    window.setTimeout(loop, nextPollDelayMs(visibleMs));
+  };
+  window.setTimeout(loop, nextPollDelayMs(visibleMs));
+}
+
+runPollTask("requests", loadDjRequests);
+runPollTask("messages", loadDjMessages);
+runPollTask("broadcasts", loadBroadcasts);
+if (POLLS_PREMIUM_ENABLED) {
+  runPollTask("polls", loadPolls);
+}
+runPollTask("mood", loadDjMood);
 if (TIPS_BOOST_VISIBLE) {
-  loadDjSupport();
+  runPollTask("support", loadDjSupport);
 } else {
   document.getElementById('djSupportTile')?.classList.add('hidden');
   document.getElementById('supportModal')?.classList.add('hidden');
 }
-loadDjInsights();
+runPollTask("insights", loadDjInsights);
 
-setInterval(loadDjRequests, POLL_MS);
-setInterval(loadDjMessages, POLL_MS);
-if (TIPS_BOOST_VISIBLE) {
-  setInterval(loadDjSupport, POLL_MS);
+if (REQUESTS_OPEN_FOR_PATRONS) {
+  startAdaptivePoll("requests", loadDjRequests, REQUESTS_POLL_VISIBLE_MS);
 }
-setInterval(loadBroadcasts, POLL_MS);
-if (POLLS_PREMIUM_ENABLED) {
-  setInterval(loadPolls, POLL_MS);
+if (!EVENT_IS_ENDED) {
+  startAdaptivePoll("messages", loadDjMessages, MESSAGES_POLL_VISIBLE_MS);
 }
-setInterval(loadDjInsights, POLL_MS);
-setInterval(loadDjMood, 15000);
+if (!EVENT_IS_ENDED && TIPS_BOOST_VISIBLE) {
+  startAdaptivePoll("support", loadDjSupport, SECONDARY_POLL_VISIBLE_MS);
+}
+if (!EVENT_IS_ENDED) {
+  startAdaptivePoll("broadcasts", loadBroadcasts, SECONDARY_POLL_VISIBLE_MS);
+}
+if (!EVENT_IS_ENDED && POLLS_PREMIUM_ENABLED) {
+  startAdaptivePoll("polls", loadPolls, SECONDARY_POLL_VISIBLE_MS);
+}
+if (!EVENT_IS_ENDED) {
+  startAdaptivePoll("insights", loadDjInsights, SECONDARY_POLL_VISIBLE_MS);
+  startAdaptivePoll("mood", loadDjMood, 15000);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (REQUESTS_OPEN_FOR_PATRONS) {
+    runPollTask("requests", loadDjRequests);
+  }
+  if (!EVENT_IS_ENDED) {
+    runPollTask("messages", loadDjMessages);
+    runPollTask("insights", loadDjInsights);
+  }
+});
 
 if (SPOTIFY_SYNC_ENABLED) {
   setInterval(() => {
