@@ -13,6 +13,7 @@ A production-capable Rekordbox XML library import pipeline is now implemented fo
 - status polling in UI
 - manual fallback trigger button
 - import metrics (processed, identities, added, updated)
+- playlist hierarchy + playlist membership import
 
 ---
 
@@ -36,6 +37,22 @@ A production-capable Rekordbox XML library import pipeline is now implemented fo
 - Normalizes artist/title to `normalized_hash`.
 - Resolves `track_identity_id` via `track_identities` upsert.
 - Upserts into `dj_tracks`.
+- Parses `PLAYLISTS > NODE` hierarchy in a second streaming pass.
+- Upserts folder/playlist nodes into `dj_playlists` with parent relationships.
+- Upserts playlist membership into `dj_playlist_tracks`.
+
+### TrackID mapping for playlist membership
+- During `COLLECTION/TRACK` import, importer captures Rekordbox `TrackID`.
+- It also captures normalized hash for each imported track row.
+- After collection upsert, importer resolves `normalized_hash -> dj_tracks.id`.
+- It builds `TrackID -> dj_track_id` in memory for the current file.
+- During `PLAYLISTS/NODE` parsing, `TRACK Key` references are resolved through this map.
+- Unknown/missing references are skipped safely.
+
+### Idempotency
+- `dj_playlists`: upsert by unique key `(dj_id, source, external_playlist_key)`.
+- `dj_playlist_tracks`: `INSERT IGNORE` on PK `(playlist_id, dj_track_id)` prevents duplicates.
+- Re-importing the same XML does not duplicate playlist nodes or playlist membership rows.
 
 ### Current metrics emitted by importer
 - `rows_inserted`
@@ -247,4 +264,3 @@ Observed verified behavior:
 - Incoming song requests do **not yet** use `track_identities` as first-query source.
 - Current request path still relies on existing request/Spotify/link tables.
 - If desired, next migration step is request lookup by `track_identity_id` first, fallback to legacy fields.
-

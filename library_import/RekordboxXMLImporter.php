@@ -14,6 +14,10 @@ class RekordboxXMLImporter
     private string $identityProvider;
     private string $sourceLabel;
     private array $djTrackColumns = [];
+    private array $trackIdToHash = [];
+    private array $trackIdToDjTrackId = [];
+    private ?PDOStatement $playlistUpsertStmt = null;
+    private ?PDOStatement $playlistTrackInsertStmt = null;
 
     public function __construct(PDO $db, int $djId, array $options = [])
     {
@@ -32,6 +36,9 @@ class RekordboxXMLImporter
      *   rows_inserted:int,
      *   rows_updated:int,
      *   rows_skipped:int,
+     *   playlists_imported:int,
+     *   playlist_tracks_added:int,
+     *   playlist_tracks_skipped:int,
      *   started_at:string,
      *   finished_at:string
      * }
@@ -62,6 +69,9 @@ class RekordboxXMLImporter
         $rowsSkipped = 0;
         $rowsBuffered = 0;
         $tracksSeen = 0;
+        $playlistsImported = 0;
+        $playlistTracksAdded = 0;
+        $playlistTracksSkipped = 0;
         $inCollection = false;
         $batch = [];
 
@@ -88,6 +98,8 @@ class RekordboxXMLImporter
                     continue;
                 }
 
+                $this->rememberTrackIdHashMapping($track);
+
                 $batch[] = $track;
                 $rowsBuffered++;
 
@@ -104,6 +116,12 @@ class RekordboxXMLImporter
                 $rowsInserted += (int)$batchStats['inserted'];
                 $rowsUpdated += (int)$batchStats['updated'];
             }
+
+            $this->resolveTrackIdMappings();
+            $playlistStats = $this->importPlaylists($xmlPath);
+            $playlistsImported = (int)($playlistStats['playlists_imported'] ?? 0);
+            $playlistTracksAdded = (int)($playlistStats['playlist_tracks_added'] ?? 0);
+            $playlistTracksSkipped = (int)($playlistStats['playlist_tracks_skipped'] ?? 0);
         } finally {
             $reader->close();
         }
@@ -117,6 +135,9 @@ class RekordboxXMLImporter
             'rows_inserted' => $rowsInserted,
             'rows_updated' => $rowsUpdated,
             'rows_skipped' => $rowsSkipped,
+            'playlists_imported' => $playlistsImported,
+            'playlist_tracks_added' => $playlistTracksAdded,
+            'playlist_tracks_skipped' => $playlistTracksSkipped,
             'started_at' => $startedAt,
             'finished_at' => gmdate('c'),
         ];
@@ -137,6 +158,7 @@ class RekordboxXMLImporter
         $location = $this->normaliseLocation($this->nullIfEmpty($reader->getAttribute('Location')));
         $normalizedHash = $this->normalisedHash($title, $artist);
         $trackIdentityId = $this->resolveTrackIdentityId($normalizedHash);
+        $xmlTrackId = $this->nullIfEmpty($reader->getAttribute('TrackID'));
 
         return [
             'title' => $title,
@@ -147,6 +169,7 @@ class RekordboxXMLImporter
             'location' => $location,
             'normalized_hash' => $normalizedHash,
             'track_identity_id' => $trackIdentityId,
+            'xml_track_id' => $xmlTrackId,
         ];
     }
 
@@ -470,5 +493,267 @@ class RekordboxXMLImporter
             ':track_count' => $trackCount,
             ':source' => $this->sourceLabel,
         ]);
+    }
+
+    private function rememberTrackIdHashMapping(array $track): void
+    {
+        $trackId = trim((string)($track['xml_track_id'] ?? ''));
+        $hash = trim((string)($track['normalized_hash'] ?? ''));
+        if ($trackId === '' || $hash === '') {
+            return;
+        }
+        $this->trackIdToHash[$trackId] = $hash;
+    }
+
+    private function resolveTrackIdMappings(): void
+    {
+        if (empty($this->trackIdToHash)) {
+            return;
+        }
+
+        $hashes = array_values(array_unique(array_filter(array_values($this->trackIdToHash))));
+        if (empty($hashes)) {
+            return;
+        }
+
+        $hashToDjTrackId = [];
+        $chunkSize = 500;
+        for ($offset = 0; $offset < count($hashes); $offset += $chunkSize) {
+            $chunk = array_slice($hashes, $offset, $chunkSize);
+            if (empty($chunk)) {
+                continue;
+            }
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            $sql = "
+                SELECT id, normalized_hash
+                FROM dj_tracks
+                WHERE dj_id = ?
+                  AND normalized_hash IN ({$placeholders})
+            ";
+            $stmt = $this->db->prepare($sql);
+            $params = array_merge([$this->djId], $chunk);
+            $stmt->execute($params);
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $hash = trim((string)($row['normalized_hash'] ?? ''));
+                $id = (int)($row['id'] ?? 0);
+                if ($hash !== '' && $id > 0 && !isset($hashToDjTrackId[$hash])) {
+                    $hashToDjTrackId[$hash] = $id;
+                }
+            }
+        }
+
+        foreach ($this->trackIdToHash as $trackId => $hash) {
+            if (isset($hashToDjTrackId[$hash])) {
+                $this->trackIdToDjTrackId[$trackId] = (int)$hashToDjTrackId[$hash];
+            }
+        }
+    }
+
+    /**
+     * @return array{playlists_imported:int,playlist_tracks_added:int,playlist_tracks_skipped:int}
+     */
+    private function importPlaylists(string $xmlPath): array
+    {
+        $this->ensurePlaylistSchema();
+
+        $stats = [
+            'playlists_imported' => 0,
+            'playlist_tracks_added' => 0,
+            'playlist_tracks_skipped' => 0,
+        ];
+
+        $reader = new XMLReader();
+        $flags = LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_COMPACT | LIBXML_PARSEHUGE;
+        if (!$reader->open($xmlPath, null, $flags)) {
+            return $stats;
+        }
+
+        $inPlaylists = false;
+        $rootOrdinals = [];
+        try {
+            while ($reader->read()) {
+                if ($reader->nodeType === XMLReader::ELEMENT && $reader->name === 'PLAYLISTS') {
+                    $inPlaylists = true;
+                    continue;
+                }
+                if ($reader->nodeType === XMLReader::END_ELEMENT && $reader->name === 'PLAYLISTS') {
+                    break;
+                }
+                if (!$inPlaylists || $reader->nodeType !== XMLReader::ELEMENT || $reader->name !== 'NODE') {
+                    continue;
+                }
+
+                $token = $this->playlistNodeToken($reader);
+                $rootOrdinals[$token] = ($rootOrdinals[$token] ?? 0) + 1;
+                $pathSeed = 'root/' . $token . '#' . $rootOrdinals[$token];
+                $this->parsePlaylistNode($reader, null, $pathSeed, $stats);
+            }
+        } finally {
+            $reader->close();
+        }
+
+        return $stats;
+    }
+
+    private function parsePlaylistNode(XMLReader $reader, ?int $parentPlaylistId, string $pathSeed, array &$stats): void
+    {
+        $type = trim((string)$reader->getAttribute('Type'));
+        $name = $this->nullIfEmpty($reader->getAttribute('Name')) ?? 'Untitled';
+        $isPlaylist = ($type === '1');
+        $depth = $reader->depth;
+
+        $playlistId = $this->upsertPlaylistNode($name, $parentPlaylistId, $pathSeed);
+        $stats['playlists_imported']++;
+
+        if ($reader->isEmptyElement) {
+            return;
+        }
+
+        $childOrdinals = [];
+        while ($reader->read()) {
+            if ($reader->nodeType === XMLReader::END_ELEMENT && $reader->name === 'NODE' && $reader->depth === $depth) {
+                return;
+            }
+
+            if ($reader->nodeType !== XMLReader::ELEMENT) {
+                continue;
+            }
+
+            if ($reader->name === 'NODE') {
+                $token = $this->playlistNodeToken($reader);
+                $childOrdinals[$token] = ($childOrdinals[$token] ?? 0) + 1;
+                $childPathSeed = $pathSeed . '/' . $token . '#' . $childOrdinals[$token];
+                $this->parsePlaylistNode($reader, $playlistId, $childPathSeed, $stats);
+                continue;
+            }
+
+            if ($isPlaylist && $reader->name === 'TRACK') {
+                $trackRef = $this->nullIfEmpty($reader->getAttribute('Key'))
+                    ?? $this->nullIfEmpty($reader->getAttribute('TrackID'));
+                if ($trackRef === null || !isset($this->trackIdToDjTrackId[$trackRef])) {
+                    $stats['playlist_tracks_skipped']++;
+                    continue;
+                }
+
+                $djTrackId = (int)$this->trackIdToDjTrackId[$trackRef];
+                if ($djTrackId <= 0) {
+                    $stats['playlist_tracks_skipped']++;
+                    continue;
+                }
+
+                if ($this->upsertPlaylistTrack($playlistId, $djTrackId)) {
+                    $stats['playlist_tracks_added']++;
+                }
+            }
+        }
+    }
+
+    private function playlistNodeToken(XMLReader $reader): string
+    {
+        $type = trim((string)$reader->getAttribute('Type'));
+        $name = $this->nullIfEmpty($reader->getAttribute('Name')) ?? 'Untitled';
+        return ($type === '' ? 'x' : $type) . '|' . mb_strtolower($name, 'UTF-8');
+    }
+
+    private function upsertPlaylistNode(string $name, ?int $parentPlaylistId, string $pathSeed): int
+    {
+        if ($this->playlistUpsertStmt === null) {
+            $this->playlistUpsertStmt = $this->db->prepare("
+                INSERT INTO dj_playlists (
+                    dj_id,
+                    name,
+                    parent_playlist_id,
+                    source,
+                    external_playlist_key,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    :dj_id,
+                    :name,
+                    :parent_playlist_id,
+                    :source,
+                    :external_playlist_key,
+                    NOW(),
+                    NOW()
+                )
+                ON DUPLICATE KEY UPDATE
+                    id = LAST_INSERT_ID(id),
+                    name = VALUES(name),
+                    parent_playlist_id = VALUES(parent_playlist_id),
+                    updated_at = NOW()
+            ");
+        }
+
+        $externalKey = 'rbx:' . hash('sha256', $pathSeed);
+        $this->playlistUpsertStmt->execute([
+            ':dj_id' => $this->djId,
+            ':name' => $name,
+            ':parent_playlist_id' => $parentPlaylistId,
+            ':source' => $this->sourceLabel,
+            ':external_playlist_key' => $externalKey,
+        ]);
+
+        $id = (int)$this->db->lastInsertId();
+        if ($id <= 0) {
+            throw new RuntimeException('Failed to resolve playlist id for Rekordbox NODE: ' . $name);
+        }
+        return $id;
+    }
+
+    private function upsertPlaylistTrack(int $playlistId, int $djTrackId): bool
+    {
+        if ($this->playlistTrackInsertStmt === null) {
+            $this->playlistTrackInsertStmt = $this->db->prepare("
+                INSERT IGNORE INTO dj_playlist_tracks (
+                    playlist_id,
+                    dj_track_id,
+                    created_at
+                ) VALUES (
+                    :playlist_id,
+                    :dj_track_id,
+                    NOW()
+                )
+            ");
+        }
+
+        $this->playlistTrackInsertStmt->execute([
+            ':playlist_id' => $playlistId,
+            ':dj_track_id' => $djTrackId,
+        ]);
+        return $this->playlistTrackInsertStmt->rowCount() > 0;
+    }
+
+    private function ensurePlaylistSchema(): void
+    {
+        if (function_exists('djPlaylistPreferencesEnsureSchema')) {
+            djPlaylistPreferencesEnsureSchema($this->db);
+            return;
+        }
+
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS dj_playlists (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                dj_id BIGINT UNSIGNED NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                parent_playlist_id BIGINT UNSIGNED NULL,
+                source VARCHAR(64) NOT NULL DEFAULT 'rekordbox_xml',
+                external_playlist_key VARCHAR(191) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_dj_playlists_dj_id (dj_id),
+                INDEX idx_dj_playlists_parent (parent_playlist_id),
+                UNIQUE KEY uq_dj_playlist_external (dj_id, source, external_playlist_key)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS dj_playlist_tracks (
+                playlist_id BIGINT UNSIGNED NOT NULL,
+                dj_track_id BIGINT UNSIGNED NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (playlist_id, dj_track_id),
+                INDEX idx_dj_playlist_tracks_dj_track (dj_track_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
     }
 }
