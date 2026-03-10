@@ -11,6 +11,80 @@ if (!bpmCurrentUserHasAccess($db)) {
 }
 $djId = (int)($_SESSION['dj_id'] ?? 0);
 ensureDjLibraryStatsTable($db);
+if (function_exists('djPlaylistPreferencesEnsureSchema')) {
+    djPlaylistPreferencesEnsureSchema($db);
+}
+
+$preferredSaveSuccess = '';
+$preferredSaveError = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') === 'save_preferred_playlists') {
+    if (!verify_csrf_token()) {
+        $preferredSaveError = 'Invalid request token. Please refresh and try again.';
+    } else {
+        $selected = $_POST['preferred_playlist_ids'] ?? [];
+        if (!is_array($selected)) {
+            $selected = [];
+        }
+
+        $selectedIds = [];
+        foreach ($selected as $id) {
+            $n = (int)$id;
+            if ($n > 0) {
+                $selectedIds[$n] = true;
+            }
+        }
+        $selectedIds = array_values(array_keys($selectedIds));
+
+        try {
+            $allowed = [];
+            if (!empty($selectedIds)) {
+                $in = implode(',', array_fill(0, count($selectedIds), '?'));
+                $sql = "
+                    SELECT p.id
+                    FROM dj_playlists p
+                    INNER JOIN (
+                        SELECT playlist_id
+                        FROM dj_playlist_tracks
+                        GROUP BY playlist_id
+                    ) t ON t.playlist_id = p.id
+                    WHERE p.dj_id = ?
+                      AND p.id IN ($in)
+                ";
+                $stmt = $db->prepare($sql);
+                $stmt->execute(array_merge([$djId], $selectedIds));
+                foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $id) {
+                    $n = (int)$id;
+                    if ($n > 0) {
+                        $allowed[$n] = true;
+                    }
+                }
+            }
+
+            $db->beginTransaction();
+            $del = $db->prepare("DELETE FROM dj_preferred_playlists WHERE dj_id = ?");
+            $del->execute([$djId]);
+
+            if (!empty($allowed)) {
+                $ins = $db->prepare("
+                    INSERT INTO dj_preferred_playlists (dj_id, playlist_id, created_at)
+                    VALUES (?, ?, NOW())
+                ");
+                foreach (array_keys($allowed) as $playlistId) {
+                    $ins->execute([$djId, (int)$playlistId]);
+                }
+            }
+
+            $db->commit();
+            $preferredSaveSuccess = 'Preferred playlists updated.';
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $preferredSaveError = 'Failed to save preferred playlists.';
+        }
+    }
+}
 
 $libraryTrackCount = 0;
 $lastImportedAt = null;
@@ -48,6 +122,43 @@ if (!empty($lastImportedAt)) {
     } catch (Throwable $e) {
         $lastImportedDisplay = (string)$lastImportedAt;
     }
+}
+
+$playlistRows = [];
+$preferredSet = [];
+try {
+    $playlistStmt = $db->prepare("
+        SELECT
+            p.id,
+            p.name,
+            p.parent_playlist_id,
+            COUNT(t.dj_track_id) AS track_count
+        FROM dj_playlists p
+        LEFT JOIN dj_playlist_tracks t
+            ON t.playlist_id = p.id
+        WHERE p.dj_id = ?
+        GROUP BY p.id, p.name, p.parent_playlist_id
+        HAVING track_count > 0
+        ORDER BY p.name ASC
+    ");
+    $playlistStmt->execute([$djId]);
+    $playlistRows = $playlistStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    $preferredStmt = $db->prepare("
+        SELECT playlist_id
+        FROM dj_preferred_playlists
+        WHERE dj_id = ?
+    ");
+    $preferredStmt->execute([$djId]);
+    foreach ($preferredStmt->fetchAll(PDO::FETCH_COLUMN) as $pid) {
+        $n = (int)$pid;
+        if ($n > 0) {
+            $preferredSet[$n] = true;
+        }
+    }
+} catch (Throwable $e) {
+    $playlistRows = [];
+    $preferredSet = [];
 }
 
 $pageTitle = 'Library Import';
@@ -264,6 +375,154 @@ function ensureDjLibraryStatsTable(PDO $db): void
         grid-template-columns: 1fr;
     }
 }
+
+.playlist-pref-panel {
+    margin: 0 0 20px;
+    border: 1px solid #2a2a3f;
+    border-radius: 12px;
+    background: #111116;
+    padding: 14px;
+}
+
+.playlist-pref-header {
+    margin: 0 0 10px;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.playlist-pref-sub {
+    margin: 0 0 14px;
+    color: #b7b7c8;
+    font-size: 13px;
+}
+
+.playlist-pref-list {
+    max-height: 280px;
+    overflow: auto;
+    border: 1px solid #25253a;
+    border-radius: 10px;
+    background: #0e0e16;
+}
+
+.playlist-pref-tools {
+    display: flex;
+    gap: 8px;
+    margin: 0 0 10px;
+}
+
+.playlist-pref-search {
+    flex: 1 1 auto;
+    min-width: 220px;
+    border: 1px solid #2b2b42;
+    background: #0b0b13;
+    color: #fff;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+}
+
+.playlist-pref-search-btn,
+.playlist-pref-clear-btn {
+    border: 1px solid #2b2b42;
+    background: #161625;
+    color: #fff;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.playlist-pref-search-btn:hover,
+.playlist-pref-clear-btn:hover {
+    background: #1f1f31;
+}
+
+.playlist-pref-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #212133;
+}
+
+.playlist-pref-item:last-child {
+    border-bottom: none;
+}
+
+.playlist-pref-name {
+    margin: 0;
+    font-weight: 600;
+}
+
+.playlist-pref-meta {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: #9f9fb5;
+}
+
+.playlist-pref-actions {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.playlist-pref-selected {
+    margin: 0 0 12px;
+    border: 1px solid #25253a;
+    border-radius: 10px;
+    background: #0e0e16;
+    padding: 10px 12px;
+}
+
+.playlist-pref-selected-title {
+    margin: 0 0 8px;
+    color: #cfcfe3;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.playlist-pref-selected-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.playlist-pref-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid rgba(var(--brand-accent-rgb), 0.45);
+    background: rgba(var(--brand-accent-rgb), 0.14);
+    padding: 3px 9px;
+    font-size: 12px;
+    color: #f6e5ff;
+}
+
+.playlist-pref-empty {
+    margin: 0;
+    color: #9f9fb5;
+    font-size: 12px;
+}
+
+.playlist-pref-save {
+    border: none;
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(90deg, var(--brand-accent) 0%, var(--brand-accent-strong) 100%);
+    cursor: pointer;
+}
+
+.playlist-pref-msg {
+    font-size: 13px;
+    color: #9fe8b2;
+}
+
+.playlist-pref-msg.is-error {
+    color: #ff9b9b;
+}
 </style>
 
 <div class="library-import-wrap">
@@ -291,6 +550,97 @@ function ensureDjLibraryStatsTable(PDO $db): void
             <li>Imports are incremental and update existing tracks by normalized hash.</li>
             <li>Re-import any time after playlist/library edits to refresh metadata.</li>
         </ul>
+    </div>
+
+    <div class="playlist-pref-panel">
+        <h2 class="playlist-pref-header">Preferred Playlists</h2>
+        <p class="playlist-pref-sub">
+            Select exact playlists to treat as preferred. No folder inheritance is applied.
+            A track is preferred if it belongs to any selected playlist.
+        </p>
+
+        <?php if (empty($playlistRows)): ?>
+            <p class="playlist-pref-sub" style="margin:0;">No imported playlists found yet. Import Rekordbox XML first.</p>
+        <?php else: ?>
+            <?php
+            $playlistMap = [];
+            foreach ($playlistRows as $row) {
+                $playlistMap[(int)$row['id']] = $row;
+            }
+            $breadcrumbFor = static function (array $row, array $map): string {
+                $parts = [];
+                $guard = 0;
+                $parentId = (int)($row['parent_playlist_id'] ?? 0);
+                while ($parentId > 0 && isset($map[$parentId]) && $guard < 20) {
+                    $parent = $map[$parentId];
+                    array_unshift($parts, (string)($parent['name'] ?? ''));
+                    $parentId = (int)($parent['parent_playlist_id'] ?? 0);
+                    $guard++;
+                }
+                return implode(' / ', array_filter($parts));
+            };
+            ?>
+            <form method="post">
+                <?php echo csrf_field(); ?>
+                <input type="hidden" name="action" value="save_preferred_playlists">
+                <div class="playlist-pref-selected" id="preferredSelectedPanel">
+                    <p class="playlist-pref-selected-title">Selected preferred playlists: <span id="preferredSelectedCount">0</span></p>
+                    <div class="playlist-pref-selected-list" id="preferredSelectedList"></div>
+                    <p class="playlist-pref-empty" id="preferredSelectedEmpty">No playlists selected.</p>
+                </div>
+                <div class="playlist-pref-tools">
+                    <input
+                        id="preferredPlaylistSearch"
+                        class="playlist-pref-search"
+                        type="text"
+                        placeholder="Search playlists..."
+                        autocomplete="off"
+                    >
+                    <button id="preferredPlaylistSearchBtn" class="playlist-pref-search-btn" type="button">Search</button>
+                    <button id="preferredPlaylistClearBtn" class="playlist-pref-clear-btn" type="button">Clear</button>
+                </div>
+                <div class="playlist-pref-list">
+                    <?php foreach ($playlistRows as $row): ?>
+                        <?php
+                        $pid = (int)($row['id'] ?? 0);
+                        $name = (string)($row['name'] ?? 'Untitled');
+                        $trackCount = (int)($row['track_count'] ?? 0);
+                        $crumb = $breadcrumbFor($row, $playlistMap);
+                        $checked = isset($preferredSet[$pid]);
+                        ?>
+                        <label
+                            class="playlist-pref-item"
+                            data-playlist-name="<?php echo e(mb_strtolower($name, 'UTF-8')); ?>"
+                            data-playlist-crumb="<?php echo e(mb_strtolower($crumb, 'UTF-8')); ?>"
+                        >
+                            <input
+                                type="checkbox"
+                                name="preferred_playlist_ids[]"
+                                value="<?php echo $pid; ?>"
+                                <?php echo $checked ? 'checked' : ''; ?>
+                            >
+                            <div>
+                                <p class="playlist-pref-name"><?php echo e($name); ?></p>
+                                <p class="playlist-pref-meta">
+                                    <?php if ($crumb !== ''): ?>
+                                        <?php echo e($crumb); ?> •
+                                    <?php endif; ?>
+                                    <?php echo (int)$trackCount; ?> tracks
+                                </p>
+                            </div>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+                <div class="playlist-pref-actions">
+                    <button type="submit" class="playlist-pref-save">Save Preferred Playlists</button>
+                    <?php if ($preferredSaveSuccess !== ''): ?>
+                        <span class="playlist-pref-msg"><?php echo e($preferredSaveSuccess); ?></span>
+                    <?php elseif ($preferredSaveError !== ''): ?>
+                        <span class="playlist-pref-msg is-error"><?php echo e($preferredSaveError); ?></span>
+                    <?php endif; ?>
+                </div>
+            </form>
+        <?php endif; ?>
     </div>
 
     <div id="libraryDropzone" class="library-dropzone" tabindex="0" role="button" aria-label="Upload Rekordbox XML">
@@ -644,6 +994,100 @@ function ensureDjLibraryStatsTable(PDO $db): void
         const file = dt && dt.files && dt.files[0] ? dt.files[0] : null;
         if (file) uploadFile(file);
     });
+})();
+
+(function () {
+    const searchInput = document.getElementById('preferredPlaylistSearch');
+    const searchBtn = document.getElementById('preferredPlaylistSearchBtn');
+    const clearBtn = document.getElementById('preferredPlaylistClearBtn');
+    const items = Array.from(document.querySelectorAll('.playlist-pref-item'));
+    const selectedCount = document.getElementById('preferredSelectedCount');
+    const selectedList = document.getElementById('preferredSelectedList');
+    const selectedEmpty = document.getElementById('preferredSelectedEmpty');
+
+    if (!items.length || !selectedCount || !selectedList || !selectedEmpty) {
+        return;
+    }
+
+    function applyFilter(query) {
+        const q = String(query || '').trim().toLowerCase();
+        items.forEach(function (item) {
+            if (q === '') {
+                item.style.display = '';
+                return;
+            }
+            const name = String(item.getAttribute('data-playlist-name') || '');
+            const crumb = String(item.getAttribute('data-playlist-crumb') || '');
+            const visible = name.includes(q) || crumb.includes(q);
+            item.style.display = visible ? '' : 'none';
+        });
+    }
+
+    function updateSelectedSummary() {
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>"']/g, function (c) {
+                return {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#039;'
+                }[c] || c;
+            });
+        }
+
+        const checked = items
+            .map(function (item) {
+                const cb = item.querySelector('input[type=\"checkbox\"]');
+                if (!cb || !cb.checked) return null;
+                const nameEl = item.querySelector('.playlist-pref-name');
+                return nameEl ? nameEl.textContent.trim() : null;
+            })
+            .filter(Boolean);
+
+        selectedCount.textContent = String(checked.length);
+        selectedList.innerHTML = checked.map(function (name) {
+            return '<span class=\"playlist-pref-chip\">' + escapeHtml(name) + '</span>';
+        }).join('');
+        selectedEmpty.style.display = checked.length ? 'none' : '';
+    }
+
+    items.forEach(function (item) {
+        const cb = item.querySelector('input[type=\"checkbox\"]');
+        if (cb) {
+            cb.addEventListener('change', updateSelectedSummary);
+        }
+    });
+
+    if (searchBtn && searchInput) {
+        searchBtn.addEventListener('click', function () {
+            applyFilter(searchInput.value);
+        });
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyFilter(searchInput.value);
+            }
+        });
+        searchInput.addEventListener('input', function () {
+            if (searchInput.value.trim() === '') {
+                applyFilter('');
+            }
+        });
+    }
+
+    if (clearBtn && searchInput) {
+        clearBtn.addEventListener('click', function () {
+            searchInput.value = '';
+            applyFilter('');
+            searchInput.focus();
+        });
+    }
+
+    updateSelectedSummary();
 })();
 </script>
 

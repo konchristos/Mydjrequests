@@ -33,3 +33,15 @@
   - membership upserted with `INSERT IGNORE` on PK `(playlist_id, dj_track_id)`
   - unknown playlist track references are skipped safely.
 - No request resolver flow changes were made.
+
+## 2026-03-10 (Preferred Playlist Settings UI)
+- Added DJ-facing preferred playlist settings section in `dj/library_import.php`.
+- Page now lists imported playlists for the current DJ and allows mark/unmark via checkboxes.
+- Preferences are saved to `dj_preferred_playlists` with CSRF protection.
+- Selection logic is exact-playlist only (no folder inheritance).
+- UI lists only playlists with track membership (`dj_playlist_tracks`), so folder-only nodes are not selectable.
+- No resolver/request/export logic changes were made in this task.
+- Added playlist search controls (`Search`, `Clear`) to filter imported playlists in-place.
+- Added live selected-preferred confirmation panel with:
+  - selected count
+  - selected playlist chips (reminder before save)
