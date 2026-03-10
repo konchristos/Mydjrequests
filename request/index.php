@@ -3031,14 +3031,39 @@ async function deleteMyRequestById(requestId) {
     fd.append("event_uuid", "<?= e($uuid); ?>");
     fd.append("request_id", String(requestId));
 
-    const res = await fetch("/api/public/delete_my_request.php", {
-        method: "POST",
-        body: fd
-    });
-    const data = await res.json();
-    if (!data.ok) {
-        throw new Error(data.error || "Failed to delete request");
+    try {
+        const res = await fetch("/api/public/delete_my_request.php", {
+            method: "POST",
+            body: fd
+        });
+        const raw = await res.text();
+        let data = null;
+        try {
+            data = JSON.parse(raw);
+        } catch (e) {
+            data = null;
+        }
+
+        if (res.ok && data && data.ok) {
+            return data;
+        }
+    } catch (e) {
+        // fall through to verification path
     }
+
+    // Verification fallback:
+    // if the request no longer appears in "my requests", treat delete as successful.
+    const verifyRes = await fetch("/api/public/get_my_requests.php?event_uuid=<?= e($uuid); ?>&_=" + Date.now());
+    const verifyData = await verifyRes.json();
+    if (verifyData && verifyData.ok) {
+        const stillExists = Array.isArray(verifyData.rows)
+            && verifyData.rows.some(r => Number(r.id || 0) === Number(requestId));
+        if (!stillExists) {
+            return { ok: true, deleted: true, inferred: true };
+        }
+    }
+
+    throw new Error("Failed to delete request");
 }
 
 
@@ -3060,7 +3085,16 @@ document.addEventListener("click", async (e) => {
 
         try {
             await deleteMyRequestById(requestId);
-            await refreshRequests();
+
+            // Optimistic UI update immediately.
+            myRequestsCache = myRequestsCache.filter(r => Number(r.id || 0) !== requestId);
+            updateMyRequestStats();
+            renderMyRequests();
+
+            // Re-sync both lists in background (non-blocking for UX).
+            refreshRequests().catch((err) => {
+                console.warn("Background refresh after delete failed", err);
+            });
         } catch (err) {
             console.error("Delete request failed", err);
             alert(err.message || "Failed to delete request.");

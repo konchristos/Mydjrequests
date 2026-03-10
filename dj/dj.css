@@ -177,13 +177,14 @@ body {
 }
 
 .owned-track {
-  color: #2ecc71;
+  color: #22e07a !important;
   font-weight: bold;
   margin-right: 6px;
+  text-shadow: 0 0 8px rgba(34, 224, 122, 0.45);
 }
 
 .missing-track {
-  color: #e74c3c;
+  color: #ff4d4f !important;
   font-weight: bold;
   margin-right: 6px;
 }
@@ -2564,6 +2565,17 @@ button.insight-tile:hover {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.78);
   margin-top: 2px;
+}
+
+.manual-match-meta.manual-match-owned {
+  color: #22e07a !important;
+  font-weight: 700;
+  text-shadow: 0 0 8px rgba(34, 224, 122, 0.35);
+}
+
+.manual-match-meta.manual-match-missing {
+  color: #ff5a5f !important;
+  font-weight: 700;
 }
 
 /* =========================

@@ -196,31 +196,33 @@ try {
 
     $db->commit();
 
-    // Keep Spotify playlist in sync with current request set.
-    // This runs after DB commit so delete success is never rolled back by Spotify/API issues.
-    $playlistSyncOk = null;
-    $playlistSyncError = null;
-    $djId = (int)($event['user_id'] ?? 0);
-    if ($djId > 0) {
-        try {
-            $syncRes = syncEventPlaylistFromRequests($db, $djId, $eventId);
-            $playlistSyncOk = (bool)($syncRes['ok'] ?? false);
-            if (!$playlistSyncOk) {
-                $playlistSyncError = (string)($syncRes['error'] ?? 'Playlist sync failed');
-            }
-        } catch (Throwable $syncErr) {
-            $playlistSyncOk = false;
-            $playlistSyncError = 'Playlist sync failed';
-        }
-    }
-
-    echo json_encode([
+    $response = [
         'ok' => true,
         'deleted' => true,
         'request_id' => $requestId,
-        'playlist_sync_ok' => $playlistSyncOk,
-        'playlist_sync_error' => $playlistSyncError,
-    ]);
+        'playlist_sync_queued' => true,
+    ];
+    echo json_encode($response);
+
+    // Finish HTTP response early so UI is never blocked by Spotify API latency.
+    ignore_user_abort(true);
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    } else {
+        @ob_flush();
+        flush();
+    }
+
+    // Keep Spotify playlist in sync with current request set.
+    // Runs after response; failures are non-blocking.
+    $djId = (int)($event['user_id'] ?? 0);
+    if ($djId > 0) {
+        try {
+            syncEventPlaylistFromRequests($db, $djId, $eventId);
+        } catch (Throwable $syncErr) {
+            // Swallow: delete was already committed and returned to client.
+        }
+    }
 } catch (Throwable $e) {
     if ($db->inTransaction()) {
         $db->rollBack();

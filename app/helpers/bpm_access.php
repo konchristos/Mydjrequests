@@ -36,17 +36,8 @@ function bpmUserHasAccess(PDO $db, int $userId): bool
         return false;
     }
 
-    if (bpmRolloutGlobalEnabled($db)) {
-        return true;
-    }
-
     try {
-        $stmt = $db->prepare("
-            SELECT is_admin, COALESCE(bpm_access_enabled, 0) AS bpm_access_enabled
-            FROM users
-            WHERE id = ?
-            LIMIT 1
-        ");
+        $stmt = $db->prepare("SELECT is_admin FROM users WHERE id = ? LIMIT 1");
         $stmt->execute([$userId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
@@ -56,17 +47,12 @@ function bpmUserHasAccess(PDO $db, int $userId): bool
         if ((int)($row['is_admin'] ?? 0) === 1) {
             return true;
         }
-
-        return (int)($row['bpm_access_enabled'] ?? 0) === 1;
     } catch (Throwable $e) {
-        try {
-            $stmt = $db->prepare("SELECT is_admin FROM users WHERE id = ? LIMIT 1");
-            $stmt->execute([$userId]);
-            return (int)$stmt->fetchColumn() === 1;
-        } catch (Throwable $inner) {
-            return false;
-        }
+        return false;
     }
+
+    // Product policy: BPM metadata visibility and XML import are premium-only (admins always allowed).
+    return mdjr_user_has_premium($db, $userId);
 }
 
 function bpmCurrentUserHasAccess(PDO $db): bool

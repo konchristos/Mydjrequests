@@ -4,9 +4,69 @@ declare(strict_types=1);
 require_once __DIR__ . '/../app/bootstrap.php';
 require_dj_login();
 
+$db = db();
+if (!bpmCurrentUserHasAccess($db)) {
+    http_response_code(403);
+    exit('Premium feature only.');
+}
+$djId = (int)($_SESSION['dj_id'] ?? 0);
+ensureDjLibraryStatsTable($db);
+
+$libraryTrackCount = 0;
+$lastImportedAt = null;
+$lastImportSource = 'rekordbox_xml';
+
+try {
+    $statsStmt = $db->prepare("
+        SELECT track_count, last_imported_at, source
+        FROM dj_library_stats
+        WHERE dj_id = ?
+        LIMIT 1
+    ");
+    $statsStmt->execute([$djId]);
+    $statsRow = $statsStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
+    if ($statsRow) {
+        $libraryTrackCount = max(0, (int)($statsRow['track_count'] ?? 0));
+        $lastImportedAt = $statsRow['last_imported_at'] ?? null;
+        $lastImportSource = trim((string)($statsRow['source'] ?? 'rekordbox_xml'));
+    } else {
+        $countStmt = $db->prepare("SELECT COUNT(*) FROM dj_tracks WHERE dj_id = ?");
+        $countStmt->execute([$djId]);
+        $libraryTrackCount = max(0, (int)$countStmt->fetchColumn());
+    }
+} catch (Throwable $e) {
+    $libraryTrackCount = 0;
+    $lastImportedAt = null;
+    $lastImportSource = 'rekordbox_xml';
+}
+
+$lastImportedDisplay = 'Never';
+if (!empty($lastImportedAt)) {
+    try {
+        $lastImportedDisplay = (new DateTime((string)$lastImportedAt))->format('j M Y, g:i a');
+    } catch (Throwable $e) {
+        $lastImportedDisplay = (string)$lastImportedAt;
+    }
+}
+
 $pageTitle = 'Library Import';
 $pageBodyClass = 'dj-page';
 include __DIR__ . '/layout.php';
+
+function ensureDjLibraryStatsTable(PDO $db): void
+{
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS dj_library_stats (
+            dj_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+            track_count INT UNSIGNED NOT NULL DEFAULT 0,
+            last_imported_at DATETIME NULL,
+            source VARCHAR(64) NOT NULL DEFAULT 'rekordbox_xml',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
 ?>
 <style>
 .library-import-wrap {
@@ -24,6 +84,49 @@ include __DIR__ . '/layout.php';
     margin: 0 0 22px;
     color: #b7b7c8;
     font-size: 15px;
+}
+
+.library-overview {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    gap: 12px;
+    margin: 0 0 14px;
+}
+
+.library-overview-card {
+    border: 1px solid #2a2a3f;
+    border-radius: 12px;
+    background: #111116;
+    padding: 12px 14px;
+}
+
+.library-overview-label {
+    margin: 0 0 6px;
+    color: #a8a8bd;
+    font-size: 12px;
+}
+
+.library-overview-value {
+    margin: 0;
+    color: #fff;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+.library-reimport-help {
+    margin: 0 0 20px;
+    border: 1px solid #2a2a3f;
+    border-radius: 12px;
+    background: #111116;
+    padding: 12px 14px;
+    color: #d8d8e5;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.library-reimport-help ul {
+    margin: 8px 0 0 18px;
+    padding: 0;
 }
 
 .library-dropzone {
@@ -168,6 +271,27 @@ include __DIR__ . '/layout.php';
     <p class="library-import-subtitle">
         Upload your Rekordbox XML library to sync track metadata into your DJ library.
     </p>
+
+    <div class="library-overview">
+        <div class="library-overview-card">
+            <p class="library-overview-label">Tracks in Library</p>
+            <p class="library-overview-value"><?php echo (int)$libraryTrackCount; ?></p>
+        </div>
+        <div class="library-overview-card">
+            <p class="library-overview-label">Last Import</p>
+            <p class="library-overview-value" style="font-size:18px;"><?php echo e($lastImportedDisplay); ?></p>
+            <p class="library-overview-label" style="margin-top:6px;">Source: <?php echo e($lastImportSource !== '' ? $lastImportSource : 'rekordbox_xml'); ?></p>
+        </div>
+    </div>
+
+    <div class="library-reimport-help">
+        Re-import workflow:
+        <ul>
+            <li>Export your latest Rekordbox library XML and upload it here.</li>
+            <li>Imports are incremental and update existing tracks by normalized hash.</li>
+            <li>Re-import any time after playlist/library edits to refresh metadata.</li>
+        </ul>
+    </div>
 
     <div id="libraryDropzone" class="library-dropzone" tabindex="0" role="button" aria-label="Upload Rekordbox XML">
         <p class="library-dropzone-title">Drag Rekordbox XML here or click to upload</p>

@@ -137,7 +137,8 @@ function queueEnrichmentForRequest(PDO $pdo, string $spotifyId): void
         return;
     }
 
-    $wantFuzzy = appSettingEnabled($pdo, 'bpm_fuzzy_on_request_enabled', false);
+    // Product policy: fuzzy enrichment is retired for performance stability.
+    $wantFuzzy = false;
     $wantYear = appSettingEnabled($pdo, 'bpm_on_request_fill_year_enabled', false);
 
     // Fast immediate fill from existing link (no fuzzy, no heavy work).

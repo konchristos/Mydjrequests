@@ -239,6 +239,19 @@ $bpmAccessEnabled = bpmCurrentUserHasAccess($db);
     color: #ffb3ef !important;
 }
 
+.premium-nav-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    line-height: 1.2;
+}
+
 /* Global interactive affordance for logged-in DJ controls */
 :where(
     button,
@@ -439,8 +452,7 @@ if (!empty($_SESSION['dj_id'])) {
     <a href="<?php echo e(url('dj/dashboard.php')); ?>">Dashboard</a>
     <a href="<?php echo e(url('dj/events.php')); ?>">My Events</a>
     <?php if ($bpmAccessEnabled): ?>
-    <a href="<?php echo e(url('BPM/index.php')); ?>">Playlist Imports</a>
-    <a href="<?php echo e(url('dj/library_import.php')); ?>">Library Import</a>
+    <a href="<?php echo e(url('dj/library_import.php')); ?>">Library Import <span class="premium-badge premium-nav-badge">Premium</span></a>
     <?php endif; ?>
     <a href="<?php echo e(url('dj/how_to.php')); ?>">How To</a>
     <a href="<?php echo e(url('dj/terms.php')); ?>">Terms</a>
@@ -518,8 +530,7 @@ if (!empty($_SESSION['dj_id'])) {
     <a href="<?php echo e(url('dj/dashboard.php')); ?>">Dashboard</a>
     <a href="<?php echo e(url('dj/events.php')); ?>">My Events</a>
     <?php if ($bpmAccessEnabled): ?>
-    <a href="<?php echo e(url('BPM/index.php')); ?>">Playlist Imports</a>
-    <a href="<?php echo e(url('dj/library_import.php')); ?>">Library Import</a>
+    <a href="<?php echo e(url('dj/library_import.php')); ?>">Library Import <span class="premium-badge premium-nav-badge">Premium</span></a>
     <?php endif; ?>
     <a href="<?php echo e(url('dj/how_to.php')); ?>">How To</a>
     <a href="<?php echo e(url('dj/reports.php?view=performance')); ?>">Reports</a>

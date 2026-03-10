@@ -43,6 +43,7 @@ class RekordboxXMLImporter
         }
 
         $this->ensureIdentitySchema();
+        $this->ensureDjLibraryStatsTable();
         $this->djTrackColumns = $this->loadTableColumns('dj_tracks');
         if (empty($this->djTrackColumns)) {
             throw new RuntimeException('Table `dj_tracks` does not exist in current schema.');
@@ -106,6 +107,8 @@ class RekordboxXMLImporter
         } finally {
             $reader->close();
         }
+
+        $this->updateDjLibraryStats();
 
         return [
             'file' => $xmlPath,
@@ -415,5 +418,57 @@ class RekordboxXMLImporter
             }
         }
         return $out;
+    }
+
+    private function ensureDjLibraryStatsTable(): void
+    {
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS dj_library_stats (
+                dj_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+                track_count INT UNSIGNED NOT NULL DEFAULT 0,
+                last_imported_at DATETIME NULL,
+                source VARCHAR(64) NOT NULL DEFAULT 'rekordbox_xml',
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+    }
+
+    private function updateDjLibraryStats(): void
+    {
+        $countStmt = $this->db->prepare("
+            SELECT COUNT(*)
+            FROM dj_tracks
+            WHERE dj_id = :dj_id
+        ");
+        $countStmt->execute([':dj_id' => $this->djId]);
+        $trackCount = (int)$countStmt->fetchColumn();
+        if ($trackCount < 0) {
+            $trackCount = 0;
+        }
+
+        $upsert = $this->db->prepare("
+            INSERT INTO dj_library_stats (
+                dj_id,
+                track_count,
+                last_imported_at,
+                source
+            ) VALUES (
+                :dj_id,
+                :track_count,
+                NOW(),
+                :source
+            )
+            ON DUPLICATE KEY UPDATE
+                track_count = VALUES(track_count),
+                last_imported_at = VALUES(last_imported_at),
+                source = VALUES(source),
+                updated_at = CURRENT_TIMESTAMP
+        ");
+        $upsert->execute([
+            ':dj_id' => $this->djId,
+            ':track_count' => $trackCount,
+            ':source' => $this->sourceLabel,
+        ]);
     }
 }

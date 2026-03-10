@@ -156,7 +156,7 @@ try {
     <select id="djSort">
       <option value="popularity">Popularity</option>
       <?php if ($bpmAccessEnabled): ?>
-        <option value="bpm">BPM (Low to High)</option>
+        <option value="bpm">BPM (Low to High) [Premium]</option>
       <?php endif; ?>
       <option value="last">Last Requested</option>
       <option value="title">Title</option>
@@ -368,6 +368,7 @@ window.DJ_CONFIG = {
   eventDate: "<?= htmlspecialchars($event['event_date'] ?? '') ?>",
   eventState: "<?= htmlspecialchars($event['event_state']) ?>",
   isAdmin: <?= is_admin() ? 'true' : 'false' ?>,
+  canManualMatch: <?= $bpmAccessEnabled ? 'true' : 'false' ?>,
   bpmAccessEnabled: <?= $bpmAccessEnabled ? 'true' : 'false' ?>,
   tipsBoostVisible: <?= $tipsBoostVisible ? 'true' : 'false' ?>,
   pollsPremiumEnabled: <?= $pollsPremiumEnabled ? 'true' : 'false' ?>,
@@ -510,7 +511,7 @@ window.DJ_CONFIG = {
 <div id="manualMatchModal" class="support-modal hidden">
   <div class="support-modal-content manual-match-modal-content">
     <div class="mood-modal-header">
-      <h3>🎯 Admin Metadata Match</h3>
+      <h3>🎯 Metadata Match</h3>
       <button id="closeManualMatchModal" type="button">✕</button>
     </div>
     <div class="manual-match-body">

@@ -6,6 +6,10 @@ require_once APP_ROOT . '/BPM/bpm_matching/matching.php';
 
 $db = db();
 
+// Product policy: fuzzy queue enrichment retired for performance.
+echo "Queue worker retired: fuzzy enrichment is permanently disabled.\n";
+exit(0);
+
 function settingEnabledQueue(PDO $db, string $key, bool $default = false): bool
 {
     try {

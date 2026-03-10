@@ -8,9 +8,10 @@ error_reporting(E_ALL);
 require_once __DIR__ . '/../../app/bootstrap.php';
 require_dj_login();
 
-if (!is_admin()) {
+$db = db();
+if (!bpmCurrentUserHasAccess($db)) {
     http_response_code(403);
-    echo json_encode(['ok' => false, 'error' => 'Admin only']);
+    echo json_encode(['ok' => false, 'error' => 'Premium feature']);
     exit;
 }
 
@@ -22,8 +23,6 @@ if ($eventUuid === '' || $trackKey === '') {
     echo json_encode(['ok' => false, 'error' => 'Missing event or track']);
     exit;
 }
-
-$db = db();
 
 $eventStmt = $db->prepare(
     "SELECT id FROM events WHERE uuid = ? AND user_id = ? LIMIT 1"
@@ -406,6 +405,86 @@ usort($scored, static function (array $a, array $b): int {
 
 $scored = array_slice($scored, 0, $manualMode ? 80 : 100);
 
+$djId = (int)($_SESSION['dj_id'] ?? 0);
+$ownedHashSet = [];
+if ($djId > 0 && !empty($scored)) {
+    $candidateHashes = [];
+    foreach ($scored as $row) {
+        $h = candidateTrackHash((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
+        if ($h !== '') {
+            $candidateHashes[$h] = true;
+        }
+    }
+
+    if (!empty($candidateHashes)) {
+        $hashes = array_keys($candidateHashes);
+        $in = implode(',', array_fill(0, count($hashes), '?'));
+        $ownStmt = $db->prepare("
+            SELECT normalized_hash
+            FROM dj_tracks
+            WHERE dj_id = ?
+              AND normalized_hash IN ($in)
+        ");
+        $ownStmt->execute(array_merge([$djId], $hashes));
+        foreach ($ownStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $h = trim((string)($r['normalized_hash'] ?? ''));
+            if ($h !== '') {
+                $ownedHashSet[$h] = true;
+            }
+        }
+    }
+}
+
+$ownedRows = [];
+$globalRows = [];
+foreach ($scored as $row) {
+    $hash = candidateTrackHash((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
+    $isOwned = ($hash !== '' && isset($ownedHashSet[$hash])) ? 1 : 0;
+    $row['candidate_hash'] = $hash;
+    $row['is_owned'] = $isOwned;
+    if ($isOwned === 1) {
+        $ownedRows[] = $row;
+    } else {
+        $globalRows[] = $row;
+    }
+}
+
+// Prevent one owned library track from appearing as many "owned" metadata variants.
+// Keep only the best-scored candidate per normalized artist/title hash.
+if (!empty($ownedRows)) {
+    $ownedByHash = [];
+    foreach ($ownedRows as $row) {
+        $h = (string)($row['candidate_hash'] ?? '');
+        if ($h === '') {
+            $h = '__nohash__' . (string)($row['id'] ?? '');
+        }
+        if (!isset($ownedByHash[$h])) {
+            $ownedByHash[$h] = $row;
+            continue;
+        }
+        $curr = $ownedByHash[$h];
+        $currScore = (float)($curr['match_score'] ?? 0);
+        $nextScore = (float)($row['match_score'] ?? 0);
+        if ($nextScore > $currScore) {
+            $ownedByHash[$h] = $row;
+            continue;
+        }
+        if ($nextScore === $currScore && (int)($row['id'] ?? 0) > (int)($curr['id'] ?? 0)) {
+            $ownedByHash[$h] = $row;
+        }
+    }
+    $ownedRows = array_values($ownedByHash);
+}
+
+$scope = 'library';
+$scopeMessage = 'Showing matches from your DJ library.';
+$finalRows = $ownedRows;
+if (empty($finalRows)) {
+    $scope = 'global';
+    $scopeMessage = 'No matches found in your DJ library. Showing global metadata candidates (not owned).';
+    $finalRows = $globalRows;
+}
+
 echo json_encode([
     'ok' => true,
     'request' => [
@@ -414,5 +493,23 @@ echo json_encode([
         'song_title' => $baseTitle,
         'artist' => $baseArtist,
     ],
-    'rows' => $scored,
+    'scope' => $scope,
+    'scope_message' => $scopeMessage,
+    'library_candidate_count' => count($ownedRows),
+    'global_candidate_count' => count($globalRows),
+    'rows' => $finalRows,
 ], JSON_UNESCAPED_UNICODE);
+
+function candidateTrackHash(string $title, string $artist): string
+{
+    $title = mb_strtolower($title, 'UTF-8');
+    $artist = mb_strtolower($artist, 'UTF-8');
+    $title = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $title);
+    $artist = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $artist);
+    $title = preg_replace('/\s+/u', ' ', trim((string)$title));
+    $artist = preg_replace('/\s+/u', ' ', trim((string)$artist));
+    if ($title === '' && $artist === '') {
+        return '';
+    }
+    return hash('sha256', $artist . '|' . $title);
+}

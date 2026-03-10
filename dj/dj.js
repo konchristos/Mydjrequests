@@ -12,6 +12,7 @@ const SPOTIFY_SYNC_MS = 30000;
 const TIPS_BOOST_VISIBLE = !!DJ_CONFIG.tipsBoostVisible;
 const POLLS_PREMIUM_ENABLED = !!DJ_CONFIG.pollsPremiumEnabled;
 const IS_ADMIN = !!DJ_CONFIG.isAdmin;
+const CAN_MANUAL_MATCH = !!(DJ_CONFIG.canManualMatch ?? DJ_CONFIG.bpmAccessEnabled);
 const SPOTIFY_SYNC_ENABLED = !!DJ_CONFIG.spotifySyncEnabled;
 const REQUESTS_OPEN_FOR_PATRONS = (EVENT_STATE === "upcoming" || EVENT_STATE === "live");
 const EVENT_IS_ENDED = (EVENT_STATE === "ended");
@@ -324,18 +325,28 @@ async function loadManualMatchCandidates(track, query = "") {
     }
 
     const rows = Array.isArray(data.rows) ? data.rows : [];
+    const scope = String(data.scope || "");
+    const scopeMessage = String(data.scope_message || "");
     if (!rows.length) {
       statusEl.textContent = "No candidates found.";
       return;
     }
 
-    statusEl.textContent = `${rows.length} candidates found`;
+    if (scope === "library") {
+      statusEl.textContent = `${rows.length} library candidates found.`;
+    } else if (scope === "global") {
+      statusEl.textContent = `${rows.length} global candidates found. ${scopeMessage || "These tracks are not in your library."}`;
+    } else {
+      statusEl.textContent = `${rows.length} candidates found`;
+    }
+
     resultsEl.innerHTML = rows.map((row) => `
       <div class="manual-match-item">
         <div class="manual-match-item-main">
           <div class="manual-match-title">${escapeHtml(row.title || "Unknown title")}</div>
           <div class="manual-match-artist">${escapeHtml(row.artist || "Unknown artist")}</div>
           <div class="manual-match-meta">${escapeHtml(formatManualMatchRow(row))}</div>
+          <div class="manual-match-meta ${Number(row.is_owned || 0) === 1 ? "manual-match-owned" : "manual-match-missing"}">${Number(row.is_owned || 0) === 1 ? "✓ In your library" : "✕ Global metadata (not in your library)"}</div>
           <div class="manual-match-score">Score: ${Number(row.match_score || 0).toFixed(2)}</div>
         </div>
         <button
@@ -392,7 +403,7 @@ async function applyManualMatch(bpmTrackId) {
         bpm: applied.bpm ?? r.bpm,
         musical_key: applied.musical_key ?? r.musical_key,
         release_year: applied.release_year ?? r.release_year,
-        manual_owned: 1,
+        manual_owned: data.owned_marked ? 1 : Number(r.manual_owned || 0),
       };
     });
 
@@ -410,7 +421,7 @@ async function applyManualMatch(bpmTrackId) {
 }
 
 function openManualMatchModal(track) {
-  if (!IS_ADMIN) return;
+  if (!CAN_MANUAL_MATCH) return;
 
   const modal = document.getElementById("manualMatchModal");
   const metaEl = document.getElementById("manualMatchTrackMeta");
@@ -886,7 +897,7 @@ case "unblock":
   setDjThreadOpen(false);
   switchMessagePrimaryView("chats");
 
-  if (IS_ADMIN) {
+  if (CAN_MANUAL_MATCH) {
     const manualMatchModal = document.getElementById("manualMatchModal");
     const closeManualMatchBtn = document.getElementById("closeManualMatchModal");
     const manualMatchSearchBtn = document.getElementById("manualMatchSearchBtn");
@@ -1147,7 +1158,7 @@ const trackKey = row.track_key;
       ${row.album_art ? `<img src="${row.album_art}" alt="">` : ``}
       <div class="req-meta">
         <div class="req-title">
-  <span class="${isOwned ? 'owned-track' : 'missing-track'}" title="${isOwned ? 'In your library' : 'Not in your library'}">${isOwned ? '✔' : '❌'}</span>
+  <span class="${isOwned ? 'owned-track' : 'missing-track'}" title="${isOwned ? 'In your library' : 'Not in your library'}">${isOwned ? '✓' : '✕'}</span>
   ${row.song_title}
   ${(row.boost_count || 0) > 0
     ? `<span class="boost-badge">🚀</span>`
@@ -1177,7 +1188,7 @@ ${expandable ? `<button type="button" class="request-expand-btn" aria-label="Sho
       loadTrackPanel(row);
     };
 
-    if (IS_ADMIN) {
+    if (CAN_MANUAL_MATCH) {
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         document.querySelectorAll(".request-row").forEach(r => r.classList.remove("active"));

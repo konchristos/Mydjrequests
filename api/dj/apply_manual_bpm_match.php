@@ -13,9 +13,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-if (!is_admin()) {
+$db = db();
+if (!bpmCurrentUserHasAccess($db)) {
     http_response_code(403);
-    echo json_encode(['ok' => false, 'error' => 'Admin only']);
+    echo json_encode(['ok' => false, 'error' => 'Premium feature']);
     exit;
 }
 
@@ -30,7 +31,6 @@ if ($eventUuid === '' || $trackKey === '' || $bpmTrackId <= 0) {
     exit;
 }
 
-$db = db();
 ensureDjOwnedTrackOverridesTable($db);
 
 $eventStmt = $db->prepare(
@@ -86,12 +86,29 @@ $targetSpotifyIds = array_keys($targetSpotifyIds);
 $hasSpotifyIds = !empty($targetSpotifyIds);
 $spotifyTrackId = $hasSpotifyIds ? (string)$targetSpotifyIds[0] : '';
 
-$bpmStmt = $db->prepare("SELECT id, bpm, key_text, year FROM bpm_test_tracks WHERE id = ? LIMIT 1");
+$bpmStmt = $db->prepare("SELECT id, title, artist, bpm, key_text, year FROM bpm_test_tracks WHERE id = ? LIMIT 1");
 $bpmStmt->execute([$bpmTrackId]);
 $bpm = $bpmStmt->fetch(PDO::FETCH_ASSOC);
 if (!$bpm) {
     echo json_encode(['ok' => false, 'error' => 'Selected BPM track not found']);
     exit;
+}
+
+$selectedOwned = false;
+$selectedHash = mdjrCandidateTrackHash(
+    (string)($bpm['title'] ?? ''),
+    (string)($bpm['artist'] ?? '')
+);
+if ($selectedHash !== '') {
+    $ownCheck = $db->prepare("
+        SELECT id
+        FROM dj_tracks
+        WHERE dj_id = ?
+          AND normalized_hash = ?
+        LIMIT 1
+    ");
+    $ownCheck->execute([(int)($_SESSION['dj_id'] ?? 0), $selectedHash]);
+    $selectedOwned = (bool)$ownCheck->fetchColumn();
 }
 
 $bpmValue = (isset($bpm['bpm']) && is_numeric($bpm['bpm']) && (float)$bpm['bpm'] > 0)
@@ -192,11 +209,13 @@ try {
                 ], JSON_UNESCAPED_UNICODE),
             ]);
 
-            $ownStmt->execute([
-                ':dj_id' => (int)($_SESSION['dj_id'] ?? 0),
-                ':spotify_track_id' => $sid,
-                ':source' => 'manual_metadata_match',
-            ]);
+            if ($selectedOwned) {
+                $ownStmt->execute([
+                    ':dj_id' => (int)($_SESSION['dj_id'] ?? 0),
+                    ':spotify_track_id' => $sid,
+                    ':source' => 'manual_metadata_match',
+                ]);
+            }
 
             $params = [':spotify_track_id' => $sid];
             if ($bpmValue !== null) {
@@ -254,13 +273,13 @@ try {
                 :bpm,
                 :musical_key,
                 :release_year,
-                1
+                :manual_owned
             )
             ON DUPLICATE KEY UPDATE
                 bpm = VALUES(bpm),
                 musical_key = VALUES(musical_key),
                 release_year = VALUES(release_year),
-                manual_owned = 1,
+                manual_owned = VALUES(manual_owned),
                 updated_at = CURRENT_TIMESTAMP
         ");
         $ovStmt->execute([
@@ -270,6 +289,7 @@ try {
             ':bpm' => $bpmValue,
             ':musical_key' => $appliedKey,
             ':release_year' => $yearValue,
+            ':manual_owned' => $selectedOwned ? 1 : 0,
         ]);
     }
 
@@ -280,7 +300,7 @@ try {
         'spotify_track_id' => $spotifyTrackId,
         'applied_spotify_track_ids' => $targetSpotifyIds,
         'non_spotify_override' => !$hasSpotifyIds,
-        'owned_marked' => true,
+        'owned_marked' => $selectedOwned,
         'applied' => [
             'bpm' => $bpmValue,
             'musical_key' => $appliedKey,
@@ -365,4 +385,18 @@ function mdjrCoreTitle(string $title): string
     $title = preg_replace('/[^\\p{L}\\p{N}\\s]/u', ' ', $title);
     $title = preg_replace('/\\s+/u', ' ', trim($title));
     return (string)$title;
+}
+
+function mdjrCandidateTrackHash(string $title, string $artist): string
+{
+    $title = mb_strtolower($title, 'UTF-8');
+    $artist = mb_strtolower($artist, 'UTF-8');
+    $title = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $title);
+    $artist = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $artist);
+    $title = preg_replace('/\s+/u', ' ', trim((string)$title));
+    $artist = preg_replace('/\s+/u', ' ', trim((string)$artist));
+    if ($title === '' && $artist === '') {
+        return '';
+    }
+    return hash('sha256', $artist . '|' . $title);
 }
