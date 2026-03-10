@@ -48,6 +48,7 @@ const moodEl = document.getElementById("djMood");
 let insightsCache = null;
 const patronActivityCache = new Map();
 let topPatronExpandedToken = null;
+let librarySummaryCache = null;
 
 /* ===============================
    MESSAGE STATE
@@ -966,6 +967,7 @@ async function loadDjRequests() {
 
     if (data.ok && Array.isArray(data.rows)) {
       djRequestsCache = data.rows;
+      syncLibrarySummaryFromRows(data.rows);
       updateRequestTabCounts();   // ✅ ADD
       renderDjRequests();
     }
@@ -1051,6 +1053,11 @@ document.addEventListener("DOMContentLoaded", () => {
 ========================================= */
 function renderDjRequests() {
   if (!listEl) return;
+
+  // Keep summary in sync with the same in-memory rows used for rendering.
+  // This covers local updates (e.g. manual match apply) before next poll.
+  const summaryRows = groupDjRows(djRequestsCache);
+  syncLibrarySummaryFromRows(summaryRows);
 
   let rows = [...djRequestsCache];
 
@@ -2695,6 +2702,67 @@ async function loadDjInsights() {
   }
 }
 
+function renderLibrarySummary(data) {
+  const ownedEl = document.getElementById("djLibraryOwnedCount");
+  const missingEl = document.getElementById("djLibraryMissingCount");
+  const totalEl = document.getElementById("djLibrarySummaryRequests");
+  if (!ownedEl || !missingEl || !totalEl) return;
+
+  const owned = Number(data?.owned_tracks || 0);
+  const missing = Number(data?.missing_tracks || 0);
+  const totalRequests = Number(data?.total_requests || 0);
+
+  ownedEl.textContent = String(owned);
+  missingEl.textContent = String(missing);
+  totalEl.textContent = `${totalRequests} total requests`;
+}
+
+function syncLibrarySummaryFromRows(rows) {
+  if (!Array.isArray(rows)) return;
+
+  let owned = 0;
+  let missing = 0;
+  let totalRequests = 0;
+
+  rows.forEach((row) => {
+    totalRequests += Number(row?.request_count || 0);
+    const isOwned = Number(row?.dj_track_id || 0) > 0 || Number(row?.manual_owned || 0) === 1;
+    if (isOwned) {
+      owned += 1;
+    } else {
+      missing += 1;
+    }
+  });
+
+  const payload = {
+    owned_tracks: owned,
+    missing_tracks: missing,
+    total_requests: totalRequests,
+  };
+  librarySummaryCache = payload;
+  renderLibrarySummary(payload);
+}
+
+async function loadEventLibrarySummary() {
+  if (!EVENT_ID) return;
+
+  const hasSummaryUi =
+    document.getElementById("djLibraryOwnedCount") &&
+    document.getElementById("djLibraryMissingCount") &&
+    document.getElementById("djLibrarySummaryRequests");
+  if (!hasSummaryUi) return;
+
+  try {
+    const res = await fetch(`/api/dj/event_library_summary.php?event_id=${encodeURIComponent(String(EVENT_ID))}`);
+    const data = await res.json();
+    if (!data.ok) return;
+    librarySummaryCache = data;
+    renderLibrarySummary(data);
+  } catch (err) {
+    console.warn("Library summary load failed", err);
+  }
+}
+
 /* =========================================
    POLLING
 ========================================= */
@@ -2780,6 +2848,21 @@ document.addEventListener("visibilitychange", () => {
     runPollTask("messages", loadDjMessages);
     runPollTask("insights", loadDjInsights);
   }
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  const ownedBtn = document.getElementById("djDownloadOwnedPlaylist");
+  const missingBtn = document.getElementById("djDownloadMissingTracks");
+
+  ownedBtn?.addEventListener("click", () => {
+    if (!EVENT_ID) return;
+    window.location.href = `/api/dj/export_event_playlist.php?event_id=${encodeURIComponent(String(EVENT_ID))}&type=owned`;
+  });
+
+  missingBtn?.addEventListener("click", () => {
+    if (!EVENT_ID) return;
+    window.location.href = `/api/dj/export_event_playlist.php?event_id=${encodeURIComponent(String(EVENT_ID))}&type=missing`;
+  });
 });
 
 if (SPOTIFY_SYNC_ENABLED) {

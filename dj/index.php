@@ -271,6 +271,26 @@ try {
 
 </div>
   
+  <div class="dj-library-summary-card">
+    <div class="dj-library-summary-head">
+      <h3>Library Match Summary</h3>
+      <div id="djLibrarySummaryRequests" class="dj-library-summary-requests">0 total requests</div>
+    </div>
+    <div class="dj-library-summary-metrics">
+      <div class="dj-library-metric owned">
+        <div class="label">✔ Owned Tracks</div>
+        <div id="djLibraryOwnedCount" class="value">0</div>
+      </div>
+      <div class="dj-library-metric missing">
+        <div class="label">❌ Missing Tracks</div>
+        <div id="djLibraryMissingCount" class="value">0</div>
+      </div>
+    </div>
+    <div class="dj-library-summary-actions">
+      <button id="djDownloadOwnedPlaylist" class="reply-btn primary" type="button">Download Playlist</button>
+      <button id="djDownloadMissingTracks" class="reply-btn secondary" type="button">Download Missing Tracks</button>
+    </div>
+  </div>
 
   <!-- Track Panel -->
   <div id="trackPanel">

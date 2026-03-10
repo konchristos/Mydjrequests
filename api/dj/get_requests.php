@@ -353,6 +353,116 @@ if ($djId > 0 && !empty($rows) && function_exists('trackIdentityNormalisedHash')
     // produced false positives (one owned track marking unrelated requests owned).
 }
 
+// Controlled fallback: for unresolved rows only, match by same artist plus a
+// normalized core title/artist hash (version/remaster/mix text removed).
+// This keeps "I own another version" behavior without broad cross-artist drift.
+if ($djId > 0 && !empty($rows)) {
+    $unresolved = [];
+    $artistSeeds = [];
+
+    foreach ($rows as $idx => $r) {
+        $isOwned = (isset($r['manual_owned']) && (int)$r['manual_owned'] === 1)
+            || (isset($r['dj_track_id']) && is_numeric($r['dj_track_id']) && (int)$r['dj_track_id'] > 0);
+        if ($isOwned) {
+            continue;
+        }
+
+        $artist = trim((string)($r['artist'] ?? ''));
+        $coreHash = mdjr_relaxed_track_hash(
+            (string)($r['song_title'] ?? ''),
+            (string)($r['artist'] ?? '')
+        );
+        if ($artist === '' || $coreHash === '') {
+            continue;
+        }
+
+        $unresolved[$idx] = [
+            'artist' => $artist,
+            'core_hash' => $coreHash,
+        ];
+        $artistSeeds[$artist] = true;
+    }
+
+    if (!empty($unresolved) && !empty($artistSeeds)) {
+        try {
+            $artists = array_values(array_keys($artistSeeds));
+            $in = implode(',', array_fill(0, count($artists), '?'));
+            $sql = "
+                SELECT id, title, artist
+                FROM dj_tracks
+                WHERE dj_id = ?
+                  AND artist IN ($in)
+            ";
+            $stmt = $db->prepare($sql);
+            $stmt->execute(array_merge([$djId], $artists));
+
+            $ownedByCoreHash = [];
+            $ownedCoreTitlesByArtist = [];
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $drow) {
+                $artistCore = mdjr_core_artist((string)($drow['artist'] ?? ''));
+                $h = mdjr_relaxed_track_hash(
+                    (string)($drow['title'] ?? ''),
+                    (string)($drow['artist'] ?? '')
+                );
+                if ($h !== '' && !isset($ownedByCoreHash[$h])) {
+                    $ownedByCoreHash[$h] = (int)($drow['id'] ?? 0);
+                }
+                $titleCore = mdjr_core_title((string)($drow['title'] ?? ''));
+                if ($artistCore !== '' && $titleCore !== '') {
+                    if (!isset($ownedCoreTitlesByArtist[$artistCore])) {
+                        $ownedCoreTitlesByArtist[$artistCore] = [];
+                    }
+                    $ownedCoreTitlesByArtist[$artistCore][] = [
+                        'id' => (int)($drow['id'] ?? 0),
+                        'title_core' => $titleCore,
+                    ];
+                }
+            }
+
+            foreach ($unresolved as $idx => $meta) {
+                $h = (string)($meta['core_hash'] ?? '');
+                if ($h !== '' && !empty($ownedByCoreHash[$h])) {
+                    $rows[$idx]['dj_track_id'] = (int)$ownedByCoreHash[$h];
+                    continue;
+                }
+
+                $artistCore = mdjr_core_artist((string)($meta['artist'] ?? ''));
+                $rowTitleCore = mdjr_core_title((string)($rows[$idx]['song_title'] ?? ''));
+                if ($artistCore === '' || $rowTitleCore === '' || empty($ownedCoreTitlesByArtist[$artistCore])) {
+                    continue;
+                }
+
+                $bestId = 0;
+                $bestScore = 0.0;
+                foreach ($ownedCoreTitlesByArtist[$artistCore] as $owned) {
+                    $ownedTitleCore = (string)($owned['title_core'] ?? '');
+                    if ($ownedTitleCore === '') {
+                        continue;
+                    }
+
+                    $containsHit = (str_contains($ownedTitleCore, $rowTitleCore) || str_contains($rowTitleCore, $ownedTitleCore));
+                    similar_text($rowTitleCore, $ownedTitleCore, $pct);
+                    $score = (float)$pct;
+                    if ($containsHit) {
+                        $score = max($score, 92.0);
+                    }
+
+                    if ($score > $bestScore) {
+                        $bestScore = $score;
+                        $bestId = (int)($owned['id'] ?? 0);
+                    }
+                }
+
+                if ($bestId > 0 && $bestScore >= 70.0) {
+                    $rows[$idx]['dj_track_id'] = $bestId;
+                }
+            }
+        } catch (Throwable $e) {
+            // Non-blocking: keep response from primary ownership path.
+        }
+    }
+}
+
 /*
 |--------------------------------------------------------------------------
 | Fast BPM/Key enrichment (NO fuzzy)
