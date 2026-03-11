@@ -221,7 +221,7 @@ $eventOverrideTitleMap = [];
 if ($djId > 0 && !empty($rows)) {
     try {
         $ovStmt = $db->prepare("
-            SELECT override_key, bpm, musical_key, release_year, manual_owned
+            SELECT override_key, bpm_track_id, bpm, musical_key, release_year, manual_owned, manual_preferred
             FROM dj_event_track_overrides
             WHERE dj_id = ?
               AND event_id = ?
@@ -387,11 +387,23 @@ if ($djId > 0 && !empty($rows)) {
         try {
             $artists = array_values(array_keys($artistSeeds));
             $in = implode(',', array_fill(0, count($artists), '?'));
+            $ratingExpr = mdjr_dj_tracks_rating_expr($db);
             $sql = "
-                SELECT id, title, artist
-                FROM dj_tracks
-                WHERE dj_id = ?
+                SELECT
+                    d.id,
+                    d.title,
+                    d.artist,
+                    {$ratingExpr} AS rating_value,
+                    MAX(CASE WHEN dpp.playlist_id IS NULL THEN 0 ELSE 1 END) AS is_preferred
+                FROM dj_tracks d
+                LEFT JOIN dj_playlist_tracks dpt
+                    ON dpt.dj_track_id = d.id
+                LEFT JOIN dj_preferred_playlists dpp
+                    ON dpp.dj_id = d.dj_id
+                   AND dpp.playlist_id = dpt.playlist_id
+                WHERE d.dj_id = ?
                   AND artist IN ($in)
+                GROUP BY d.id, d.title, d.artist
             ";
             $stmt = $db->prepare($sql);
             $stmt->execute(array_merge([$djId], $artists));
@@ -400,12 +412,24 @@ if ($djId > 0 && !empty($rows)) {
             $ownedCoreTitlesByArtist = [];
             foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $drow) {
                 $artistCore = mdjr_core_artist((string)($drow['artist'] ?? ''));
+                $ratingValue = isset($drow['rating_value']) && is_numeric($drow['rating_value'])
+                    ? (float)$drow['rating_value']
+                    : 0.0;
+                $isPreferred = !empty($drow['is_preferred']) ? 1 : 0;
                 $h = mdjr_relaxed_track_hash(
                     (string)($drow['title'] ?? ''),
                     (string)($drow['artist'] ?? '')
                 );
-                if ($h !== '' && !isset($ownedByCoreHash[$h])) {
-                    $ownedByCoreHash[$h] = (int)($drow['id'] ?? 0);
+                if ($h !== '') {
+                    $candidate = [
+                        'id' => (int)($drow['id'] ?? 0),
+                        'title_core' => mdjr_core_title((string)($drow['title'] ?? '')),
+                        'rating' => $ratingValue,
+                        'is_preferred' => $isPreferred,
+                    ];
+                    if (!isset($ownedByCoreHash[$h]) || mdjr_is_better_resolver_candidate($candidate, $ownedByCoreHash[$h])) {
+                        $ownedByCoreHash[$h] = $candidate;
+                    }
                 }
                 $titleCore = mdjr_core_title((string)($drow['title'] ?? ''));
                 if ($artistCore !== '' && $titleCore !== '') {
@@ -415,6 +439,8 @@ if ($djId > 0 && !empty($rows)) {
                     $ownedCoreTitlesByArtist[$artistCore][] = [
                         'id' => (int)($drow['id'] ?? 0),
                         'title_core' => $titleCore,
+                        'rating' => $ratingValue,
+                        'is_preferred' => $isPreferred,
                     ];
                 }
             }
@@ -422,7 +448,7 @@ if ($djId > 0 && !empty($rows)) {
             foreach ($unresolved as $idx => $meta) {
                 $h = (string)($meta['core_hash'] ?? '');
                 if ($h !== '' && !empty($ownedByCoreHash[$h])) {
-                    $rows[$idx]['dj_track_id'] = (int)$ownedByCoreHash[$h];
+                    $rows[$idx]['dj_track_id'] = (int)($ownedByCoreHash[$h]['id'] ?? 0);
                     continue;
                 }
 
@@ -432,8 +458,7 @@ if ($djId > 0 && !empty($rows)) {
                     continue;
                 }
 
-                $bestId = 0;
-                $bestScore = 0.0;
+                $best = null;
                 foreach ($ownedCoreTitlesByArtist[$artistCore] as $owned) {
                     $ownedTitleCore = (string)($owned['title_core'] ?? '');
                     if ($ownedTitleCore === '') {
@@ -447,14 +472,24 @@ if ($djId > 0 && !empty($rows)) {
                         $score = max($score, 92.0);
                     }
 
-                    if ($score > $bestScore) {
-                        $bestScore = $score;
-                        $bestId = (int)($owned['id'] ?? 0);
+                    if ($score < 70.0) {
+                        continue;
+                    }
+
+                    $candidate = [
+                        'id' => (int)($owned['id'] ?? 0),
+                        'title_core' => $ownedTitleCore,
+                        'rating' => isset($owned['rating']) && is_numeric($owned['rating']) ? (float)$owned['rating'] : 0.0,
+                        'is_preferred' => !empty($owned['is_preferred']) ? 1 : 0,
+                    ];
+
+                    if ($best === null || mdjr_is_better_resolver_candidate($candidate, $best)) {
+                        $best = $candidate;
                     }
                 }
 
-                if ($bestId > 0 && $bestScore >= 70.0) {
-                    $rows[$idx]['dj_track_id'] = $bestId;
+                if (is_array($best) && (int)($best['id'] ?? 0) > 0) {
+                    $rows[$idx]['dj_track_id'] = (int)$best['id'];
                 }
             }
         } catch (Throwable $e) {
@@ -589,6 +624,9 @@ foreach ($rows as &$row) {
     }
 
     if (is_array($ov)) {
+        if (isset($ov['bpm_track_id']) && is_numeric($ov['bpm_track_id']) && (int)$ov['bpm_track_id'] > 0) {
+            $row['selected_bpm_track_id'] = (int)$ov['bpm_track_id'];
+        }
         if (isset($ov['bpm']) && is_numeric($ov['bpm']) && (float)$ov['bpm'] > 0) {
             $row['bpm'] = (float)$ov['bpm'];
         }
@@ -601,6 +639,9 @@ foreach ($rows as &$row) {
         }
         if ((int)($ov['manual_owned'] ?? 0) === 1) {
             $row['manual_owned'] = 1;
+        }
+        if ((int)($ov['manual_preferred'] ?? 0) === 1) {
+            $row['preferred_selected'] = 1;
         }
     }
 
@@ -647,6 +688,86 @@ foreach ($rows as &$row) {
 }
 unset($row);
 
+// Preferred tile badge:
+// 1) explicit manual_preferred persists highest priority,
+// 2) fallback: derive from selected_bpm_track_id hash -> preferred playlist membership.
+$selectedBpmIds = [];
+foreach ($rows as $r) {
+    $sid = isset($r['selected_bpm_track_id']) && is_numeric($r['selected_bpm_track_id']) ? (int)$r['selected_bpm_track_id'] : 0;
+    if ($sid > 0) {
+        $selectedBpmIds[$sid] = true;
+    }
+}
+
+$preferredSelectedBpmIds = [];
+if ($djId > 0 && !empty($selectedBpmIds)) {
+    try {
+        $bpmIds = array_keys($selectedBpmIds);
+        $in = implode(',', array_fill(0, count($bpmIds), '?'));
+        $bpmStmt = $db->prepare("
+            SELECT id, title, artist
+            FROM bpm_test_tracks
+            WHERE id IN ($in)
+        ");
+        $bpmStmt->execute($bpmIds);
+
+        $hashToBpmIds = [];
+        foreach ($bpmStmt->fetchAll(PDO::FETCH_ASSOC) as $bpmRow) {
+            $bid = isset($bpmRow['id']) && is_numeric($bpmRow['id']) ? (int)$bpmRow['id'] : 0;
+            if ($bid <= 0) {
+                continue;
+            }
+            $h = mdjr_candidate_track_hash(
+                (string)($bpmRow['title'] ?? ''),
+                (string)($bpmRow['artist'] ?? '')
+            );
+            if ($h === '') {
+                continue;
+            }
+            if (!isset($hashToBpmIds[$h])) {
+                $hashToBpmIds[$h] = [];
+            }
+            $hashToBpmIds[$h][] = $bid;
+        }
+
+        if (!empty($hashToBpmIds)) {
+            $hashes = array_keys($hashToBpmIds);
+            $hin = implode(',', array_fill(0, count($hashes), '?'));
+            $prefStmt = $db->prepare("
+                SELECT DISTINCT d.normalized_hash
+                FROM dj_tracks d
+                INNER JOIN dj_playlist_tracks dpt
+                    ON dpt.dj_track_id = d.id
+                INNER JOIN dj_preferred_playlists dpp
+                    ON dpp.dj_id = d.dj_id
+                   AND dpp.playlist_id = dpt.playlist_id
+                WHERE d.dj_id = ?
+                  AND d.normalized_hash IN ($hin)
+            ");
+            $prefStmt->execute(array_merge([$djId], $hashes));
+            foreach ($prefStmt->fetchAll(PDO::FETCH_COLUMN) as $hv) {
+                $h = trim((string)$hv);
+                if ($h === '' || empty($hashToBpmIds[$h])) {
+                    continue;
+                }
+                foreach ($hashToBpmIds[$h] as $bid) {
+                    $preferredSelectedBpmIds[(int)$bid] = true;
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        $preferredSelectedBpmIds = [];
+    }
+}
+
+foreach ($rows as &$row) {
+    $manualPreferred = isset($row['preferred_selected']) && (int)$row['preferred_selected'] === 1 ? 1 : 0;
+    $selectedBpmId = isset($row['selected_bpm_track_id']) && is_numeric($row['selected_bpm_track_id']) ? (int)$row['selected_bpm_track_id'] : 0;
+    $derivedPreferred = ($selectedBpmId > 0 && isset($preferredSelectedBpmIds[$selectedBpmId])) ? 1 : 0;
+    $row['preferred_selected'] = ($manualPreferred === 1 || $derivedPreferred === 1) ? 1 : 0;
+}
+unset($row);
+
 echo json_encode([
     'ok'   => true,
     'rows' => $rows
@@ -670,6 +791,20 @@ function mdjr_relaxed_track_hash(string $title, string $artist): string
         return '';
     }
 
+    return hash('sha256', $artist . '|' . $title);
+}
+
+function mdjr_candidate_track_hash(string $title, string $artist): string
+{
+    $title = mb_strtolower($title, 'UTF-8');
+    $artist = mb_strtolower($artist, 'UTF-8');
+    $title = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $title);
+    $artist = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $artist);
+    $title = preg_replace('/\s+/u', ' ', trim((string)$title));
+    $artist = preg_replace('/\s+/u', ' ', trim((string)$artist));
+    if ($title === '' && $artist === '') {
+        return '';
+    }
     return hash('sha256', $artist . '|' . $title);
 }
 
@@ -738,6 +873,67 @@ function mdjr_title_tokens(string $coreTitle): array
     }
 
     return array_keys($out);
+}
+
+function mdjr_dj_tracks_rating_expr(PDO $db): string
+{
+    static $cachedExpr = null;
+    if (is_string($cachedExpr)) {
+        return $cachedExpr;
+    }
+
+    try {
+        $stmt = $db->prepare("
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'dj_tracks'
+        ");
+        $stmt->execute();
+        $cols = array_map(
+            static function ($v): string {
+                return strtolower((string)$v);
+            },
+            $stmt->fetchAll(PDO::FETCH_COLUMN) ?: []
+        );
+    } catch (Throwable $e) {
+        $cols = [];
+    }
+
+    foreach (['rating', 'stars', 'star_rating', 'rekordbox_rating', 'rb_rating', 'rating_raw'] as $col) {
+        if (in_array($col, $cols, true)) {
+            $cachedExpr = "COALESCE(d.{$col}, 0)";
+            return $cachedExpr;
+        }
+    }
+
+    $cachedExpr = "0";
+    return $cachedExpr;
+}
+
+function mdjr_is_better_resolver_candidate(array $a, array $b): bool
+{
+    $aPreferred = !empty($a['is_preferred']) ? 1 : 0;
+    $bPreferred = !empty($b['is_preferred']) ? 1 : 0;
+    if ($aPreferred !== $bPreferred) {
+        return $aPreferred > $bPreferred;
+    }
+
+    $aRating = isset($a['rating']) && is_numeric($a['rating']) ? (float)$a['rating'] : 0.0;
+    $bRating = isset($b['rating']) && is_numeric($b['rating']) ? (float)$b['rating'] : 0.0;
+    $aFive = ($aRating >= 5.0) ? 1 : 0;
+    $bFive = ($bRating >= 5.0) ? 1 : 0;
+    if ($aFive !== $bFive) {
+        return $aFive > $bFive;
+    }
+
+    if ($aRating !== $bRating) {
+        return $aRating > $bRating;
+    }
+
+    $aId = (int)($a['id'] ?? PHP_INT_MAX);
+    $bId = (int)($b['id'] ?? PHP_INT_MAX);
+    return $aId < $bId;
 }
 
 function mdjr_tokens_overlap_strong(array $aTokens, array $bTokens): bool
@@ -834,16 +1030,39 @@ function ensureDjEventTrackOverridesTable(PDO $db): void
             dj_id BIGINT UNSIGNED NOT NULL,
             event_id BIGINT UNSIGNED NOT NULL,
             override_key VARCHAR(512) NOT NULL,
+            bpm_track_id BIGINT UNSIGNED NULL,
             bpm DECIMAL(6,2) NULL,
             musical_key VARCHAR(32) NULL,
             release_year INT NULL,
             manual_owned TINYINT(1) NOT NULL DEFAULT 1,
+            manual_preferred TINYINT(1) NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uq_dj_event_track_overrides (dj_id, event_id, override_key),
             KEY idx_dj_event_track_overrides_event (event_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    try {
+        $stmt = $db->prepare("
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'dj_event_track_overrides'
+        ");
+        $stmt->execute();
+        $cols = [];
+        foreach (($stmt->fetchAll(PDO::FETCH_COLUMN) ?: []) as $col) {
+            $cols[strtolower((string)$col)] = true;
+        }
+        if (empty($cols['bpm_track_id'])) {
+            $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN bpm_track_id BIGINT UNSIGNED NULL AFTER override_key");
+        }
+        if (empty($cols['manual_preferred'])) {
+            $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned");
+        }
+    } catch (Throwable $e) {
+        // non-fatal schema backfill
+    }
 }
 
 function mdjr_override_title_from_key(string $overrideKey): string

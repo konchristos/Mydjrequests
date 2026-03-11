@@ -72,6 +72,11 @@ function processImportJob(PDO $db, array $job): void
         $beforeDjTracksCount = countDjTracks($db, $djId);
 
         $importer = new RekordboxXMLImporter($db, $djId);
+        $jobIdInt = (int)$job['id'];
+        updateJobStage($db, $jobIdInt, 'processing_tracks', 'Processing track collection...');
+        $importer->setProgressCallback(static function (string $stage, string $message) use ($db, $jobIdInt): void {
+            updateJobStage($db, $jobIdInt, $stage, $message);
+        });
         $result = runImporter($importer, $djId, $filePath);
 
         $afterIdentityCount = tableCount($db, 'track_identities');
@@ -92,6 +97,8 @@ function processImportJob(PDO $db, array $job): void
         $done = $db->prepare("
             UPDATE dj_library_import_jobs
             SET status = 'done',
+                stage = 'done',
+                stage_message = 'Import complete.',
                 tracks_processed = :tracks_processed,
                 new_identities = :new_identities,
                 existing_identities = :existing_identities,
@@ -124,6 +131,8 @@ function processImportJob(PDO $db, array $job): void
         $failed = $db->prepare("
             UPDATE dj_library_import_jobs
             SET status = 'failed',
+                stage = 'failed',
+                stage_message = 'Import failed.',
                 error_message = :error_message,
                 finished_at = NOW(),
                 updated_at = NOW()
@@ -164,6 +173,8 @@ function claimQueuedJobForDj(PDO $db, int $jobId, int $djId): ?array
         $upd = $db->prepare("
             UPDATE dj_library_import_jobs
             SET status = 'processing',
+                stage = 'processing_tracks',
+                stage_message = 'Processing track collection...',
                 started_at = NOW(),
                 updated_at = NOW(),
                 error_message = NULL
@@ -190,6 +201,26 @@ function runImporter($importer, int $djId, string $filePath): array
         $result = $importer->import($djId, $filePath);
     }
     return is_array($result) ? $result : [];
+}
+
+function updateJobStage(PDO $db, int $jobId, string $stage, string $message): void
+{
+    if ($jobId <= 0) {
+        return;
+    }
+    $stmt = $db->prepare("
+        UPDATE dj_library_import_jobs
+        SET stage = :stage,
+            stage_message = :stage_message,
+            updated_at = NOW()
+        WHERE id = :id
+        LIMIT 1
+    ");
+    $stmt->execute([
+        ':stage' => mb_substr($stage, 0, 64, 'UTF-8'),
+        ':stage_message' => mb_substr($message, 0, 255, 'UTF-8'),
+        ':id' => $jobId,
+    ]);
 }
 
 function tableCount(PDO $db, string $table): int
@@ -286,6 +317,10 @@ function ensureImportJobsTable(PDO $db): void
             source_type VARCHAR(32) NOT NULL DEFAULT 'rekordbox_xml',
             source_file_path VARCHAR(1024) NOT NULL,
             chunk_upload_id VARCHAR(64) NULL,
+            upload_bytes BIGINT UNSIGNED NULL,
+            stored_bytes BIGINT UNSIGNED NULL,
+            stage VARCHAR(64) NOT NULL DEFAULT 'queued',
+            stage_message VARCHAR(255) NULL,
             tracks_processed INT UNSIGNED NOT NULL DEFAULT 0,
             new_identities INT UNSIGNED NOT NULL DEFAULT 0,
             existing_identities INT UNSIGNED NOT NULL DEFAULT 0,
@@ -302,6 +337,10 @@ function ensureImportJobsTable(PDO $db): void
     ");
 
     ensureImportJobsColumn($db, 'dj_tracks_updated', 'INT UNSIGNED NOT NULL DEFAULT 0');
+    ensureImportJobsColumn($db, 'upload_bytes', 'BIGINT UNSIGNED NULL');
+    ensureImportJobsColumn($db, 'stored_bytes', 'BIGINT UNSIGNED NULL');
+    ensureImportJobsColumn($db, 'stage', "VARCHAR(64) NOT NULL DEFAULT 'queued'");
+    ensureImportJobsColumn($db, 'stage_message', 'VARCHAR(255) NULL');
 }
 
 function ensureImportJobsColumn(PDO $db, string $column, string $ddl): void

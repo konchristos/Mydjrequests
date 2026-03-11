@@ -259,6 +259,7 @@ function groupDjRows(rows) {
       boosters: group.rows.flatMap((r) => Array.isArray(r.boosters) ? r.boosters : []),
       dj_track_id: (group.rows.find((r) => Number(r.dj_track_id || 0) > 0)?.dj_track_id) || primary.dj_track_id || null,
       manual_owned: group.rows.some((r) => Number(r.manual_owned || 0) === 1) ? 1 : Number(primary.manual_owned || 0),
+      preferred_selected: group.rows.some((r) => Number(r.preferred_selected || 0) === 1) ? 1 : Number(primary.preferred_selected || 0),
       track_status: allPlayed ? "played" : (allSkipped ? "skipped" : "active"),
       group_has_played: anyPlayed,
       group_has_skipped: anySkipped,
@@ -295,6 +296,12 @@ function formatManualMatchRow(row) {
   const keyVal = row?.key_text ? String(row.key_text).trim() : '—';
   const yearVal = row?.year ? String(row.year) : '—';
   return `${bpmVal} BPM • ${keyVal} • ${yearVal}`;
+}
+
+function formatManualMatchRating(row) {
+  const val = Number(row?.rating_value ?? 0);
+  if (!Number.isFinite(val) || val <= 0) return "—";
+  return Number.isInteger(val) ? String(val) : val.toFixed(1);
 }
 
 function closeManualMatchModal() {
@@ -341,11 +348,21 @@ async function loadManualMatchCandidates(track, query = "") {
       statusEl.textContent = `${rows.length} candidates found`;
     }
 
-    resultsEl.innerHTML = rows.map((row) => `
-      <div class="manual-match-item">
+    resultsEl.innerHTML = rows.map((row) => {
+      const isPreferred = Number(row.is_preferred || 0) === 1;
+      const playlistBadge = String(row.playlist_badge || "").trim();
+      const isFiveStar = Number(row.is_five_star || 0) === 1;
+      const isSelected = Number(row.is_selected || 0) === 1;
+      return `
+      <div class="manual-match-item ${isSelected ? "manual-match-item-selected" : ""}">
         <div class="manual-match-item-main">
           <div class="manual-match-title">${escapeHtml(row.title || "Unknown title")}</div>
           <div class="manual-match-artist">${escapeHtml(row.artist || "Unknown artist")}</div>
+          <div class="manual-match-badges">
+            ${isPreferred ? '<span class="manual-match-badge manual-match-badge-preferred">Preferred</span>' : ''}
+            ${playlistBadge ? `<span class="manual-match-badge manual-match-badge-folder">${escapeHtml(playlistBadge)}</span>` : ''}
+            ${isFiveStar ? '<span class="manual-match-badge manual-match-badge-stars">★★★★★</span>' : ''}
+          </div>
           <div class="manual-match-meta">${escapeHtml(formatManualMatchRow(row))}</div>
           <div class="manual-match-meta ${Number(row.is_owned || 0) === 1 ? "manual-match-owned" : "manual-match-missing"}">${Number(row.is_owned || 0) === 1 ? "✓ In your library" : "✕ Global metadata (not in your library)"}</div>
           <div class="manual-match-score">Score: ${Number(row.match_score || 0).toFixed(2)}</div>
@@ -354,11 +371,13 @@ async function loadManualMatchCandidates(track, query = "") {
           type="button"
           class="reply-btn primary manual-match-apply-btn"
           data-bpm-id="${Number(row.id || 0)}"
+          data-is-preferred="${isPreferred ? "1" : "0"}"
         >
           Apply
         </button>
       </div>
-    `).join("");
+    `;
+    }).join("");
   } catch (err) {
     statusEl.textContent = err.message || "Failed to search candidates.";
   }
@@ -405,6 +424,8 @@ async function applyManualMatch(bpmTrackId) {
         musical_key: applied.musical_key ?? r.musical_key,
         release_year: applied.release_year ?? r.release_year,
         manual_owned: data.owned_marked ? 1 : Number(r.manual_owned || 0),
+        selected_bpm_track_id: Number(bpmTrackId || 0),
+        preferred_selected: data.selected_preferred ? 1 : Number(r.preferred_selected || 0),
       };
     });
 
@@ -1139,6 +1160,7 @@ el.className = "request-row";
 const isPlayed = row.track_status === "played" || row.group_has_played === true;
 const isSkipped = row.track_status === "skipped" || row.group_has_skipped === true;
 const isOwned = Number(row.dj_track_id || 0) > 0 || Number(row.manual_owned || 0) === 1;
+const isPreferredSelected = Number(row.preferred_selected || 0) === 1;
 const variants = Array.isArray(row.__group_rows) ? row.__group_rows : [];
 const expandable = variants.length > 1;
 
@@ -1172,7 +1194,9 @@ const trackKey = row.track_key;
     : ``}
 </div>
         <div class="req-artist">${row.artist || ""}</div>
-        ${formatBpmKey(row) ? `<div class="req-bpm">${escapeHtml(formatBpmKey(row))}</div>` : ``}
+        ${(formatBpmKey(row) || isPreferredSelected)
+          ? `<div class="req-bpm">${escapeHtml(formatBpmKey(row))}${isPreferredSelected ? `<span class="req-preferred-badge">Preferred</span>` : ``}</div>`
+          : ``}
       </div>
       
       

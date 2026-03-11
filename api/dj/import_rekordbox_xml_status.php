@@ -27,10 +27,15 @@ if ($jobId <= 0) {
 }
 
 $db = db();
+ensureImportJobsTable($db);
 $stmt = $db->prepare("
     SELECT
         id,
         status,
+        stage,
+        stage_message,
+        upload_bytes,
+        stored_bytes,
         tracks_processed,
         new_identities,
         existing_identities,
@@ -61,9 +66,23 @@ if (($job['status'] ?? '') === 'queued') {
     dispatchImportWorker((int)$job['id']);
 }
 
+$elapsedSeconds = 0;
+$createdTs = strtotime((string)($job['created_at'] ?? ''));
+$startTs = strtotime((string)($job['started_at'] ?? ''));
+$endTs = strtotime((string)($job['finished_at'] ?? ''));
+if ($startTs !== false && $startTs > 0) {
+    $elapsedSeconds = max(0, (($endTs !== false && $endTs > 0) ? $endTs : time()) - $startTs);
+} elseif ($createdTs !== false && $createdTs > 0) {
+    $elapsedSeconds = max(0, time() - $createdTs);
+}
+
 echo json_encode([
     'job_id' => (int)$job['id'],
     'status' => (string)$job['status'],
+    'stage' => (string)($job['stage'] ?? ''),
+    'stage_message' => (string)($job['stage_message'] ?? ''),
+    'upload_bytes' => isset($job['upload_bytes']) ? (int)$job['upload_bytes'] : 0,
+    'stored_bytes' => isset($job['stored_bytes']) ? (int)$job['stored_bytes'] : 0,
     'tracks_processed' => (int)$job['tracks_processed'],
     'new_identities' => (int)$job['new_identities'],
     'existing_identities' => (int)$job['existing_identities'],
@@ -73,6 +92,7 @@ echo json_encode([
     'started_at' => (string)($job['started_at'] ?? ''),
     'finished_at' => (string)($job['finished_at'] ?? ''),
     'created_at' => (string)($job['created_at'] ?? ''),
+    'elapsed_seconds' => $elapsedSeconds,
 ]);
 
 function dispatchImportWorker(int $jobId): void
@@ -88,4 +108,58 @@ function dispatchImportWorker(int $jobId): void
         . ' --job-id=' . (int)$jobId
         . ' > /dev/null 2>&1 &';
     @exec($cmd);
+}
+
+function ensureImportJobsTable(PDO $db): void
+{
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS dj_library_import_jobs (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            dj_id BIGINT UNSIGNED NOT NULL,
+            status ENUM('queued','processing','done','failed') NOT NULL DEFAULT 'queued',
+            source_type VARCHAR(32) NOT NULL DEFAULT 'rekordbox_xml',
+            source_file_path VARCHAR(1024) NOT NULL,
+            chunk_upload_id VARCHAR(64) NULL,
+            upload_bytes BIGINT UNSIGNED NULL,
+            stored_bytes BIGINT UNSIGNED NULL,
+            stage VARCHAR(64) NOT NULL DEFAULT 'queued',
+            stage_message VARCHAR(255) NULL,
+            tracks_processed INT UNSIGNED NOT NULL DEFAULT 0,
+            new_identities INT UNSIGNED NOT NULL DEFAULT 0,
+            existing_identities INT UNSIGNED NOT NULL DEFAULT 0,
+            dj_tracks_added INT UNSIGNED NOT NULL DEFAULT 0,
+            dj_tracks_updated INT UNSIGNED NOT NULL DEFAULT 0,
+            error_message VARCHAR(1000) NULL,
+            started_at DATETIME NULL,
+            finished_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            KEY idx_dj_library_import_jobs_dj_status (dj_id, status, id),
+            KEY idx_dj_library_import_jobs_status (status, id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    ensureImportJobsColumn($db, 'dj_tracks_updated', 'INT UNSIGNED NOT NULL DEFAULT 0');
+    ensureImportJobsColumn($db, 'upload_bytes', 'BIGINT UNSIGNED NULL');
+    ensureImportJobsColumn($db, 'stored_bytes', 'BIGINT UNSIGNED NULL');
+    ensureImportJobsColumn($db, 'stage', "VARCHAR(64) NOT NULL DEFAULT 'queued'");
+    ensureImportJobsColumn($db, 'stage_message', 'VARCHAR(255) NULL');
+}
+
+function ensureImportJobsColumn(PDO $db, string $column, string $ddl): void
+{
+    $stmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'dj_library_import_jobs'
+          AND COLUMN_NAME = ?
+    ");
+    $stmt->execute([$column]);
+    $exists = (int)$stmt->fetchColumn() > 0;
+    if ($exists) {
+        return;
+    }
+
+    $db->exec("ALTER TABLE dj_library_import_jobs ADD COLUMN `{$column}` {$ddl}");
 }

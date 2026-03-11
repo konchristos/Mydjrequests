@@ -18,6 +18,8 @@ class RekordboxXMLImporter
     private array $trackIdToDjTrackId = [];
     private ?PDOStatement $playlistUpsertStmt = null;
     private ?PDOStatement $playlistTrackInsertStmt = null;
+    /** @var callable|null */
+    private $progressCallback = null;
 
     public function __construct(PDO $db, int $djId, array $options = [])
     {
@@ -26,6 +28,11 @@ class RekordboxXMLImporter
         $this->batchSize = max(50, (int)($options['batch_size'] ?? 500));
         $this->identityProvider = (string)($options['identity_provider'] ?? 'manual');
         $this->sourceLabel = (string)($options['source'] ?? 'rekordbox_xml');
+    }
+
+    public function setProgressCallback(?callable $callback): void
+    {
+        $this->progressCallback = $callback;
     }
 
     /**
@@ -51,6 +58,7 @@ class RekordboxXMLImporter
 
         $this->ensureIdentitySchema();
         $this->ensureDjLibraryStatsTable();
+        $this->ensureDjTracksRatingColumn();
         $this->djTrackColumns = $this->loadTableColumns('dj_tracks');
         if (empty($this->djTrackColumns)) {
             throw new RuntimeException('Table `dj_tracks` does not exist in current schema.');
@@ -76,6 +84,7 @@ class RekordboxXMLImporter
         $batch = [];
 
         try {
+            $this->emitProgress('processing_tracks', 'Processing track collection...');
             while ($reader->read()) {
                 if ($reader->nodeType === XMLReader::ELEMENT && $reader->name === 'COLLECTION') {
                     $inCollection = true;
@@ -118,6 +127,7 @@ class RekordboxXMLImporter
             }
 
             $this->resolveTrackIdMappings();
+            $this->emitProgress('processing_playlists', 'Processing playlist hierarchy...');
             $playlistStats = $this->importPlaylists($xmlPath);
             $playlistsImported = (int)($playlistStats['playlists_imported'] ?? 0);
             $playlistTracksAdded = (int)($playlistStats['playlist_tracks_added'] ?? 0);
@@ -126,6 +136,7 @@ class RekordboxXMLImporter
             $reader->close();
         }
 
+        $this->emitProgress('finalizing', 'Finalizing import...');
         $this->updateDjLibraryStats();
 
         return [
@@ -143,6 +154,18 @@ class RekordboxXMLImporter
         ];
     }
 
+    private function emitProgress(string $stage, string $message): void
+    {
+        if (!is_callable($this->progressCallback)) {
+            return;
+        }
+        try {
+            call_user_func($this->progressCallback, $stage, $message);
+        } catch (Throwable $e) {
+            // Progress callback failures should never fail the import itself.
+        }
+    }
+
     private function extractTrackFromReader(XMLReader $reader): ?array
     {
         $title = trim((string)$reader->getAttribute('Name'));
@@ -156,6 +179,7 @@ class RekordboxXMLImporter
         $tonality = $this->nullIfEmpty($reader->getAttribute('Tonality'));
         $genre = $this->nullIfEmpty($reader->getAttribute('Genre'));
         $location = $this->normaliseLocation($this->nullIfEmpty($reader->getAttribute('Location')));
+        $rating = $this->parseRating($reader->getAttribute('Rating'));
         $normalizedHash = $this->normalisedHash($title, $artist);
         $trackIdentityId = $this->resolveTrackIdentityId($normalizedHash);
         $xmlTrackId = $this->nullIfEmpty($reader->getAttribute('TrackID'));
@@ -167,6 +191,7 @@ class RekordboxXMLImporter
             'tonality' => $tonality,
             'genre' => $genre,
             'location' => $location,
+            'rating' => $rating,
             'normalized_hash' => $normalizedHash,
             'track_identity_id' => $trackIdentityId,
             'xml_track_id' => $xmlTrackId,
@@ -282,6 +307,7 @@ class RekordboxXMLImporter
         $this->setFirstExistingColumn($out, ['musical_key', 'tonality', 'key_text'], $row['tonality'] ?? null);
         $this->setFirstExistingColumn($out, ['genre'], $row['genre'] ?? null);
         $this->setFirstExistingColumn($out, ['location', 'file_path'], $row['location'] ?? null);
+        $this->setFirstExistingColumn($out, ['rating', 'stars', 'star_rating', 'rekordbox_rating'], $row['rating'] ?? null);
         $this->setFirstExistingColumn($out, ['source', 'source_name'], $this->sourceLabel);
 
         if (isset($this->djTrackColumns['created_at'])) {
@@ -313,6 +339,42 @@ class RekordboxXMLImporter
 
         $bpm = round((float)$value, 2);
         return $bpm > 0 ? $bpm : null;
+    }
+
+    private function parseRating(?string $value): ?float
+    {
+        $value = $this->nullIfEmpty($value);
+        if ($value === null) {
+            return null;
+        }
+        // Rekordbox rating can be 0..255 (0,51,102,153,204,255) or already 0..5.
+        if (is_numeric($value)) {
+            $v = (float)$value;
+            if ($v <= 0) {
+                return null;
+            }
+            if ($v > 10) {
+                if ($v >= 250) {
+                    return 5.0;
+                }
+                if ($v <= 100) {
+                    return round($v / 20.0, 2);
+                }
+                return round($v / 51.0, 2);
+            }
+            if ($v > 5) {
+                return round($v / 2.0, 2);
+            }
+            return round($v, 2);
+        }
+        // Star glyph format like "★★★★★"
+        if (mb_strpos($value, '★') !== false) {
+            $count = mb_substr_count($value, '★');
+            if ($count > 0) {
+                return (float)min(5, $count);
+            }
+        }
+        return null;
     }
 
     private function normalisedHash(string $title, string $artist): ?string
@@ -455,6 +517,24 @@ class RekordboxXMLImporter
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");
+    }
+
+    private function ensureDjTracksRatingColumn(): void
+    {
+        // If none of the known rating columns exist, add a dedicated Rekordbox rating column.
+        try {
+            $cols = $this->loadTableColumns('dj_tracks');
+            if (empty($cols)) {
+                return;
+            }
+            $hasRating = isset($cols['rating']) || isset($cols['stars']) || isset($cols['star_rating']) || isset($cols['rekordbox_rating']);
+            if ($hasRating) {
+                return;
+            }
+            $this->db->exec("ALTER TABLE dj_tracks ADD COLUMN rekordbox_rating DECIMAL(5,2) NULL");
+        } catch (Throwable $e) {
+            // Non-fatal: importer can still run without rating persistence.
+        }
     }
 
     private function updateDjLibraryStats(): void

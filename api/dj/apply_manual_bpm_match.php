@@ -95,6 +95,7 @@ if (!$bpm) {
 }
 
 $selectedOwned = false;
+$selectedPreferred = false;
 $selectedHash = mdjrCandidateTrackHash(
     (string)($bpm['title'] ?? ''),
     (string)($bpm['artist'] ?? '')
@@ -109,6 +110,21 @@ if ($selectedHash !== '') {
     ");
     $ownCheck->execute([(int)($_SESSION['dj_id'] ?? 0), $selectedHash]);
     $selectedOwned = (bool)$ownCheck->fetchColumn();
+
+    $prefCheck = $db->prepare("
+        SELECT 1
+        FROM dj_tracks d
+        INNER JOIN dj_playlist_tracks dpt
+            ON dpt.dj_track_id = d.id
+        INNER JOIN dj_preferred_playlists dpp
+            ON dpp.dj_id = d.dj_id
+           AND dpp.playlist_id = dpt.playlist_id
+        WHERE d.dj_id = ?
+          AND d.normalized_hash = ?
+        LIMIT 1
+    ");
+    $prefCheck->execute([(int)($_SESSION['dj_id'] ?? 0), $selectedHash]);
+    $selectedPreferred = (bool)$prefCheck->fetchColumn();
 }
 
 $bpmValue = (isset($bpm['bpm']) && is_numeric($bpm['bpm']) && (float)$bpm['bpm'] > 0)
@@ -262,34 +278,42 @@ try {
                 dj_id,
                 event_id,
                 override_key,
+                bpm_track_id,
                 bpm,
                 musical_key,
                 release_year,
-                manual_owned
+                manual_owned,
+                manual_preferred
             ) VALUES (
                 :dj_id,
                 :event_id,
                 :override_key,
+                :bpm_track_id,
                 :bpm,
                 :musical_key,
                 :release_year,
-                :manual_owned
+                :manual_owned,
+                :manual_preferred
             )
             ON DUPLICATE KEY UPDATE
+                bpm_track_id = VALUES(bpm_track_id),
                 bpm = VALUES(bpm),
                 musical_key = VALUES(musical_key),
                 release_year = VALUES(release_year),
                 manual_owned = VALUES(manual_owned),
+                manual_preferred = VALUES(manual_preferred),
                 updated_at = CURRENT_TIMESTAMP
         ");
         $ovStmt->execute([
             ':dj_id' => (int)($_SESSION['dj_id'] ?? 0),
             ':event_id' => $eventId,
             ':override_key' => $overrideKey,
+            ':bpm_track_id' => $bpmTrackId,
             ':bpm' => $bpmValue,
             ':musical_key' => $appliedKey,
             ':release_year' => $yearValue,
             ':manual_owned' => $selectedOwned ? 1 : 0,
+            ':manual_preferred' => $selectedPreferred ? 1 : 0,
         ]);
     }
 
@@ -301,6 +325,7 @@ try {
         'applied_spotify_track_ids' => $targetSpotifyIds,
         'non_spotify_override' => !$hasSpotifyIds,
         'owned_marked' => $selectedOwned,
+        'selected_preferred' => $selectedPreferred,
         'applied' => [
             'bpm' => $bpmValue,
             'musical_key' => $appliedKey,
@@ -339,16 +364,39 @@ function ensureDjEventTrackOverridesTable(PDO $db): void
             dj_id BIGINT UNSIGNED NOT NULL,
             event_id BIGINT UNSIGNED NOT NULL,
             override_key VARCHAR(512) NOT NULL,
+            bpm_track_id BIGINT UNSIGNED NULL,
             bpm DECIMAL(6,2) NULL,
             musical_key VARCHAR(32) NULL,
             release_year INT NULL,
             manual_owned TINYINT(1) NOT NULL DEFAULT 1,
+            manual_preferred TINYINT(1) NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uq_dj_event_track_overrides (dj_id, event_id, override_key),
             KEY idx_dj_event_track_overrides_event (event_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    try {
+        $colStmt = $db->prepare("
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'dj_event_track_overrides'
+        ");
+        $colStmt->execute();
+        $cols = [];
+        foreach (($colStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) as $col) {
+            $cols[strtolower((string)$col)] = true;
+        }
+        if (empty($cols['bpm_track_id'])) {
+            $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN bpm_track_id BIGINT UNSIGNED NULL AFTER override_key");
+        }
+        if (empty($cols['manual_preferred'])) {
+            $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned");
+        }
+    } catch (Throwable $e) {
+        // non-fatal
+    }
 }
 
 function mdjrOverrideTrackKey(string $title, string $artist): string

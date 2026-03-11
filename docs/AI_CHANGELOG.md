@@ -45,3 +45,85 @@
 - Added live selected-preferred confirmation panel with:
   - selected count
   - selected playlist chips (reminder before save)
+
+## 2026-03-11 (Track Resolver Priority Update)
+- Updated resolver selection in `api/dj/get_requests.php` for unmatched DJ track candidates.
+- Resolver priority now follows:
+  1. Manual/explicit override behavior remains highest priority (existing `manual_owned` + event/manual override path untouched).
+  2. Candidate in any preferred playlist (`dj_preferred_playlists` via `dj_playlist_tracks`).
+  3. 5-star candidate (rating >= 5 when rating column exists).
+  4. Highest rating.
+  5. Deterministic fallback by lowest `dj_tracks.id`.
+- Added preferred-playlist join path to resolver candidate query:
+  - `dj_tracks d`
+  - `dj_playlist_tracks dpt`
+  - `dj_preferred_playlists dpp`
+- Added adaptive rating expression support for `dj_tracks` schemas that use:
+  - `rating` (preferred)
+  - fallback: `stars` or `star_rating`
+  - fallback to `0` when none exist.
+- Did not change request ordering, boosts, event_tracks projection behavior, or ingestion flow.
+
+## 2026-03-11 (Metadata Match UI: Preferred + Rating)
+- Updated `api/dj/search_bpm_candidates.php` to enrich manual metadata candidates with:
+  - `is_preferred` flag (candidate exists in any DJ preferred playlist)
+  - `rating_value` (schema-safe rating field resolution)
+- Added preferred playlist joins for owned candidate metadata:
+  - `dj_tracks d`
+  - `dj_playlist_tracks dpt`
+  - `dj_preferred_playlists dpp`
+- Candidate ordering now prioritizes:
+  1. Preferred-playlist candidates
+  2. Higher rating
+  3. Match score
+  4. Deterministic ID tie-break
+- Updated metadata match modal UI in `dj/dj.js` + `dj/dj.css`:
+  - added `Preferred Playlist` badge
+  - added `★ rating` badge
+  - preferred/rating candidates now surface first in displayed results.
+
+## 2026-03-11 (Metadata Match UI Tweaks)
+- Updated metadata match modal candidate badges:
+  - show `Preferred` badge first
+  - show folder badge (derived from `dj_tracks.location`) after preferred badge
+  - show `★★★★★` badge only for 5-star candidates (no stars shown for others)
+- Added selected-candidate visual highlight in modal (`green` opaque row) using current track metadata (BPM/key/year) matching.
+- Added request-tile preferred indicator:
+  - `api/dj/get_requests.php` now emits `preferred_selected` per row when resolved `dj_track_id` belongs to any preferred playlist for that DJ.
+  - `dj/dj.js` renders a small `Preferred` badge in the request title when set.
+
+## 2026-03-11 (Metadata Match Precision + Preference Persistence Fix)
+- Fixed selected-row highlight in metadata modal:
+  - now uses exact selected BPM track (`is_selected`) from persisted override/link instead of BPM/key/year heuristic.
+  - only the actually selected candidate row is highlighted.
+- Persisted manual selection details in `dj_event_track_overrides`:
+  - `bpm_track_id` (selected BPM candidate ID)
+  - `manual_preferred` (whether selected candidate is from preferred playlists)
+  - includes safe schema auto-add for existing installs.
+- Preferred badge behavior on request tiles changed:
+  - now manual-selection driven (shows when selected candidate was preferred), not generic auto-owned-preferred.
+- Tightened manual metadata search filtering to reduce unrelated low-score candidates from keyword collisions.
+- Fixed five-star badge logic:
+  - `★★★★★` is now shown when candidate resolves to 5-star after owned/global rating merge.
+
+## 2026-03-11 (5-Star Badge Compatibility Fix)
+- Updated `api/dj/search_bpm_candidates.php` rating normalization so star badges work across mixed rating formats:
+  - direct 0..5 ratings
+  - 0..10 ratings
+  - 0..100 ratings
+  - Rekordbox-style 0..255 values
+  - star glyph text values (e.g. `★★★★★`)
+- Five-star badge now evaluates against normalized 0..5 rating consistently.
+
+## 2026-03-11 (Rekordbox Rating Persistence Fix)
+- Updated `library_import/RekordboxXMLImporter.php` to parse Rekordbox `TRACK@Rating` and store it into available DJ track rating column (`rating`, `stars`, `star_rating`, or `rekordbox_rating`).
+- Added rating normalization handling in importer for:
+  - 0..255 Rekordbox scale
+  - 0..100 / 0..10 scales
+  - direct 0..5 values
+  - star glyph text (`★★★★★`)
+- Expanded rating column detection in candidate/resolver logic to also support:
+  - `rekordbox_rating`
+  - `rb_rating`
+  - `rating_raw`
+- Note: tracks imported before this fix may not have rating persisted; a re-import is required for those rows to show 5-star badges.

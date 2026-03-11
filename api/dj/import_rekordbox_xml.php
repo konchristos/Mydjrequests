@@ -208,7 +208,9 @@ function handleChunkFinish(PDO $db, int $djId): void
         fclose($out);
     }
 
-    $jobId = createImportJob($db, $djId, $targetPath, $uploadId);
+    $declaredBytes = max(0, (int)($meta['file_size'] ?? 0));
+    $storedBytes = is_file($targetPath) ? max(0, (int)@filesize($targetPath)) : 0;
+    $jobId = createImportJob($db, $djId, $targetPath, $uploadId, $declaredBytes, $storedBytes);
     $dispatched = dispatchImportWorker($jobId);
 
     echo json_encode([
@@ -259,7 +261,9 @@ function handleSingleUpload(PDO $db, int $djId): void
         throw new RuntimeException('Failed to store uploaded file.');
     }
 
-    $jobId = createImportJob($db, $djId, $targetPath, null);
+    $declaredBytes = max(0, (int)($file['size'] ?? 0));
+    $storedBytes = is_file($targetPath) ? max(0, (int)@filesize($targetPath)) : 0;
+    $jobId = createImportJob($db, $djId, $targetPath, null, $declaredBytes, $storedBytes);
     $dispatched = dispatchImportWorker($jobId);
 
     echo json_encode([
@@ -269,15 +273,24 @@ function handleSingleUpload(PDO $db, int $djId): void
     ]);
 }
 
-function createImportJob(PDO $db, int $djId, string $filePath, ?string $uploadId): int
+function createImportJob(
+    PDO $db,
+    int $djId,
+    string $filePath,
+    ?string $uploadId,
+    int $uploadBytes,
+    int $storedBytes
+): int
 {
     $stmt = $db->prepare('
         INSERT INTO dj_library_import_jobs (
             dj_id, status, source_type, source_file_path, chunk_upload_id,
+            upload_bytes, stored_bytes, stage, stage_message,
             tracks_processed, new_identities, existing_identities, dj_tracks_added, dj_tracks_updated,
             error_message, created_at, updated_at
         ) VALUES (
             :dj_id, :status, :source_type, :source_file_path, :chunk_upload_id,
+            :upload_bytes, :stored_bytes, :stage, :stage_message,
             0, 0, 0, 0, 0,
             NULL, NOW(), NOW()
         )
@@ -289,6 +302,10 @@ function createImportJob(PDO $db, int $djId, string $filePath, ?string $uploadId
         ':source_type' => 'rekordbox_xml',
         ':source_file_path' => $filePath,
         ':chunk_upload_id' => $uploadId,
+        ':upload_bytes' => ($uploadBytes > 0 ? $uploadBytes : null),
+        ':stored_bytes' => ($storedBytes > 0 ? $storedBytes : null),
+        ':stage' => 'queued',
+        ':stage_message' => 'Queued for processing.',
     ]);
 
     $jobId = (int)$db->lastInsertId();
@@ -452,6 +469,10 @@ function ensureImportJobsTable(PDO $db): void
             source_type VARCHAR(32) NOT NULL DEFAULT 'rekordbox_xml',
             source_file_path VARCHAR(1024) NOT NULL,
             chunk_upload_id VARCHAR(64) NULL,
+            upload_bytes BIGINT UNSIGNED NULL,
+            stored_bytes BIGINT UNSIGNED NULL,
+            stage VARCHAR(64) NOT NULL DEFAULT 'queued',
+            stage_message VARCHAR(255) NULL,
             tracks_processed INT UNSIGNED NOT NULL DEFAULT 0,
             new_identities INT UNSIGNED NOT NULL DEFAULT 0,
             existing_identities INT UNSIGNED NOT NULL DEFAULT 0,
@@ -468,6 +489,10 @@ function ensureImportJobsTable(PDO $db): void
     ");
 
     ensureImportJobsColumn($db, 'dj_tracks_updated', 'INT UNSIGNED NOT NULL DEFAULT 0');
+    ensureImportJobsColumn($db, 'upload_bytes', 'BIGINT UNSIGNED NULL');
+    ensureImportJobsColumn($db, 'stored_bytes', 'BIGINT UNSIGNED NULL');
+    ensureImportJobsColumn($db, 'stage', "VARCHAR(64) NOT NULL DEFAULT 'queued'");
+    ensureImportJobsColumn($db, 'stage_message', 'VARCHAR(255) NULL');
 }
 
 function ensureImportJobsColumn(PDO $db, string $column, string $ddl): void
