@@ -161,6 +161,34 @@ try {
     $preferredSet = [];
 }
 
+$importHistoryRows = [];
+try {
+    $historyStmt = $db->prepare("
+        SELECT
+            id,
+            status,
+            stage,
+            stage_message,
+            upload_bytes,
+            stored_bytes,
+            tracks_processed,
+            dj_tracks_added,
+            dj_tracks_updated,
+            error_message,
+            created_at,
+            started_at,
+            finished_at
+        FROM dj_library_import_jobs
+        WHERE dj_id = ?
+        ORDER BY id DESC
+        LIMIT 12
+    ");
+    $historyStmt->execute([$djId]);
+    $importHistoryRows = $historyStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+} catch (Throwable $e) {
+    $importHistoryRows = [];
+}
+
 $pageTitle = 'Library Import';
 $pageBodyClass = 'dj-page';
 include __DIR__ . '/layout.php';
@@ -177,6 +205,48 @@ function ensureDjLibraryStatsTable(PDO $db): void
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+}
+
+function formatBytesHuman(?int $bytes): string
+{
+    $n = (int)$bytes;
+    if ($n <= 0) {
+        return '—';
+    }
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $i = 0;
+    $value = (float)$n;
+    while ($value >= 1024 && $i < count($units) - 1) {
+        $value /= 1024;
+        $i++;
+    }
+    return number_format($value, $i === 0 ? 0 : 2) . ' ' . $units[$i];
+}
+
+function formatElapsedRange(?string $start, ?string $end): string
+{
+    if (!$start) {
+        return '—';
+    }
+    $startTs = strtotime($start);
+    if ($startTs === false || $startTs <= 0) {
+        return '—';
+    }
+    $endTs = $end ? strtotime($end) : time();
+    if ($endTs === false || $endTs <= 0) {
+        $endTs = time();
+    }
+    $seconds = max(0, $endTs - $startTs);
+    $h = intdiv($seconds, 3600);
+    $m = intdiv($seconds % 3600, 60);
+    $s = $seconds % 60;
+    if ($h > 0) {
+        return sprintf('%dh %02dm %02ds', $h, $m, $s);
+    }
+    if ($m > 0) {
+        return sprintf('%dm %02ds', $m, $s);
+    }
+    return sprintf('%ds', $s);
 }
 ?>
 <style>
@@ -306,6 +376,13 @@ function ensureDjLibraryStatsTable(PDO $db): void
     color: #ff8686;
 }
 
+.library-status-meta {
+    margin-top: 8px;
+    color: #a8a8bd;
+    font-size: 13px;
+    min-height: 18px;
+}
+
 .library-actions {
     margin-top: 10px;
     display: none;
@@ -368,6 +445,62 @@ function ensureDjLibraryStatsTable(PDO $db): void
     font-size: 22px;
     font-weight: 700;
     color: #fff;
+}
+
+.library-history {
+    margin-top: 22px;
+    border: 1px solid #2a2a3f;
+    border-radius: 12px;
+    background: #111116;
+    padding: 14px;
+}
+
+.library-history h3 {
+    margin: 0 0 10px;
+    font-size: 18px;
+}
+
+.library-history-table-wrap {
+    overflow-x: auto;
+}
+
+.library-history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.library-history-table th,
+.library-history-table td {
+    border-bottom: 1px solid #25253a;
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+    white-space: nowrap;
+}
+
+.library-history-table th {
+    color: #b7b7c8;
+    font-weight: 700;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.library-history-table tr:last-child td {
+    border-bottom: none;
+}
+
+.library-stage-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid #2f2f4a;
+    background: #171727;
+    color: #e2e2f2;
+    font-size: 11px;
+    font-weight: 700;
 }
 
 @media (max-width: 640px) {
@@ -655,6 +788,7 @@ function ensureDjLibraryStatsTable(PDO $db): void
     </div>
 
     <div id="libraryStatus" class="library-status" aria-live="polite"></div>
+    <div id="libraryStatusMeta" class="library-status-meta" aria-live="polite"></div>
     <div id="libraryActions" class="library-actions">
         <button id="runQueuedImportBtn" type="button" class="library-run-btn">Process Queued Import Now</button>
     </div>
@@ -684,6 +818,68 @@ function ensureDjLibraryStatsTable(PDO $db): void
             </div>
         </div>
     </div>
+
+    <div class="library-history">
+        <h3>Recent Import History</h3>
+        <?php if (empty($importHistoryRows)): ?>
+            <p class="library-overview-label" style="margin:0;">No imports yet.</p>
+        <?php else: ?>
+            <div class="library-history-table-wrap">
+                <table class="library-history-table">
+                    <thead>
+                        <tr>
+                            <th>Job</th>
+                            <th>Created</th>
+                            <th>Status</th>
+                            <th>Stage</th>
+                            <th>Elapsed</th>
+                            <th>Upload</th>
+                            <th>Stored</th>
+                            <th>Tracks</th>
+                            <th>Added</th>
+                            <th>Updated</th>
+                            <th>Error</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($importHistoryRows as $row): ?>
+                            <?php
+                            $created = (string)($row['created_at'] ?? '');
+                            $createdDisplay = $created !== '' ? date('d M Y, H:i:s', strtotime($created)) : '—';
+                            $status = (string)($row['status'] ?? 'queued');
+                            $stage = trim((string)($row['stage'] ?? ''));
+                            $stageMessage = trim((string)($row['stage_message'] ?? ''));
+                            $elapsed = formatElapsedRange((string)($row['started_at'] ?? ''), (string)($row['finished_at'] ?? ''));
+                            ?>
+                            <tr>
+                                <td>#<?php echo (int)($row['id'] ?? 0); ?></td>
+                                <td><?php echo e($createdDisplay); ?></td>
+                                <td><?php echo e($status); ?></td>
+                                <td>
+                                    <span class="library-stage-pill"><?php echo e($stage !== '' ? $stage : 'queued'); ?></span>
+                                    <?php if ($stageMessage !== ''): ?>
+                                        <div class="library-overview-label" style="margin-top:4px;"><?php echo e($stageMessage); ?></div>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?php echo e($elapsed); ?></td>
+                                <td><?php echo e(formatBytesHuman(isset($row['upload_bytes']) ? (int)$row['upload_bytes'] : null)); ?></td>
+                                <td><?php echo e(formatBytesHuman(isset($row['stored_bytes']) ? (int)$row['stored_bytes'] : null)); ?></td>
+                                <td><?php echo (int)($row['tracks_processed'] ?? 0); ?></td>
+                                <td><?php echo (int)($row['dj_tracks_added'] ?? 0); ?></td>
+                                <td><?php echo (int)($row['dj_tracks_updated'] ?? 0); ?></td>
+                                <td>
+                                    <?php
+                                    $err = trim((string)($row['error_message'] ?? ''));
+                                    echo e($err !== '' ? mb_strimwidth($err, 0, 80, '…', 'UTF-8') : '—');
+                                    ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
 </div>
 
 <script>
@@ -692,6 +888,7 @@ function ensureDjLibraryStatsTable(PDO $db): void
     const dropzone = document.getElementById('libraryDropzone');
     const input = document.getElementById('libraryFileInput');
     const statusEl = document.getElementById('libraryStatus');
+    const statusMetaEl = document.getElementById('libraryStatusMeta');
     const progressWrap = document.getElementById('libraryUploadProgress');
     const progressBar = document.getElementById('libraryUploadProgressBar');
     const results = document.getElementById('libraryResults');
@@ -710,11 +907,40 @@ function ensureDjLibraryStatsTable(PDO $db): void
         statusEl.classList.toggle('is-error', !!isError);
     }
 
+    function setStatusMeta(text) {
+        if (!statusMetaEl) return;
+        statusMetaEl.textContent = text || '';
+    }
+
+    function formatBytes(bytes) {
+        const n = Number(bytes || 0);
+        if (!n || n <= 0) return '—';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let v = n;
+        let i = 0;
+        while (v >= 1024 && i < units.length - 1) {
+            v /= 1024;
+            i++;
+        }
+        return (i === 0 ? String(Math.round(v)) : v.toFixed(2)) + ' ' + units[i];
+    }
+
+    function formatElapsed(seconds) {
+        const n = Math.max(0, Number(seconds || 0));
+        const h = Math.floor(n / 3600);
+        const m = Math.floor((n % 3600) / 60);
+        const s = Math.floor(n % 60);
+        if (h > 0) return h + 'h ' + String(m).padStart(2, '0') + 'm ' + String(s).padStart(2, '0') + 's';
+        if (m > 0) return m + 'm ' + String(s).padStart(2, '0') + 's';
+        return s + 's';
+    }
+
     function resetProgress() {
         progressWrap.style.display = 'none';
         progressBar.classList.remove('is-indeterminate');
         progressBar.style.width = '0%';
         actions.style.display = 'none';
+        setStatusMeta('');
         runQueuedBtn.disabled = false;
         activeJobId = 0;
     }
@@ -793,6 +1019,7 @@ function ensureDjLibraryStatsTable(PDO $db): void
                 const pct = Math.max(0, Math.min(100, Math.round(overallRatio * 100)));
                 progressBar.style.width = pct + '%';
                 setStatus('Uploading... ' + pct + '%', false);
+                setStatusMeta('');
             });
 
             xhr.onload = function () {
@@ -845,6 +1072,18 @@ function ensureDjLibraryStatsTable(PDO $db): void
             }
 
             const status = String(payload.status || '');
+            const stage = String(payload.stage || '');
+            const stageMessage = String(payload.stage_message || '');
+            const elapsed = formatElapsed(payload.elapsed_seconds || 0);
+            const uploadSize = formatBytes(payload.upload_bytes || 0);
+            const storedSize = formatBytes(payload.stored_bytes || 0);
+            const metaParts = [];
+            if (stage) metaParts.push('Stage: ' + stage.replace(/_/g, ' '));
+            if (stageMessage) metaParts.push(stageMessage);
+            metaParts.push('Elapsed: ' + elapsed);
+            metaParts.push('Upload: ' + uploadSize);
+            metaParts.push('Stored: ' + storedSize);
+            setStatusMeta(metaParts.join(' • '));
             if (status === 'done') {
                 progressBar.classList.remove('is-indeterminate');
                 progressBar.style.width = '100%';
@@ -861,10 +1100,10 @@ function ensureDjLibraryStatsTable(PDO $db): void
 
             if (status === 'processing') {
                 actions.style.display = 'none';
-                setStatus('Processing library... this can take several minutes for large XML files.', false);
+                setStatus(stageMessage || 'Processing library... this can take several minutes for large XML files.', false);
             } else {
                 actions.style.display = 'block';
-                setStatus('Queued for processing...', false);
+                setStatus(stageMessage || 'Queued for processing...', false);
             }
 
             await new Promise(function (resolve) {
@@ -883,6 +1122,7 @@ function ensureDjLibraryStatsTable(PDO $db): void
         results.style.display = 'none';
         showProgress();
         setStatus('Preparing upload...', false);
+        setStatusMeta('');
 
         try {
             const startFd = new FormData();
@@ -906,6 +1146,7 @@ function ensureDjLibraryStatsTable(PDO $db): void
 
             progressBar.classList.add('is-indeterminate');
             setStatus('Processing library...', false);
+            setStatusMeta('Waiting for server status…');
 
             const finishFd = new FormData();
             finishFd.append('action', 'finish');
@@ -920,6 +1161,7 @@ function ensureDjLibraryStatsTable(PDO $db): void
                 progressBar.classList.remove('is-indeterminate');
                 progressBar.style.width = '100%';
                 setStatus('Import complete.', false);
+                setStatusMeta('');
                 setResults(payload);
             }
         } catch (err) {

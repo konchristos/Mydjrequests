@@ -127,3 +127,20 @@
   - `rb_rating`
   - `rating_raw`
 - Note: tracks imported before this fix may not have rating persisted; a re-import is required for those rows to show 5-star badges.
+
+## 2026-03-11 (XML Import Telemetry + History)
+- Added import job telemetry fields (idempotent auto-add in import/worker/run/status paths):
+  - `upload_bytes` (declared upload size)
+  - `stored_bytes` (actual stored XML size on server after merge/move)
+  - `stage` (queued/processing_tracks/processing_playlists/finalizing/done/failed)
+  - `stage_message` (human-readable stage text)
+- Extended `library_import/RekordboxXMLImporter.php` with an optional progress callback so long imports report stage transitions without loading XML into memory.
+- Updated queue worker/manual run handlers to persist stage transitions and completion/failure stage messages into `dj_library_import_jobs`.
+- Updated `/api/dj/import_rekordbox_xml.php` to capture and persist upload size + stored file size when creating jobs.
+- Updated `/api/dj/import_rekordbox_xml_status.php` response to include:
+  - `stage`, `stage_message`
+  - `upload_bytes`, `stored_bytes`
+  - `elapsed_seconds`
+- Updated `dj/library_import.php` UI:
+  - live status now shows stage + elapsed time + upload/stored sizes while polling
+  - added **Recent Import History** table (latest jobs) with status, stage, elapsed, size metrics, and error snippet.

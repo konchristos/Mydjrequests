@@ -217,21 +217,21 @@ class RekordboxXMLImporter
                     $hashes[$h] = true;
                 }
             }
-            $existingHashes = $this->existingHashesForBatch(array_keys($hashes));
             $inserted = 0;
             $updated = 0;
 
             foreach ($batch as $row) {
                 $params = $this->buildInsertParams($row, $stmt['columns']);
                 $stmt['statement']->execute($params);
-                $h = isset($row['normalized_hash']) ? trim((string)$row['normalized_hash']) : '';
-                if ($h !== '' && isset($existingHashes[$h])) {
-                    $updated++;
-                } else {
+                // MySQL ON DUPLICATE KEY behavior:
+                // rowCount() == 1 => insert
+                // rowCount() == 2 => update (changed values)
+                // rowCount() == 0 => duplicate, no value changes
+                $affected = (int)$stmt['statement']->rowCount();
+                if ($affected === 1) {
                     $inserted++;
-                    if ($h !== '') {
-                        $existingHashes[$h] = true;
-                    }
+                } else {
+                    $updated++;
                 }
             }
 

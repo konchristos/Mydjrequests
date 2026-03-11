@@ -67,13 +67,14 @@ if (($job['status'] ?? '') === 'queued') {
 }
 
 $elapsedSeconds = 0;
-$createdTs = strtotime((string)($job['created_at'] ?? ''));
-$startTs = strtotime((string)($job['started_at'] ?? ''));
-$endTs = strtotime((string)($job['finished_at'] ?? ''));
+$createdTs = parseUtcTimestamp((string)($job['created_at'] ?? ''));
+$startTs = parseUtcTimestamp((string)($job['started_at'] ?? ''));
+$endTs = parseUtcTimestamp((string)($job['finished_at'] ?? ''));
+$nowTs = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp();
 if ($startTs !== false && $startTs > 0) {
-    $elapsedSeconds = max(0, (($endTs !== false && $endTs > 0) ? $endTs : time()) - $startTs);
+    $elapsedSeconds = max(0, (($endTs !== false && $endTs > 0) ? $endTs : $nowTs) - $startTs);
 } elseif ($createdTs !== false && $createdTs > 0) {
-    $elapsedSeconds = max(0, time() - $createdTs);
+    $elapsedSeconds = max(0, $nowTs - $createdTs);
 }
 
 echo json_encode([
@@ -108,6 +109,26 @@ function dispatchImportWorker(int $jobId): void
         . ' --job-id=' . (int)$jobId
         . ' > /dev/null 2>&1 &';
     @exec($cmd);
+}
+
+/**
+ * Parses DB timestamps as UTC to avoid timezone skew in elapsed calculations.
+ */
+function parseUtcTimestamp(string $value): int|false
+{
+    $value = trim($value);
+    if ($value === '') {
+        return false;
+    }
+    try {
+        $dt = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $value, new DateTimeZone('UTC'));
+        if (!$dt) {
+            $dt = new DateTimeImmutable($value, new DateTimeZone('UTC'));
+        }
+        return $dt->getTimestamp();
+    } catch (Throwable $e) {
+        return false;
+    }
 }
 
 function ensureImportJobsTable(PDO $db): void
