@@ -582,6 +582,7 @@ if (!empty($spotifyIds)) {
 foreach ($rows as &$row) {
     $row['bpm'] = null;
     $row['musical_key'] = null;
+    $row['manual_path_matched'] = 0;
     $row['release_year'] = $allowBpmMeta && isset($row['release_year']) && is_numeric($row['release_year'])
         ? (int)$row['release_year']
         : null;
@@ -626,6 +627,7 @@ foreach ($rows as &$row) {
     if (is_array($ov)) {
         if (isset($ov['bpm_track_id']) && is_numeric($ov['bpm_track_id']) && (int)$ov['bpm_track_id'] > 0) {
             $row['selected_bpm_track_id'] = (int)$ov['bpm_track_id'];
+            $row['manual_path_matched'] = 1;
         }
         if (isset($ov['bpm']) && is_numeric($ov['bpm']) && (float)$ov['bpm'] > 0) {
             $row['bpm'] = (float)$ov['bpm'];
@@ -765,6 +767,8 @@ foreach ($rows as &$row) {
     $selectedBpmId = isset($row['selected_bpm_track_id']) && is_numeric($row['selected_bpm_track_id']) ? (int)$row['selected_bpm_track_id'] : 0;
     $derivedPreferred = ($selectedBpmId > 0 && isset($preferredSelectedBpmIds[$selectedBpmId])) ? 1 : 0;
     $row['preferred_selected'] = ($manualPreferred === 1 || $derivedPreferred === 1) ? 1 : 0;
+    $manualPathMatched = isset($row['manual_path_matched']) && (int)$row['manual_path_matched'] === 1 ? 1 : 0;
+    $row['manual_path_matched'] = ($manualPathMatched === 1 || $selectedBpmId > 0) ? 1 : 0;
 }
 unset($row);
 

@@ -116,9 +116,12 @@ try {
 }
 
 $lastImportedDisplay = 'Never';
+$lastImportedIsoUtc = '';
 if (!empty($lastImportedAt)) {
     try {
-        $lastImportedDisplay = (new DateTime((string)$lastImportedAt))->format('j M Y, g:i a');
+        $dtUtc = new DateTime((string)$lastImportedAt, new DateTimeZone('UTC'));
+        $lastImportedIsoUtc = $dtUtc->format(DateTime::ATOM);
+        $lastImportedDisplay = $dtUtc->format('j M Y, g:i a');
     } catch (Throwable $e) {
         $lastImportedDisplay = (string)$lastImportedAt;
     }
@@ -228,13 +231,13 @@ function formatElapsedRange(?string $start, ?string $end): string
     if (!$start) {
         return '—';
     }
-    $startTs = strtotime($start);
-    if ($startTs === false || $startTs <= 0) {
+    $startTs = parseUtcToTs($start);
+    if ($startTs <= 0) {
         return '—';
     }
-    $endTs = $end ? strtotime($end) : time();
-    if ($endTs === false || $endTs <= 0) {
-        $endTs = time();
+    $endTs = $end ? parseUtcToTs($end) : (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp();
+    if ($endTs <= 0) {
+        $endTs = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp();
     }
     $seconds = max(0, $endTs - $startTs);
     $h = intdiv($seconds, 3600);
@@ -247,6 +250,23 @@ function formatElapsedRange(?string $start, ?string $end): string
         return sprintf('%dm %02ds', $m, $s);
     }
     return sprintf('%ds', $s);
+}
+
+function parseUtcToTs(string $value): int
+{
+    $value = trim($value);
+    if ($value === '') {
+        return 0;
+    }
+    try {
+        $dt = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $value, new DateTimeZone('UTC'));
+        if (!$dt) {
+            $dt = new DateTimeImmutable($value, new DateTimeZone('UTC'));
+        }
+        return $dt->getTimestamp();
+    } catch (Throwable $e) {
+        return 0;
+    }
 }
 ?>
 <style>
@@ -671,7 +691,12 @@ function formatElapsedRange(?string $start, ?string $end): string
         </div>
         <div class="library-overview-card">
             <p class="library-overview-label">Last Import</p>
-            <p class="library-overview-value" style="font-size:18px;"><?php echo e($lastImportedDisplay); ?></p>
+            <p
+                id="lastImportValue"
+                class="library-overview-value js-local-datetime"
+                data-utc="<?php echo e($lastImportedIsoUtc); ?>"
+                style="font-size:18px;"
+            ><?php echo e($lastImportedDisplay); ?></p>
             <p class="library-overview-label" style="margin-top:6px;">Source: <?php echo e($lastImportSource !== '' ? $lastImportSource : 'rekordbox_xml'); ?></p>
         </div>
     </div>
@@ -845,6 +870,14 @@ function formatElapsedRange(?string $start, ?string $end): string
                         <?php foreach ($importHistoryRows as $row): ?>
                             <?php
                             $created = (string)($row['created_at'] ?? '');
+                            $createdIsoUtc = '';
+                            if ($created !== '') {
+                                try {
+                                    $createdIsoUtc = (new DateTime($created, new DateTimeZone('UTC')))->format(DateTime::ATOM);
+                                } catch (Throwable $e) {
+                                    $createdIsoUtc = '';
+                                }
+                            }
                             $createdDisplay = $created !== '' ? date('d M Y, H:i:s', strtotime($created)) : '—';
                             $status = (string)($row['status'] ?? 'queued');
                             $stage = trim((string)($row['stage'] ?? ''));
@@ -853,7 +886,7 @@ function formatElapsedRange(?string $start, ?string $end): string
                             ?>
                             <tr>
                                 <td>#<?php echo (int)($row['id'] ?? 0); ?></td>
-                                <td><?php echo e($createdDisplay); ?></td>
+                                <td class="js-local-datetime" data-utc="<?php echo e($createdIsoUtc); ?>"><?php echo e($createdDisplay); ?></td>
                                 <td><?php echo e($status); ?></td>
                                 <td>
                                     <span class="library-stage-pill"><?php echo e($stage !== '' ? $stage : 'queued'); ?></span>
@@ -964,6 +997,30 @@ function formatElapsedRange(?string $start, ?string $end): string
         statTracksAdded.textContent = String(payload.dj_tracks_added || 0);
         statTracksUpdated.textContent = String(payload.dj_tracks_updated || 0);
         results.style.display = 'block';
+    }
+
+    function renderLocalDatetimes() {
+        const nodes = Array.from(document.querySelectorAll('.js-local-datetime[data-utc]'));
+        if (!nodes.length) return;
+        nodes.forEach(function (node) {
+            const raw = String(node.getAttribute('data-utc') || '').trim();
+            if (!raw) return;
+            const dt = new Date(raw);
+            if (Number.isNaN(dt.getTime())) return;
+            try {
+                node.textContent = dt.toLocaleString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                });
+            } catch (e) {
+                // Keep server-rendered fallback text.
+            }
+        });
     }
 
     function postForm(formData) {
@@ -1236,6 +1293,8 @@ function formatElapsedRange(?string $start, ?string $end): string
         const file = dt && dt.files && dt.files[0] ? dt.files[0] : null;
         if (file) uploadFile(file);
     });
+
+    renderLocalDatetimes();
 })();
 
 (function () {

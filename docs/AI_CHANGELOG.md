@@ -144,3 +144,15 @@
 - Updated `dj/library_import.php` UI:
   - live status now shows stage + elapsed time + upload/stored sizes while polling
   - added **Recent Import History** table (latest jobs) with status, stage, elapsed, size metrics, and error snippet.
+
+## 2026-03-11 (Telemetry Accuracy + Local Time Fixes)
+- Fixed import status elapsed-time skew by parsing DB timestamps as UTC in `api/dj/import_rekordbox_xml_status.php`.
+- Updated `dj/library_import.php` to render **Last Import** and history **Created** timestamps in browser-local timezone.
+- Fixed history elapsed calculation to use UTC-safe parsing.
+- Improved `rows_inserted` / `rows_updated` accuracy in `library_import/RekordboxXMLImporter.php` by deriving insert/update outcome from MySQL `rowCount()` per `INSERT ... ON DUPLICATE KEY UPDATE`.
+
+## 2026-03-11 (DJ Request Tile Manual Path Indicator)
+- Added request-level `manual_path_matched` signal in `api/dj/get_requests.php` when a manual BPM track override (`selected_bpm_track_id` / `bpm_track_id`) is present.
+- Updated grouped request merging in `dj/dj.js` to preserve manual-path state across grouped variants.
+- Added a `Manual Path` badge in the DJ request tile metadata row so DJs can quickly see which requests are already set with a persistent manual path match.
+- Added styling for the new badge in `dj/dj.css`.

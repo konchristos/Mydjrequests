@@ -260,6 +260,7 @@ function groupDjRows(rows) {
       dj_track_id: (group.rows.find((r) => Number(r.dj_track_id || 0) > 0)?.dj_track_id) || primary.dj_track_id || null,
       manual_owned: group.rows.some((r) => Number(r.manual_owned || 0) === 1) ? 1 : Number(primary.manual_owned || 0),
       preferred_selected: group.rows.some((r) => Number(r.preferred_selected || 0) === 1) ? 1 : Number(primary.preferred_selected || 0),
+      manual_path_matched: group.rows.some((r) => Number(r.manual_path_matched || 0) === 1) ? 1 : Number(primary.manual_path_matched || 0),
       track_status: allPlayed ? "played" : (allSkipped ? "skipped" : "active"),
       group_has_played: anyPlayed,
       group_has_skipped: anySkipped,
@@ -425,6 +426,7 @@ async function applyManualMatch(bpmTrackId) {
         release_year: applied.release_year ?? r.release_year,
         manual_owned: data.owned_marked ? 1 : Number(r.manual_owned || 0),
         selected_bpm_track_id: Number(bpmTrackId || 0),
+        manual_path_matched: Number(bpmTrackId || 0) > 0 ? 1 : Number(r.manual_path_matched || 0),
         preferred_selected: data.selected_preferred ? 1 : Number(r.preferred_selected || 0),
       };
     });
@@ -1161,6 +1163,7 @@ const isPlayed = row.track_status === "played" || row.group_has_played === true;
 const isSkipped = row.track_status === "skipped" || row.group_has_skipped === true;
 const isOwned = Number(row.dj_track_id || 0) > 0 || Number(row.manual_owned || 0) === 1;
 const isPreferredSelected = Number(row.preferred_selected || 0) === 1;
+const isManualPathMatched = Number(row.manual_path_matched || 0) === 1 || Number(row.selected_bpm_track_id || 0) > 0;
 const variants = Array.isArray(row.__group_rows) ? row.__group_rows : [];
 const expandable = variants.length > 1;
 
@@ -1194,8 +1197,8 @@ const trackKey = row.track_key;
     : ``}
 </div>
         <div class="req-artist">${row.artist || ""}</div>
-        ${(formatBpmKey(row) || isPreferredSelected)
-          ? `<div class="req-bpm">${escapeHtml(formatBpmKey(row))}${isPreferredSelected ? `<span class="req-preferred-badge">Preferred</span>` : ``}</div>`
+        ${(formatBpmKey(row) || isPreferredSelected || isManualPathMatched)
+          ? `<div class="req-bpm">${escapeHtml(formatBpmKey(row))}${isPreferredSelected ? `<span class="req-preferred-badge" title="Preferred track selected">P</span>` : ``}${isManualPathMatched ? `<span class="req-manual-path-badge" title="Manual path matched">M</span>` : ``}</div>`
           : ``}
       </div>
       

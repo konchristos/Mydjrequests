@@ -114,7 +114,7 @@ function dispatchImportWorker(int $jobId): void
 /**
  * Parses DB timestamps as UTC to avoid timezone skew in elapsed calculations.
  */
-function parseUtcTimestamp(string $value): int|false
+function parseUtcTimestamp(string $value)
 {
     $value = trim($value);
     if ($value === '') {
