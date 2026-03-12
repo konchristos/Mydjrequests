@@ -156,3 +156,26 @@
 - Updated grouped request merging in `dj/dj.js` to preserve manual-path state across grouped variants.
 - Added a `Manual Path` badge in the DJ request tile metadata row so DJs can quickly see which requests are already set with a persistent manual path match.
 - Added styling for the new badge in `dj/dj.css`.
+
+## 2026-03-11 (Playlist Export Reliability Alignment)
+- Updated `api/dj/export_event_playlist.php` owned export resolution to prefer deterministic path sources in this order:
+  1. DJ event manual override (`dj_event_track_overrides.bpm_track_id`)
+  2. Linked BPM mapping (`track_links.spotify_track_id -> bpm_track_id`)
+  3. Direct `track_identity_id` match in `dj_tracks`
+  4. Direct normalized hash match
+  5. Exact core artist/title key fallback
+- Removed broad fuzzy artist/title path fallback from owned export to avoid unrelated matches.
+- Kept M3U path normalization and explicit filtering of non-local `spotify:` / `localhostspotify:` URIs.
+- Aligned candidate selection with resolver-style ranking (preferred playlist membership, rating, deterministic ID tie-break) when choosing among multiple `dj_tracks` versions.
+- Added lightweight export diagnostics headers for parity checks:
+  - `X-MDJR-Export-Total`
+  - `X-MDJR-Export-Exported`
+  - `X-MDJR-Export-Unresolved`
+  - `X-MDJR-Export-Mode`
+
+## 2026-03-12 (Manual Match Export Key Alignment Fix)
+- Fixed manual override export parity in `api/dj/export_event_playlist.php` by aligning override key generation to the same `artist_core|title_core` format used by:
+  - `api/dj/apply_manual_bpm_match.php`
+  - `api/dj/get_requests.php`
+- Added override-title-core fallback mapping so manual matched versions still resolve when artist text differs slightly between request/cache rows.
+- Result: owned M3U export now correctly prefers the manually matched version path for tracks with persisted manual overrides.

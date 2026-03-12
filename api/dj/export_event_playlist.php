@@ -33,6 +33,56 @@ function hasTableColumn(PDO $db, string $table, string $column): bool
     return ((int)$stmt->fetchColumn()) > 0;
 }
 
+function mdjrRatingExprForDjTracks(PDO $db): string
+{
+    foreach (['rating', 'stars', 'star_rating', 'rekordbox_rating', 'rb_rating', 'rating_raw'] as $col) {
+        if (hasTableColumn($db, 'dj_tracks', $col)) {
+            return "COALESCE(d.`{$col}`, 0)";
+        }
+    }
+    return "0";
+}
+
+function mdjrTrackHash(string $title, string $artist): string
+{
+    if (function_exists('trackIdentityNormalisedHash')) {
+        $h = (string)(trackIdentityNormalisedHash($title, $artist) ?? '');
+        if ($h !== '') {
+            return $h;
+        }
+    }
+    $title = mb_strtolower($title, 'UTF-8');
+    $artist = mb_strtolower($artist, 'UTF-8');
+    $title = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $title);
+    $artist = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', $artist);
+    $title = preg_replace('/\s+/u', ' ', trim((string)$title));
+    $artist = preg_replace('/\s+/u', ' ', trim((string)$artist));
+    if ($title === '' && $artist === '') {
+        return '';
+    }
+    return hash('sha256', $artist . '|' . $title);
+}
+
+function mdjrIsBetterDjPathCandidate(array $candidate, ?array $current): bool
+{
+    if ($current === null) {
+        return true;
+    }
+    $cPref = !empty($candidate['is_preferred']) ? 1 : 0;
+    $oPref = !empty($current['is_preferred']) ? 1 : 0;
+    if ($cPref !== $oPref) {
+        return $cPref > $oPref;
+    }
+    $cRating = isset($candidate['rating_value']) && is_numeric($candidate['rating_value']) ? (float)$candidate['rating_value'] : 0.0;
+    $oRating = isset($current['rating_value']) && is_numeric($current['rating_value']) ? (float)$current['rating_value'] : 0.0;
+    if (abs($cRating - $oRating) > 0.0001) {
+        return $cRating > $oRating;
+    }
+    $cId = (int)($candidate['id'] ?? PHP_INT_MAX);
+    $oId = (int)($current['id'] ?? PHP_INT_MAX);
+    return $cId < $oId;
+}
+
 function mdjrCandidateHash(array $row): string
 {
     $identityHash = trim((string)($row['identity_hash'] ?? ''));
@@ -76,8 +126,15 @@ function mdjrTableExists(PDO $db, string $table): bool
 function mdjrCoreTitle(string $title): string
 {
     $title = mb_strtolower($title, 'UTF-8');
-    $title = preg_replace('/\(.*?\)|\[.*?\]/u', ' ', $title);
-    $title = preg_replace('/\b(remaster(?:ed)?|radio|edit|mix|version|clean|explicit|mono|stereo)\b/u', ' ', (string)$title);
+    $title = preg_replace('/\\(.*?\\)|\\[.*?\\]/u', ' ', $title);
+    if (preg_match('/\\s[-–—]\\s/u', $title)) {
+        $parts = preg_split('/\\s[-–—]\\s/u', $title);
+        if (is_array($parts) && !empty($parts[0])) {
+            $title = (string)$parts[0];
+        }
+    }
+    $title = preg_replace('/\\b(feat|ft|featuring|remix|mix|edit|version|remaster(?:ed)?|radio|extended|club|original|live|explicit|clean|mono|stereo|instrumental|karaoke|rework|dub)\\b/u', ' ', (string)$title);
+    $title = preg_replace('/\\b(19|20)\\d{2}\\b/u', ' ', (string)$title);
     $title = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', (string)$title);
     $title = preg_replace('/\s+/u', ' ', trim((string)$title));
     return (string)$title;
@@ -86,7 +143,7 @@ function mdjrCoreTitle(string $title): string
 function mdjrCoreArtist(string $artist): string
 {
     $artist = mb_strtolower($artist, 'UTF-8');
-    $artist = preg_replace('/\b(feat|ft|featuring)\b\.?/u', ' ', $artist);
+    $artist = preg_replace('/\\b(feat|ft|featuring|x|vs)\\b/u', ' ', $artist);
     $artist = preg_replace('/[^\p{L}\p{N}\s]/u', ' ', (string)$artist);
     $artist = preg_replace('/\s+/u', ' ', trim((string)$artist));
     return (string)$artist;
@@ -96,10 +153,20 @@ function mdjrOverrideKey(string $title, string $artist): string
 {
     $t = mdjrCoreTitle($title);
     $a = mdjrCoreArtist($artist);
-    if ($t === '' && $a === '') {
+    if ($a === '' || $t === '') {
         return '';
     }
-    return hash('sha256', $t . '|' . $a);
+    // Must match apply_manual_bpm_match + get_requests key format exactly.
+    return $a . '|' . $t;
+}
+
+function mdjrOverrideTitleFromKey(string $overrideKey): string
+{
+    $parts = explode('|', $overrideKey, 2);
+    if (count($parts) === 2) {
+        return (string)$parts[1];
+    }
+    return '';
 }
 
 function mdjrLoadFallbackRows(PDO $db, int $eventId): array
@@ -169,6 +236,100 @@ function mdjrNormalizePlaylistPath(string $rawPath): string
     // Normalize slashes for m3u readability.
     $p = str_replace('\\', '/', $p);
     return trim($p);
+}
+
+function mdjrLoadBpmPathMap(PDO $db, int $djId, string $pathCol, array $bpmIds): array
+{
+    $bpmIds = array_values(array_unique(array_map('intval', $bpmIds)));
+    $bpmIds = array_values(array_filter($bpmIds, static fn(int $v): bool => $v > 0));
+    if (empty($bpmIds)) {
+        return [];
+    }
+
+    $in = implode(',', array_fill(0, count($bpmIds), '?'));
+    $stmt = $db->prepare("
+        SELECT id, title, artist
+        FROM bpm_test_tracks
+        WHERE id IN ($in)
+    ");
+    $stmt->execute($bpmIds);
+    $bpmRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (empty($bpmRows)) {
+        return [];
+    }
+
+    $hashToBpmIds = [];
+    foreach ($bpmRows as $r) {
+        $bid = (int)($r['id'] ?? 0);
+        if ($bid <= 0) {
+            continue;
+        }
+        $hash = mdjrTrackHash((string)($r['title'] ?? ''), (string)($r['artist'] ?? ''));
+        if ($hash === '') {
+            continue;
+        }
+        if (!isset($hashToBpmIds[$hash])) {
+            $hashToBpmIds[$hash] = [];
+        }
+        $hashToBpmIds[$hash][] = $bid;
+    }
+    if (empty($hashToBpmIds)) {
+        return [];
+    }
+
+    $ratingExpr = mdjrRatingExprForDjTracks($db);
+    $hashes = array_keys($hashToBpmIds);
+    $hin = implode(',', array_fill(0, count($hashes), '?'));
+    $sql = "
+        SELECT
+            d.id,
+            d.normalized_hash,
+            NULLIF(d.`{$pathCol}`, '') AS file_path,
+            {$ratingExpr} AS rating_value,
+            MAX(CASE WHEN dpp.playlist_id IS NULL THEN 0 ELSE 1 END) AS is_preferred
+        FROM dj_tracks d
+        LEFT JOIN dj_playlist_tracks dpt
+            ON dpt.dj_track_id = d.id
+        LEFT JOIN dj_preferred_playlists dpp
+            ON dpp.dj_id = d.dj_id
+           AND dpp.playlist_id = dpt.playlist_id
+        WHERE d.dj_id = ?
+          AND d.normalized_hash IN ($hin)
+          AND NULLIF(d.`{$pathCol}`, '') IS NOT NULL
+        GROUP BY d.id, d.normalized_hash, d.`{$pathCol}`
+    ";
+    $djStmt = $db->prepare($sql);
+    $djStmt->execute(array_merge([$djId], $hashes));
+
+    $bestByHash = [];
+    foreach ($djStmt->fetchAll(PDO::FETCH_ASSOC) as $d) {
+        $hash = trim((string)($d['normalized_hash'] ?? ''));
+        $path = mdjrNormalizePlaylistPath((string)($d['file_path'] ?? ''));
+        if ($hash === '' || $path === '') {
+            continue;
+        }
+        $candidate = [
+            'id' => (int)($d['id'] ?? 0),
+            'path' => $path,
+            'rating_value' => isset($d['rating_value']) && is_numeric($d['rating_value']) ? (float)$d['rating_value'] : 0.0,
+            'is_preferred' => !empty($d['is_preferred']) ? 1 : 0,
+        ];
+        if (!isset($bestByHash[$hash]) || mdjrIsBetterDjPathCandidate($candidate, $bestByHash[$hash])) {
+            $bestByHash[$hash] = $candidate;
+        }
+    }
+
+    $out = [];
+    foreach ($hashToBpmIds as $hash => $ids) {
+        if (empty($bestByHash[$hash]['path'])) {
+            continue;
+        }
+        $path = (string)$bestByHash[$hash]['path'];
+        foreach ($ids as $bid) {
+            $out[(int)$bid] = $path;
+        }
+    }
+    return $out;
 }
 
 try {
@@ -255,14 +416,12 @@ try {
         }
     }
 
-    $ownedByIdentity = [];
-    $ownedByHash = [];
-    $ownedByManualSpotify = [];
-    $ownedByEventOverrideKey = [];
     $pathByIdentity = [];
     $pathByHash = [];
     $pathByCoreKey = [];
-    $pathCandidatesByArtist = [];
+    $pathByOverrideKey = [];
+    $pathByOverrideTitleCore = [];
+    $pathBySpotifyLinkedBpm = [];
 
     if (!empty($identityIds) || !empty($candidateHashes)) {
         $matchConds = [];
@@ -283,83 +442,135 @@ try {
             $matchConds[] = "1=0";
         }
 
+        $ratingExpr = mdjrRatingExprForDjTracks($db);
         $djSql = "
-            SELECT id, track_identity_id, normalized_hash, artist, title, NULLIF(`{$pathCol}`, '') AS file_path
-            FROM dj_tracks
-            WHERE dj_id = ?
+            SELECT
+                d.id,
+                d.track_identity_id,
+                d.normalized_hash,
+                d.artist,
+                d.title,
+                NULLIF(d.`{$pathCol}`, '') AS file_path,
+                {$ratingExpr} AS rating_value,
+                MAX(CASE WHEN dpp.playlist_id IS NULL THEN 0 ELSE 1 END) AS is_preferred
+            FROM dj_tracks d
+            LEFT JOIN dj_playlist_tracks dpt
+                ON dpt.dj_track_id = d.id
+            LEFT JOIN dj_preferred_playlists dpp
+                ON dpp.dj_id = d.dj_id
+               AND dpp.playlist_id = dpt.playlist_id
+            WHERE d.dj_id = ?
               AND (" . implode(' OR ', $matchConds) . ")
-            ORDER BY id DESC
+            GROUP BY d.id, d.track_identity_id, d.normalized_hash, d.artist, d.title, d.`{$pathCol}`
         ";
         $djStmt = $db->prepare($djSql);
         $djStmt->execute($params);
+        $bestIdentityCandidate = [];
+        $bestHashCandidate = [];
         foreach ($djStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $tid = (int)($row['track_identity_id'] ?? 0);
             $hash = trim((string)($row['normalized_hash'] ?? ''));
-            $path = trim((string)($row['file_path'] ?? ''));
-
-            if ($tid > 0) {
-                $ownedByIdentity[$tid] = true;
-                if ($path !== '' && !isset($pathByIdentity[$tid])) {
-                    $pathByIdentity[$tid] = $path;
-                }
+            $path = mdjrNormalizePlaylistPath((string)($row['file_path'] ?? ''));
+            if ($path === '') {
+                continue;
             }
-            if ($hash !== '') {
-                $ownedByHash[$hash] = true;
-                if ($path !== '' && !isset($pathByHash[$hash])) {
-                    $pathByHash[$hash] = $path;
-                }
+            $candidate = [
+                'id' => (int)($row['id'] ?? 0),
+                'path' => $path,
+                'rating_value' => isset($row['rating_value']) && is_numeric($row['rating_value']) ? (float)$row['rating_value'] : 0.0,
+                'is_preferred' => !empty($row['is_preferred']) ? 1 : 0,
+            ];
+
+            if ($tid > 0 && (!isset($bestIdentityCandidate[$tid]) || mdjrIsBetterDjPathCandidate($candidate, $bestIdentityCandidate[$tid]))) {
+                $bestIdentityCandidate[$tid] = $candidate;
+            }
+            if ($hash !== '' && (!isset($bestHashCandidate[$hash]) || mdjrIsBetterDjPathCandidate($candidate, $bestHashCandidate[$hash]))) {
+                $bestHashCandidate[$hash] = $candidate;
             }
         }
-    }
 
-    if (mdjrTableExists($db, 'dj_owned_track_overrides')) {
-        $spotifyIds = [];
-        foreach ($rows as $row) {
-            $sid = trim((string)($row['spotify_track_id'] ?? ''));
-            if ($sid !== '') {
-                $spotifyIds[$sid] = true;
-            }
+        foreach ($bestIdentityCandidate as $tid => $cand) {
+            $pathByIdentity[(int)$tid] = (string)($cand['path'] ?? '');
         }
-        if (!empty($spotifyIds)) {
-            $ids = array_keys($spotifyIds);
-            $in = implode(',', array_fill(0, count($ids), '?'));
-            $stmt = $db->prepare("
-                SELECT spotify_track_id
-                FROM dj_owned_track_overrides
-                WHERE dj_id = ?
-                  AND spotify_track_id IN ($in)
-            ");
-            $stmt->execute(array_merge([$djId], $ids));
-            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
-                $sid = trim((string)($r['spotify_track_id'] ?? ''));
-                if ($sid !== '') {
-                    $ownedByManualSpotify[$sid] = true;
-                }
-            }
+        foreach ($bestHashCandidate as $hash => $cand) {
+            $pathByHash[(string)$hash] = (string)($cand['path'] ?? '');
         }
     }
 
     if (mdjrTableExists($db, 'dj_event_track_overrides')) {
         $stmt = $db->prepare("
-            SELECT override_key, manual_owned
+            SELECT override_key, bpm_track_id, manual_owned
             FROM dj_event_track_overrides
             WHERE dj_id = ?
               AND event_id = ?
         ");
         $stmt->execute([$djId, $eventId]);
-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $ov) {
+        $overrideRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $overrideBpmIds = [];
+        foreach ($overrideRows as $ov) {
+            $bid = isset($ov['bpm_track_id']) && is_numeric($ov['bpm_track_id']) ? (int)$ov['bpm_track_id'] : 0;
+            if ($bid > 0) {
+                $overrideBpmIds[$bid] = true;
+            }
+        }
+        $overridePathByBpmId = mdjrLoadBpmPathMap($db, $djId, $pathCol, array_keys($overrideBpmIds));
+        foreach ($overrideRows as $ov) {
             if ((int)($ov['manual_owned'] ?? 0) !== 1) {
                 continue;
             }
             $k = trim((string)($ov['override_key'] ?? ''));
-            if ($k !== '') {
-                $ownedByEventOverrideKey[$k] = true;
+            $bid = isset($ov['bpm_track_id']) && is_numeric($ov['bpm_track_id']) ? (int)$ov['bpm_track_id'] : 0;
+            if ($k !== '' && $bid > 0 && !empty($overridePathByBpmId[$bid])) {
+                $resolvedPath = (string)$overridePathByBpmId[$bid];
+                $pathByOverrideKey[$k] = $resolvedPath;
+                $titleCore = mdjrOverrideTitleFromKey($k);
+                if ($titleCore !== '' && !isset($pathByOverrideTitleCore[$titleCore])) {
+                    $pathByOverrideTitleCore[$titleCore] = $resolvedPath;
+                }
             }
         }
     }
 
-    // Path fallback index: helps when ownership is inferred (manual/global match)
-    // but no direct identity/hash path exists for the request row.
+    // Map spotify track links to local DJ paths via linked bpm_track_id.
+    $spotifyIds = [];
+    foreach ($rows as $row) {
+        $sid = trim((string)($row['spotify_track_id'] ?? ''));
+        if ($sid !== '') {
+            $spotifyIds[$sid] = true;
+        }
+    }
+    if (!empty($spotifyIds) && mdjrTableExists($db, 'track_links')) {
+        $ids = array_values(array_keys($spotifyIds));
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $db->prepare("
+            SELECT spotify_track_id, bpm_track_id
+            FROM track_links
+            WHERE spotify_track_id IN ($in)
+              AND bpm_track_id IS NOT NULL
+        ");
+        $stmt->execute($ids);
+        $spotifyToBpm = [];
+        $bpmIds = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $sid = trim((string)($r['spotify_track_id'] ?? ''));
+            $bid = isset($r['bpm_track_id']) && is_numeric($r['bpm_track_id']) ? (int)$r['bpm_track_id'] : 0;
+            if ($sid === '' || $bid <= 0) {
+                continue;
+            }
+            $spotifyToBpm[$sid] = $bid;
+            $bpmIds[$bid] = true;
+        }
+        if (!empty($spotifyToBpm) && !empty($bpmIds)) {
+            $bpmPathMap = mdjrLoadBpmPathMap($db, $djId, $pathCol, array_keys($bpmIds));
+            foreach ($spotifyToBpm as $sid => $bid) {
+                if (!empty($bpmPathMap[$bid])) {
+                    $pathBySpotifyLinkedBpm[$sid] = (string)$bpmPathMap[$bid];
+                }
+            }
+        }
+    }
+
+    // Exact core title/artist fallback index (deterministic, no fuzzy).
     $artistSeeds = [];
     foreach ($rows as $r) {
         $a = trim((string)($r['artist'] ?? ''));
@@ -383,57 +594,13 @@ try {
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $d) {
             $coreKey = mdjrOverrideKey((string)($d['title'] ?? ''), (string)($d['artist'] ?? ''));
             $path = mdjrNormalizePlaylistPath((string)($d['file_path'] ?? ''));
-            $artistCore = mdjrCoreArtist((string)($d['artist'] ?? ''));
-            $titleCore = mdjrCoreTitle((string)($d['title'] ?? ''));
             if ($coreKey === '' || $path === '') {
                 continue;
             }
             if (!isset($pathByCoreKey[$coreKey])) {
                 $pathByCoreKey[$coreKey] = $path;
             }
-            if ($artistCore !== '' && $titleCore !== '') {
-                if (!isset($pathCandidatesByArtist[$artistCore])) {
-                    $pathCandidatesByArtist[$artistCore] = [];
-                }
-                $pathCandidatesByArtist[$artistCore][] = [
-                    'title_core' => $titleCore,
-                    'path' => $path,
-                ];
-            }
         }
-    }
-
-    // Wide fallback index across full DJ library (non-empty file paths only).
-    // Used only if direct identity/hash/core-key path resolution fails.
-    try {
-        $allStmt = $db->prepare("
-            SELECT title, artist, NULLIF(`{$pathCol}`, '') AS file_path
-            FROM dj_tracks
-            WHERE dj_id = ?
-              AND NULLIF(`{$pathCol}`, '') IS NOT NULL
-            ORDER BY id DESC
-        ");
-        $allStmt->execute([$djId]);
-        foreach ($allStmt->fetchAll(PDO::FETCH_ASSOC) as $d) {
-            $path = mdjrNormalizePlaylistPath((string)($d['file_path'] ?? ''));
-            if ($path === '') {
-                continue;
-            }
-            $artistCore = mdjrCoreArtist((string)($d['artist'] ?? ''));
-            $titleCore = mdjrCoreTitle((string)($d['title'] ?? ''));
-            if ($artistCore === '' || $titleCore === '') {
-                continue;
-            }
-            if (!isset($pathCandidatesByArtist[$artistCore])) {
-                $pathCandidatesByArtist[$artistCore] = [];
-            }
-            $pathCandidatesByArtist[$artistCore][] = [
-                'title_core' => $titleCore,
-                'path' => $path,
-            ];
-        }
-    } catch (Throwable $e) {
-        // Non-blocking; export continues with existing maps.
     }
 
     $safeEvent = preg_replace('/[^a-z0-9\\-_]+/i', '_', (string)($event['title'] ?? 'event_' . $eventId));
@@ -444,14 +611,12 @@ try {
         header('Content-Disposition: attachment; filename="' . $filename . '"');
 
         $emitOwned = static function (array $sourceRows) use (
-            &$ownedByIdentity,
-            &$ownedByHash,
-            &$ownedByManualSpotify,
-            &$ownedByEventOverrideKey,
             &$pathByIdentity,
             &$pathByHash,
             &$pathByCoreKey,
-            &$pathCandidatesByArtist
+            &$pathByOverrideKey,
+            &$pathByOverrideTitleCore,
+            &$pathBySpotifyLinkedBpm
         ): array {
             $lines = [];
             $seenPaths = [];
@@ -460,48 +625,21 @@ try {
                 $hash = mdjrCandidateHash($row);
                 $sid = trim((string)($row['spotify_track_id'] ?? ''));
                 $ovk = mdjrOverrideKey((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
-                $isOwned = ($tid > 0 && isset($ownedByIdentity[$tid]))
-                    || ($hash !== '' && isset($ownedByHash[$hash]))
-                    || ($sid !== '' && isset($ownedByManualSpotify[$sid]))
-                    || ($ovk !== '' && isset($ownedByEventOverrideKey[$ovk]));
-                if (!$isOwned) {
-                    continue;
-                }
+                $titleCore = mdjrCoreTitle((string)($row['title'] ?? ''));
 
                 $path = '';
-                if ($tid > 0 && isset($pathByIdentity[$tid])) {
+                if ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
+                    $path = $pathByOverrideKey[$ovk];
+                } elseif ($titleCore !== '' && isset($pathByOverrideTitleCore[$titleCore])) {
+                    $path = $pathByOverrideTitleCore[$titleCore];
+                } elseif ($sid !== '' && isset($pathBySpotifyLinkedBpm[$sid])) {
+                    $path = $pathBySpotifyLinkedBpm[$sid];
+                } elseif ($tid > 0 && isset($pathByIdentity[$tid])) {
                     $path = $pathByIdentity[$tid];
                 } elseif ($hash !== '' && isset($pathByHash[$hash])) {
                     $path = $pathByHash[$hash];
                 } elseif ($ovk !== '' && isset($pathByCoreKey[$ovk])) {
                     $path = $pathByCoreKey[$ovk];
-                } else {
-                    // Last fallback: choose best title match within same normalized artist bucket.
-                    $artistCore = mdjrCoreArtist((string)($row['artist'] ?? ''));
-                    $titleCore = mdjrCoreTitle((string)($row['title'] ?? ''));
-                    if ($artistCore !== '' && $titleCore !== '' && !empty($pathCandidatesByArtist[$artistCore])) {
-                        $bestPath = '';
-                        $bestScore = 0.0;
-                        foreach ($pathCandidatesByArtist[$artistCore] as $cand) {
-                            $candTitle = (string)($cand['title_core'] ?? '');
-                            $candPath = (string)($cand['path'] ?? '');
-                            if ($candTitle === '' || $candPath === '') {
-                                continue;
-                            }
-                            similar_text($titleCore, $candTitle, $pct);
-                            $score = (float)$pct;
-                            if (str_contains($titleCore, $candTitle) || str_contains($candTitle, $titleCore)) {
-                                $score = max($score, 90.0);
-                            }
-                            if ($score > $bestScore) {
-                                $bestScore = $score;
-                                $bestPath = $candPath;
-                            }
-                        }
-                        if ($bestPath !== '' && $bestScore >= 55.0) {
-                            $path = $bestPath;
-                        }
-                    }
                 }
                 $path = mdjrNormalizePlaylistPath($path);
                 if ($path === '' || isset($seenPaths[$path])) {
@@ -546,26 +684,57 @@ try {
                         $params = array_merge($params, $hashes);
                     }
                     if (!empty($matchConds)) {
+                        $ratingExpr = mdjrRatingExprForDjTracks($db);
                         $djSql = "
-                            SELECT track_identity_id, normalized_hash, NULLIF(`{$pathCol}`, '') AS file_path
-                            FROM dj_tracks
-                            WHERE dj_id = ?
+                            SELECT
+                                d.id,
+                                d.track_identity_id,
+                                d.normalized_hash,
+                                NULLIF(d.`{$pathCol}`, '') AS file_path,
+                                {$ratingExpr} AS rating_value,
+                                MAX(CASE WHEN dpp.playlist_id IS NULL THEN 0 ELSE 1 END) AS is_preferred
+                            FROM dj_tracks d
+                            LEFT JOIN dj_playlist_tracks dpt
+                                ON dpt.dj_track_id = d.id
+                            LEFT JOIN dj_preferred_playlists dpp
+                                ON dpp.dj_id = d.dj_id
+                               AND dpp.playlist_id = dpt.playlist_id
+                            WHERE d.dj_id = ?
                               AND (" . implode(' OR ', $matchConds) . ")
-                            ORDER BY id DESC
+                            GROUP BY d.id, d.track_identity_id, d.normalized_hash, d.`{$pathCol}`
                         ";
                         $djStmt = $db->prepare($djSql);
                         $djStmt->execute($params);
+                        $bestIdentityCandidate = [];
+                        $bestHashCandidate = [];
                         foreach ($djStmt->fetchAll(PDO::FETCH_ASSOC) as $d) {
                             $tid = (int)($d['track_identity_id'] ?? 0);
                             $hash = trim((string)($d['normalized_hash'] ?? ''));
-                            $path = trim((string)($d['file_path'] ?? ''));
-                            if ($tid > 0) {
-                                $ownedByIdentity[$tid] = true;
-                                if ($path !== '' && !isset($pathByIdentity[$tid])) $pathByIdentity[$tid] = $path;
+                            $path = mdjrNormalizePlaylistPath((string)($d['file_path'] ?? ''));
+                            if ($path === '') {
+                                continue;
                             }
-                            if ($hash !== '') {
-                                $ownedByHash[$hash] = true;
-                                if ($path !== '' && !isset($pathByHash[$hash])) $pathByHash[$hash] = $path;
+                            $candidate = [
+                                'id' => (int)($d['id'] ?? 0),
+                                'path' => $path,
+                                'rating_value' => isset($d['rating_value']) && is_numeric($d['rating_value']) ? (float)$d['rating_value'] : 0.0,
+                                'is_preferred' => !empty($d['is_preferred']) ? 1 : 0,
+                            ];
+                            if ($tid > 0 && (!isset($bestIdentityCandidate[$tid]) || mdjrIsBetterDjPathCandidate($candidate, $bestIdentityCandidate[$tid]))) {
+                                $bestIdentityCandidate[$tid] = $candidate;
+                            }
+                            if ($hash !== '' && (!isset($bestHashCandidate[$hash]) || mdjrIsBetterDjPathCandidate($candidate, $bestHashCandidate[$hash]))) {
+                                $bestHashCandidate[$hash] = $candidate;
+                            }
+                        }
+                        foreach ($bestIdentityCandidate as $tid => $cand) {
+                            if (!isset($pathByIdentity[(int)$tid])) {
+                                $pathByIdentity[(int)$tid] = (string)($cand['path'] ?? '');
+                            }
+                        }
+                        foreach ($bestHashCandidate as $hash => $cand) {
+                            if (!isset($pathByHash[(string)$hash])) {
+                                $pathByHash[(string)$hash] = (string)($cand['path'] ?? '');
                             }
                         }
                     }
@@ -575,6 +744,14 @@ try {
             }
         }
 
+        $exportedTrackCount = (int)floor(count($ownedLines) / 2);
+        $totalRequested = count($rows);
+        $unresolved = max(0, $totalRequested - $exportedTrackCount);
+        header('X-MDJR-Export-Total: ' . $totalRequested);
+        header('X-MDJR-Export-Exported: ' . $exportedTrackCount);
+        header('X-MDJR-Export-Unresolved: ' . $unresolved);
+        header('X-MDJR-Export-Mode: deterministic-resolved-paths');
+
         echo "#EXTM3U\n";
         foreach ($ownedLines as $line) {
             echo $line . "\n";
@@ -583,10 +760,12 @@ try {
     }
 
     $emitMissing = static function (array $sourceRows) use (
-        $ownedByIdentity,
-        $ownedByHash,
-        $ownedByManualSpotify,
-        $ownedByEventOverrideKey
+        $pathByIdentity,
+        $pathByHash,
+        $pathByCoreKey,
+        $pathByOverrideKey,
+        $pathByOverrideTitleCore,
+        $pathBySpotifyLinkedBpm
     ): array {
         $lines = [];
         foreach ($sourceRows as $row) {
@@ -594,11 +773,22 @@ try {
             $hash = mdjrCandidateHash($row);
             $sid = trim((string)($row['spotify_track_id'] ?? ''));
             $ovk = mdjrOverrideKey((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
-            $isOwned = ($tid > 0 && isset($ownedByIdentity[$tid]))
-                || ($hash !== '' && isset($ownedByHash[$hash]))
-                || ($sid !== '' && isset($ownedByManualSpotify[$sid]))
-                || ($ovk !== '' && isset($ownedByEventOverrideKey[$ovk]));
-            if ($isOwned) {
+            $titleCore = mdjrCoreTitle((string)($row['title'] ?? ''));
+            $path = '';
+            if ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
+                $path = (string)$pathByOverrideKey[$ovk];
+            } elseif ($titleCore !== '' && isset($pathByOverrideTitleCore[$titleCore])) {
+                $path = (string)$pathByOverrideTitleCore[$titleCore];
+            } elseif ($sid !== '' && isset($pathBySpotifyLinkedBpm[$sid])) {
+                $path = (string)$pathBySpotifyLinkedBpm[$sid];
+            } elseif ($tid > 0 && isset($pathByIdentity[$tid])) {
+                $path = (string)$pathByIdentity[$tid];
+            } elseif ($hash !== '' && isset($pathByHash[$hash])) {
+                $path = (string)$pathByHash[$hash];
+            } elseif ($ovk !== '' && isset($pathByCoreKey[$ovk])) {
+                $path = (string)$pathByCoreKey[$ovk];
+            }
+            if (mdjrNormalizePlaylistPath($path) !== '') {
                 continue;
             }
             $artist = trim((string)($row['artist'] ?? 'Unknown Artist'));
