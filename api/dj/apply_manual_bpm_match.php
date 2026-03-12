@@ -32,6 +32,7 @@ if ($eventUuid === '' || $trackKey === '' || $bpmTrackId <= 0) {
 }
 
 ensureDjOwnedTrackOverridesTable($db);
+ensureDjGlobalTrackOverridesTable($db);
 
 $eventStmt = $db->prepare(
     "SELECT id FROM events WHERE uuid = ? AND user_id = ? LIMIT 1"
@@ -315,6 +316,47 @@ try {
             ':manual_owned' => $selectedOwned ? 1 : 0,
             ':manual_preferred' => $selectedPreferred ? 1 : 0,
         ]);
+
+        // DJ-global sticky override (set-and-forget across future events).
+        $globalStmt = $db->prepare("
+            INSERT INTO dj_global_track_overrides (
+                dj_id,
+                override_key,
+                bpm_track_id,
+                bpm,
+                musical_key,
+                release_year,
+                manual_owned,
+                manual_preferred
+            ) VALUES (
+                :dj_id,
+                :override_key,
+                :bpm_track_id,
+                :bpm,
+                :musical_key,
+                :release_year,
+                :manual_owned,
+                :manual_preferred
+            )
+            ON DUPLICATE KEY UPDATE
+                bpm_track_id = VALUES(bpm_track_id),
+                bpm = VALUES(bpm),
+                musical_key = VALUES(musical_key),
+                release_year = VALUES(release_year),
+                manual_owned = VALUES(manual_owned),
+                manual_preferred = VALUES(manual_preferred),
+                updated_at = CURRENT_TIMESTAMP
+        ");
+        $globalStmt->execute([
+            ':dj_id' => (int)($_SESSION['dj_id'] ?? 0),
+            ':override_key' => $overrideKey,
+            ':bpm_track_id' => $bpmTrackId,
+            ':bpm' => $bpmValue,
+            ':musical_key' => $appliedKey,
+            ':release_year' => $yearValue,
+            ':manual_owned' => $selectedOwned ? 1 : 0,
+            ':manual_preferred' => $selectedPreferred ? 1 : 0,
+        ]);
     }
 
     $db->commit();
@@ -393,6 +435,48 @@ function ensureDjEventTrackOverridesTable(PDO $db): void
         }
         if (empty($cols['manual_preferred'])) {
             $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned");
+        }
+    } catch (Throwable $e) {
+        // non-fatal
+    }
+}
+
+function ensureDjGlobalTrackOverridesTable(PDO $db): void
+{
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS dj_global_track_overrides (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            dj_id BIGINT UNSIGNED NOT NULL,
+            override_key VARCHAR(512) NOT NULL,
+            bpm_track_id BIGINT UNSIGNED NULL,
+            bpm DECIMAL(6,2) NULL,
+            musical_key VARCHAR(32) NULL,
+            release_year INT NULL,
+            manual_owned TINYINT(1) NOT NULL DEFAULT 1,
+            manual_preferred TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_dj_global_track_overrides (dj_id, override_key),
+            KEY idx_dj_global_track_overrides_dj (dj_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    try {
+        $colStmt = $db->prepare("
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'dj_global_track_overrides'
+        ");
+        $colStmt->execute();
+        $cols = [];
+        foreach (($colStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) as $col) {
+            $cols[strtolower((string)$col)] = true;
+        }
+        if (empty($cols['bpm_track_id'])) {
+            $db->exec(\"ALTER TABLE dj_global_track_overrides ADD COLUMN bpm_track_id BIGINT UNSIGNED NULL AFTER override_key\");
+        }
+        if (empty($cols['manual_preferred'])) {
+            $db->exec(\"ALTER TABLE dj_global_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned\");
         }
     } catch (Throwable $e) {
         // non-fatal

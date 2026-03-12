@@ -78,6 +78,38 @@ if ($overrideKey !== '') {
         $selectedBpmTrackId = 0;
     }
 }
+if ($selectedBpmTrackId <= 0 && $overrideKey !== '') {
+    try {
+        $govStmt = $db->prepare("
+            SELECT bpm_track_id
+            FROM dj_global_track_overrides
+            WHERE dj_id = ?
+              AND override_key = ?
+            LIMIT 1
+        ");
+        $govStmt->execute([(int)($_SESSION['dj_id'] ?? 0), $overrideKey]);
+        $selectedBpmTrackId = (int)($govStmt->fetchColumn() ?: 0);
+    } catch (Throwable $e) {
+        $selectedBpmTrackId = 0;
+    }
+}
+if ($selectedBpmTrackId <= 0 && $overrideKey !== '') {
+    try {
+        $legacyStmt = $db->prepare("
+            SELECT bpm_track_id
+            FROM dj_event_track_overrides
+            WHERE dj_id = ?
+              AND override_key = ?
+              AND bpm_track_id IS NOT NULL
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+        ");
+        $legacyStmt->execute([(int)($_SESSION['dj_id'] ?? 0), $overrideKey]);
+        $selectedBpmTrackId = (int)($legacyStmt->fetchColumn() ?: 0);
+    } catch (Throwable $e) {
+        $selectedBpmTrackId = 0;
+    }
+}
 if ($selectedBpmTrackId <= 0) {
     $sid = trim((string)($req['spotify_track_id'] ?? ''));
     if ($sid !== '') {
@@ -558,6 +590,67 @@ foreach ($rows as $row) {
         'raw_artist_hit' => $rawArtistHit,
         'exact_pair_hit' => $exactPairHit,
     ];
+}
+
+// Always include currently selected/manual-matched track in modal results,
+// even when query filters are strict, so DJs can see current linked version.
+if ($selectedBpmTrackId > 0) {
+    $hasSelected = false;
+    foreach ($scored as $sr) {
+        if ((int)($sr['id'] ?? 0) === $selectedBpmTrackId) {
+            $hasSelected = true;
+            break;
+        }
+    }
+    if (!$hasSelected) {
+        try {
+            $selStmt = $db->prepare("
+                SELECT id, title, artist, bpm, key_text, year, genre, {$bpmRatingSelect} AS rating_value
+                FROM bpm_test_tracks
+                WHERE id = ?
+                LIMIT 1
+            ");
+            $selStmt->execute([$selectedBpmTrackId]);
+            $sel = $selStmt->fetch(PDO::FETCH_ASSOC);
+            if ($sel) {
+                $selTitle = (string)($sel['title'] ?? '');
+                $selArtist = (string)($sel['artist'] ?? '');
+                $titleScore = similarityPercent($matchTitle, $selTitle);
+                $titleScoreLoose = similarityPercentLooseTitle($matchTitle, $selTitle);
+                $effectiveTitleScore = max($titleScore, $titleScoreLoose);
+                $artistScore = similarityPercent($matchArtist, $selArtist);
+                $rowTokens = tokeniseForMatch($selTitle . ' ' . $selArtist);
+                $tokenHit = 0;
+                foreach ($tokens as $tk) {
+                    if (in_array($tk, $rowTokens, true)) {
+                        $tokenHit++;
+                    }
+                }
+                $tokenScore = $tokens ? (($tokenHit / count($tokens)) * 100.0) : 0.0;
+                $scored[] = [
+                    'id' => (int)$sel['id'],
+                    'title' => $selTitle,
+                    'artist' => $selArtist,
+                    'bpm' => isset($sel['bpm']) && is_numeric($sel['bpm']) ? (float)$sel['bpm'] : null,
+                    'key_text' => trim((string)($sel['key_text'] ?? '')),
+                    'year' => isset($sel['year']) && is_numeric($sel['year']) ? (int)$sel['year'] : null,
+                    'genre' => trim((string)($sel['genre'] ?? '')),
+                    'rating_value' => isset($sel['rating_value']) && is_numeric($sel['rating_value']) ? (float)$sel['rating_value'] : 0.0,
+                    'match_score' => round(max(140.0, ($effectiveTitleScore * 0.45) + ($artistScore * 0.20) + ($tokenScore * 0.15)), 2),
+                    'title_score' => round($effectiveTitleScore, 2),
+                    'artist_score' => round($artistScore, 2),
+                    'token_score' => round($tokenScore, 2),
+                    'direct_title_hit' => 1,
+                    'direct_artist_hit' => 1,
+                    'raw_title_hit' => 1,
+                    'raw_artist_hit' => 1,
+                    'exact_pair_hit' => 0,
+                ];
+            }
+        } catch (Throwable $e) {
+            // non-blocking
+        }
+    }
 }
 
 // Final guard: in manual mode, ensure results respect the typed search query.

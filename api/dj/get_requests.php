@@ -11,6 +11,7 @@ require_once __DIR__ . '/../../app/bootstrap.php';
 $db = db();
 ensureDjOwnedTrackOverridesTable($db);
 ensureDjEventTrackOverridesTable($db);
+ensureDjGlobalTrackOverridesTable($db);
 
 $eventUuid = $_GET['event'] ?? '';
 if (!$eventUuid) {
@@ -218,6 +219,8 @@ try {
 $djId = (int)($_SESSION['dj_id'] ?? 0);
 $eventOverrideMap = [];
 $eventOverrideTitleMap = [];
+$globalOverrideMap = [];
+$globalOverrideTitleMap = [];
 if ($djId > 0 && !empty($rows)) {
     try {
         $ovStmt = $db->prepare("
@@ -237,6 +240,55 @@ if ($djId > 0 && !empty($rows)) {
             $titleCore = mdjr_override_title_from_key($k);
             if ($titleCore !== '' && !isset($eventOverrideTitleMap[$titleCore])) {
                 $eventOverrideTitleMap[$titleCore] = $ov;
+            }
+        }
+    } catch (Throwable $e) {
+        // Non-blocking.
+    }
+
+    try {
+        $govStmt = $db->prepare("
+            SELECT override_key, bpm_track_id, bpm, musical_key, release_year, manual_owned, manual_preferred
+            FROM dj_global_track_overrides
+            WHERE dj_id = ?
+        ");
+        $govStmt->execute([$djId]);
+        foreach ($govStmt->fetchAll(PDO::FETCH_ASSOC) as $gov) {
+            $k = trim((string)($gov['override_key'] ?? ''));
+            if ($k === '') {
+                continue;
+            }
+            $globalOverrideMap[$k] = $gov;
+
+            $titleCore = mdjr_override_title_from_key($k);
+            if ($titleCore !== '' && !isset($globalOverrideTitleMap[$titleCore])) {
+                $globalOverrideTitleMap[$titleCore] = $gov;
+            }
+        }
+    } catch (Throwable $e) {
+        // Non-blocking.
+    }
+
+    // Legacy fallback: if a global key is missing, reuse the latest known
+    // event-level override from any event for this DJ.
+    try {
+        $legacyStmt = $db->prepare("
+            SELECT override_key, bpm_track_id, bpm, musical_key, release_year, manual_owned, manual_preferred
+            FROM dj_event_track_overrides
+            WHERE dj_id = ?
+            ORDER BY updated_at DESC, id DESC
+        ");
+        $legacyStmt->execute([$djId]);
+        foreach ($legacyStmt->fetchAll(PDO::FETCH_ASSOC) as $legacy) {
+            $k = trim((string)($legacy['override_key'] ?? ''));
+            if ($k === '' || isset($globalOverrideMap[$k])) {
+                continue;
+            }
+            $globalOverrideMap[$k] = $legacy;
+
+            $titleCore = mdjr_override_title_from_key($k);
+            if ($titleCore !== '' && !isset($globalOverrideTitleMap[$titleCore])) {
+                $globalOverrideTitleMap[$titleCore] = $legacy;
             }
         }
     } catch (Throwable $e) {
@@ -548,6 +600,7 @@ if (!empty($spotifyIds)) {
         $bpmSql = "
             SELECT
               tl.spotify_track_id,
+              MAX(tl.bpm_track_id) AS bpm_track_id,
               MAX(bt.bpm) AS bpm,
               MAX(bt.key_text) AS musical_key,
               MAX(bt.year) AS matched_year
@@ -567,6 +620,9 @@ if (!empty($spotifyIds)) {
             }
 
             $bpmMap[$sid] = [
+                'bpm_track_id' => isset($bpmRow['bpm_track_id']) && is_numeric($bpmRow['bpm_track_id']) && (int)$bpmRow['bpm_track_id'] > 0
+                    ? (int)$bpmRow['bpm_track_id']
+                    : null,
                 'bpm' => isset($bpmRow['bpm']) ? (float)$bpmRow['bpm'] : null,
                 'musical_key' => trim((string)($bpmRow['musical_key'] ?? '')),
                 'release_year' => isset($bpmRow['matched_year']) && is_numeric($bpmRow['matched_year'])
@@ -622,11 +678,20 @@ foreach ($rows as &$row) {
         $ov = $eventOverrideMap[$overrideKey];
     } elseif ($overrideTitleCore !== '' && isset($eventOverrideTitleMap[$overrideTitleCore])) {
         $ov = $eventOverrideTitleMap[$overrideTitleCore];
+    } elseif ($overrideKey !== '' && isset($globalOverrideMap[$overrideKey])) {
+        $ov = $globalOverrideMap[$overrideKey];
+    } elseif ($overrideTitleCore !== '' && isset($globalOverrideTitleMap[$overrideTitleCore])) {
+        $ov = $globalOverrideTitleMap[$overrideTitleCore];
     }
 
     if (is_array($ov)) {
         if (isset($ov['bpm_track_id']) && is_numeric($ov['bpm_track_id']) && (int)$ov['bpm_track_id'] > 0) {
             $row['selected_bpm_track_id'] = (int)$ov['bpm_track_id'];
+            $row['manual_path_matched'] = 1;
+        } elseif ($sid !== '' && isset($bpmMap[$sid]['bpm_track_id']) && is_numeric($bpmMap[$sid]['bpm_track_id']) && (int)$bpmMap[$sid]['bpm_track_id'] > 0) {
+            // Legacy/manual rows may have override metadata but missing bpm_track_id.
+            // If this row is explicitly overridden and a link exists, hydrate selected id.
+            $row['selected_bpm_track_id'] = (int)$bpmMap[$sid]['bpm_track_id'];
             $row['manual_path_matched'] = 1;
         }
         if (isset($ov['bpm']) && is_numeric($ov['bpm']) && (float)$ov['bpm'] > 0) {
@@ -1063,6 +1128,49 @@ function ensureDjEventTrackOverridesTable(PDO $db): void
         }
         if (empty($cols['manual_preferred'])) {
             $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned");
+        }
+    } catch (Throwable $e) {
+        // non-fatal schema backfill
+    }
+}
+
+function ensureDjGlobalTrackOverridesTable(PDO $db): void
+{
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS dj_global_track_overrides (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            dj_id BIGINT UNSIGNED NOT NULL,
+            override_key VARCHAR(512) NOT NULL,
+            bpm_track_id BIGINT UNSIGNED NULL,
+            bpm DECIMAL(6,2) NULL,
+            musical_key VARCHAR(32) NULL,
+            release_year INT NULL,
+            manual_owned TINYINT(1) NOT NULL DEFAULT 1,
+            manual_preferred TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_dj_global_track_overrides (dj_id, override_key),
+            KEY idx_dj_global_track_overrides_dj (dj_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    try {
+        $stmt = $db->prepare("
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'dj_global_track_overrides'
+        ");
+        $stmt->execute();
+        $cols = [];
+        foreach (($stmt->fetchAll(PDO::FETCH_COLUMN) ?: []) as $col) {
+            $cols[strtolower((string)$col)] = true;
+        }
+        if (empty($cols['bpm_track_id'])) {
+            $db->exec("ALTER TABLE dj_global_track_overrides ADD COLUMN bpm_track_id BIGINT UNSIGNED NULL AFTER override_key");
+        }
+        if (empty($cols['manual_preferred'])) {
+            $db->exec("ALTER TABLE dj_global_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned");
         }
     } catch (Throwable $e) {
         // non-fatal schema backfill

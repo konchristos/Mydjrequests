@@ -334,6 +334,7 @@ async function loadManualMatchCandidates(track, query = "") {
     }
 
     const rows = Array.isArray(data.rows) ? data.rows : [];
+    const selectedBpmId = Number(track?.selected_bpm_track_id || data?.selected_bpm_track_id || 0);
     const scope = String(data.scope || "");
     const scopeMessage = String(data.scope_message || "");
     if (!rows.length) {
@@ -353,7 +354,7 @@ async function loadManualMatchCandidates(track, query = "") {
       const isPreferred = Number(row.is_preferred || 0) === 1;
       const playlistBadge = String(row.playlist_badge || "").trim();
       const isFiveStar = Number(row.is_five_star || 0) === 1;
-      const isSelected = Number(row.is_selected || 0) === 1;
+      const isSelected = Number(row.is_selected || 0) === 1 || (selectedBpmId > 0 && Number(row.id || 0) === selectedBpmId);
       return `
       <div class="manual-match-item ${isSelected ? "manual-match-item-selected" : ""}">
         <div class="manual-match-item-main">
