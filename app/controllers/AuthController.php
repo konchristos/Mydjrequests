@@ -192,10 +192,18 @@ public function login(array $data): array
     
     
     
-    $email    = trim($data['email'] ?? '');
+    $email = trim($data['email'] ?? '');
     $password = $data['password'] ?? '';
+    $recoveryCode = trim($data['recovery_code'] ?? '');
 
-    if ($email === '' || $password === '') {
+    if ($email === '') {
+        return [
+            'success' => false,
+            'message' => 'Missing email.'
+        ];
+    }
+
+    if ($password === '' && $recoveryCode === '') {
         return [
             'success' => false,
             'message' => 'Missing email or password.'
@@ -204,7 +212,6 @@ public function login(array $data): array
 
   $user = $this->userModel->findByEmail($email);
 
-    $recoveryCode = trim($data['recovery_code'] ?? '');
     if ($recoveryCode !== '') {
         if (!$user) {
             return [

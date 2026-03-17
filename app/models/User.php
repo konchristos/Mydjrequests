@@ -336,6 +336,20 @@ public function replaceRecoveryCodes(int $userId, array $codes): void
     }
 }
 
+public function hasActiveRecoveryCodes(int $userId): bool
+{
+    $stmt = $this->db->prepare("
+        SELECT 1
+        FROM user_recovery_codes
+        WHERE user_id = :uid
+          AND used_at IS NULL
+        LIMIT 1
+    ");
+    $stmt->execute(['uid' => $userId]);
+
+    return (bool)$stmt->fetchColumn();
+}
+
 public function useRecoveryCode(int $userId, string $code): bool
 {
     $hash = hash('sha256', $code);

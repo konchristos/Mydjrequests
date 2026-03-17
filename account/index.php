@@ -10,6 +10,11 @@ $djId = (int)$_SESSION['dj_id'];
 
 $userModel = new User();
 $user = $userModel->findById($djId);
+$djFullName = trim((string)($user['name'] ?? ''));
+$djName = trim((string)($user['dj_name'] ?? ''));
+$hasActiveRecoveryCodes = $userModel->hasActiveRecoveryCodes($djId);
+$recoveryCodesError = $_SESSION['recovery_codes_error'] ?? '';
+unset($_SESSION['recovery_codes_error']);
 $subscription = null;
 $alphaOpenAccess = false;
 $accessLabel = 'Trial';
@@ -192,6 +197,16 @@ require_once __DIR__ . '/../dj/layout.php';
     <div class="kv">
       <span>Email</span>
       <strong><?= htmlspecialchars($user['email']) ?></strong>
+    </div>
+
+    <div class="kv">
+      <span>DJ Full Name</span>
+      <strong><?= $djFullName !== '' ? e($djFullName) : 'Not set' ?></strong>
+    </div>
+
+    <div class="kv">
+      <span>DJ Name</span>
+      <strong><?= $djName !== '' ? e($djName) : 'Not set' ?></strong>
     </div>
 
     <div class="kv">
@@ -402,20 +417,27 @@ $isCurrent =
   <!-- =========================
        RECOVERY CODES
   ========================== -->
-  <section class="card">
+  <section class="card" id="recovery-codes">
     <h2>Recovery Codes</h2>
 
     <p class="muted">
       Recovery codes let you access your account if you lose email access. Each code can be used once.
     </p>
 
+    <?php if ($recoveryCodesError !== ''): ?>
+      <div class="error" style="margin-top:10px;"><?= e($recoveryCodesError) ?></div>
+    <?php endif; ?>
+
     <form method="post" action="/account/recovery_codes.php" style="margin-top:10px;">
       <?= csrf_field() ?>
+      <input type="hidden" name="confirm_overwrite" value="0">
       <button class="btn-secondary">
-        Generate recovery codes
+        <?= $hasActiveRecoveryCodes ? 'Generate new recovery codes' : 'Generate recovery codes' ?>
       </button>
       <p class="form-note">
-        Generating new codes will invalidate previous ones.
+        <?= $hasActiveRecoveryCodes
+          ? 'Generating new codes will invalidate your current unused codes.'
+          : 'Recovery codes are shown only once, so save them somewhere secure.' ?>
       </p>
     </form>
 
@@ -423,7 +445,14 @@ $isCurrent =
       <div class="security-toast" style="margin-top:12px;">
         <strong>Save these codes now.</strong> This is the only time they will be shown.
       </div>
-      <button type="button" id="copy-recovery" class="btn-secondary" style="margin-top:10px;">Copy codes</button>
+      <button
+        type="button"
+        id="copy-recovery"
+        class="btn-secondary"
+        style="margin-top:10px;"
+        data-default-label="Copy codes"
+        data-success-label="Copied!"
+      >Copy codes</button>
       <ul style="margin-top:10px; columns:2;">
         <?php foreach ($_SESSION['recovery_codes'] as $code): ?>
           <li style="font-family:monospace; margin-bottom:6px;"><?= e($code) ?></li>
@@ -438,6 +467,61 @@ $isCurrent =
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+  const copyRecoveryButton = document.getElementById('copy-recovery');
+  if (copyRecoveryButton) {
+    copyRecoveryButton.addEventListener('click', async function () {
+      const codeItems = Array.from(document.querySelectorAll('#copy-recovery + ul li'));
+      const codes = codeItems.map(function (item) {
+        return item.textContent.trim();
+      }).filter(Boolean);
+
+      if (!codes.length) {
+        return;
+      }
+
+      const defaultLabel = copyRecoveryButton.dataset.defaultLabel || 'Copy codes';
+      const successLabel = copyRecoveryButton.dataset.successLabel || 'Copied!';
+
+      try {
+        await navigator.clipboard.writeText(codes.join('\n'));
+        copyRecoveryButton.textContent = successLabel;
+        copyRecoveryButton.disabled = true;
+
+        window.setTimeout(function () {
+          copyRecoveryButton.textContent = defaultLabel;
+          copyRecoveryButton.disabled = false;
+        }, 1800);
+      } catch (err) {
+        window.alert('Could not copy the recovery codes automatically. Please copy them manually.');
+      }
+    });
+  }
+
+  const recoveryForm = document.querySelector('form[action="/account/recovery_codes.php"]');
+  if (recoveryForm) {
+    recoveryForm.addEventListener('submit', function (e) {
+      const hasExistingCodes = <?= $hasActiveRecoveryCodes ? 'true' : 'false' ?>;
+      if (!hasExistingCodes) {
+        const confirmInput = recoveryForm.querySelector('input[name="confirm_overwrite"]');
+        if (confirmInput) {
+          confirmInput.value = '1';
+        }
+        return;
+      }
+
+      const confirmed = window.confirm('Are you sure you want to overwrite your existing recovery codes? Your current unused codes will stop working.');
+      if (!confirmed) {
+        e.preventDefault();
+        return;
+      }
+
+      const confirmInput = recoveryForm.querySelector('input[name="confirm_overwrite"]');
+      if (confirmInput) {
+        confirmInput.value = '1';
+      }
+    });
+  }
+
   const form = document.getElementById('change-password-form');
   if (!form) return;
 

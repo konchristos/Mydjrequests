@@ -212,26 +212,36 @@ try {
     
 <!-- Event Info Tile -->
 <div class="dj-event-tile">
-<div class="event-header-row">
-  <h1 class="event-title">
-    <?= htmlspecialchars_decode($event['title'], ENT_QUOTES) ?>
-  </h1>
-
-  
-</div>
-
-<div class="event-meta">
-  <span>📅 <?= date('D j M Y', strtotime($event['event_date'])) ?></span>
-  <span>📍 <?= htmlspecialchars($event['location'] ?: '—') ?></span>
-  
-</div>
-  
-  
-    <div class="dj-event-actions">
-      <div class="dj-event-state" id="djEventStateControl"></div>
-      <span id="djEventStateBadge"></span>
+  <div class="dj-event-layout">
+    <div class="dj-library-mini">
+      <div class="dj-library-mini-metrics">
+        <span class="dj-library-mini-pill owned">✔ Owned <strong id="djLibraryOwnedCount">0</strong></span>
+        <span class="dj-library-mini-pill missing">✕ Missing <strong id="djLibraryMissingCount">0</strong></span>
+      </div>
+      <div class="dj-library-mini-actions">
+        <button id="djDownloadOwnedPlaylist" class="reply-btn primary" type="button">&#8595; Playlist</button>
+        <button id="djDownloadMissingTracks" class="reply-btn secondary" type="button">&#8595; Missing</button>
+      </div>
     </div>
 
+    <div class="dj-event-main">
+      <div class="event-header-row">
+        <h1 class="event-title">
+          <?= htmlspecialchars_decode($event['title'], ENT_QUOTES) ?>
+        </h1>
+      </div>
+
+      <div class="event-meta">
+        <span>📅 <?= date('D j M Y', strtotime($event['event_date'])) ?></span>
+        <span>📍 <?= htmlspecialchars($event['location'] ?: '—') ?></span>
+      </div>
+
+      <div class="dj-event-actions">
+      <div class="dj-event-state" id="djEventStateControl"></div>
+      <span id="djEventStateBadge"></span>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- TOP WIDGETS ROW -->
@@ -271,27 +281,6 @@ try {
 
 </div>
   
-  <div class="dj-library-summary-card">
-    <div class="dj-library-summary-head">
-      <h3>Library Match Summary</h3>
-      <div id="djLibrarySummaryRequests" class="dj-library-summary-requests">0 total requests</div>
-    </div>
-    <div class="dj-library-summary-metrics">
-      <div class="dj-library-metric owned">
-        <div class="label">✔ Owned Tracks</div>
-        <div id="djLibraryOwnedCount" class="value">0</div>
-      </div>
-      <div class="dj-library-metric missing">
-        <div class="label">❌ Missing Tracks</div>
-        <div id="djLibraryMissingCount" class="value">0</div>
-      </div>
-    </div>
-    <div class="dj-library-summary-actions">
-      <button id="djDownloadOwnedPlaylist" class="reply-btn primary" type="button">Download Playlist</button>
-      <button id="djDownloadMissingTracks" class="reply-btn secondary" type="button">Download Missing Tracks</button>
-    </div>
-  </div>
-
   <!-- Track Panel -->
   <div id="trackPanel">
     <div class="empty-panel">

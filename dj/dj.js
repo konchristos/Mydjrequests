@@ -2734,15 +2734,16 @@ function renderLibrarySummary(data) {
   const ownedEl = document.getElementById("djLibraryOwnedCount");
   const missingEl = document.getElementById("djLibraryMissingCount");
   const totalEl = document.getElementById("djLibrarySummaryRequests");
-  if (!ownedEl || !missingEl || !totalEl) return;
+  if (!ownedEl || !missingEl) return;
 
   const owned = Number(data?.owned_tracks || 0);
   const missing = Number(data?.missing_tracks || 0);
-  const totalRequests = Number(data?.total_requests || 0);
-
   ownedEl.textContent = String(owned);
   missingEl.textContent = String(missing);
-  totalEl.textContent = `${totalRequests} total requests`;
+  if (totalEl) {
+    const totalTracks = owned + missing;
+    totalEl.textContent = `${totalTracks} tracks`;
+  }
 }
 
 function syncLibrarySummaryFromRows(rows) {
@@ -2776,8 +2777,7 @@ async function loadEventLibrarySummary() {
 
   const hasSummaryUi =
     document.getElementById("djLibraryOwnedCount") &&
-    document.getElementById("djLibraryMissingCount") &&
-    document.getElementById("djLibrarySummaryRequests");
+    document.getElementById("djLibraryMissingCount");
   if (!hasSummaryUi) return;
 
   try {
