@@ -67,13 +67,13 @@ function handleChunkStart(int $djId): void
         return;
     }
 
-    if (strtolower(pathinfo($fileName, PATHINFO_EXTENSION)) !== 'xml') {
+    if (!isAllowedLibraryUploadName($fileName)) {
         http_response_code(400);
-        echo json_encode(['error' => 'Only .xml files are allowed.']);
+        echo json_encode(['error' => 'Only .xml and .zip files are allowed.']);
         return;
     }
 
-    $safeName = sanitiseXmlFilename($fileName);
+    $safeName = sanitiseLibraryFilename($fileName);
     $uploadId = bin2hex(random_bytes(16));
 
     $sessionDir = chunkSessionDir($djId, $uploadId);
@@ -188,9 +188,10 @@ function handleChunkFinish(PDO $db, int $djId): void
         }
     }
 
-    $targetPath = buildTargetXmlPath($djId, (string)($meta['safe_name'] ?? 'rekordbox_library.xml'));
+    $safeName = (string)($meta['safe_name'] ?? 'rekordbox_library.xml');
+    $targetUploadPath = buildTargetUploadPath($djId, $safeName);
 
-    $out = fopen($targetPath, 'wb');
+    $out = fopen($targetUploadPath, 'wb');
     if ($out === false) {
         throw new RuntimeException('Failed to create merged XML file.');
     }
@@ -209,8 +210,8 @@ function handleChunkFinish(PDO $db, int $djId): void
     }
 
     $declaredBytes = max(0, (int)($meta['file_size'] ?? 0));
-    $storedBytes = is_file($targetPath) ? max(0, (int)@filesize($targetPath)) : 0;
-    $jobId = createImportJob($db, $djId, $targetPath, $uploadId, $declaredBytes, $storedBytes);
+    [$sourcePath, $storedBytes] = prepareUploadedLibrarySource($djId, $targetUploadPath, $safeName);
+    $jobId = createImportJob($db, $djId, $sourcePath, $uploadId, $declaredBytes, $storedBytes);
     $dispatched = dispatchImportWorker($jobId);
 
     echo json_encode([
@@ -250,20 +251,21 @@ function handleSingleUpload(PDO $db, int $djId): void
         return;
     }
 
-    if (strtolower(pathinfo($originalName, PATHINFO_EXTENSION)) !== 'xml') {
+    if (!isAllowedLibraryUploadName($originalName)) {
         http_response_code(400);
-        echo json_encode(['error' => 'Only .xml files are allowed.']);
+        echo json_encode(['error' => 'Only .xml and .zip files are allowed.']);
         return;
     }
 
-    $targetPath = buildTargetXmlPath($djId, sanitiseXmlFilename($originalName));
-    if (!move_uploaded_file($tmpPath, $targetPath)) {
+    $safeName = sanitiseLibraryFilename($originalName);
+    $targetUploadPath = buildTargetUploadPath($djId, $safeName);
+    if (!move_uploaded_file($tmpPath, $targetUploadPath)) {
         throw new RuntimeException('Failed to store uploaded file.');
     }
 
     $declaredBytes = max(0, (int)($file['size'] ?? 0));
-    $storedBytes = is_file($targetPath) ? max(0, (int)@filesize($targetPath)) : 0;
-    $jobId = createImportJob($db, $djId, $targetPath, null, $declaredBytes, $storedBytes);
+    [$sourcePath, $storedBytes] = prepareUploadedLibrarySource($djId, $targetUploadPath, $safeName);
+    $jobId = createImportJob($db, $djId, $sourcePath, null, $declaredBytes, $storedBytes);
     $dispatched = dispatchImportWorker($jobId);
 
     echo json_encode([
@@ -385,21 +387,123 @@ function loadChunkMeta(int $djId, string $uploadId): ?array
     return $meta;
 }
 
-function buildTargetXmlPath(int $djId, string $safeName): string
+function buildTargetUploadPath(int $djId, string $safeName): string
 {
     return baseUploadDir() . '/' . $djId . '_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '_' . $safeName;
 }
 
-function sanitiseXmlFilename(string $fileName): string
+function sanitiseLibraryFilename(string $fileName): string
 {
     $safe = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($fileName));
     if ($safe === '' || $safe === '.' || $safe === '..') {
         $safe = 'rekordbox_library.xml';
     }
-    if (strtolower(pathinfo($safe, PATHINFO_EXTENSION)) !== 'xml') {
+    $ext = strtolower((string)pathinfo($safe, PATHINFO_EXTENSION));
+    if (!in_array($ext, ['xml', 'zip'], true)) {
         $safe .= '.xml';
     }
     return $safe;
+}
+
+function isAllowedLibraryUploadName(string $fileName): bool
+{
+    $ext = strtolower((string)pathinfo(trim($fileName), PATHINFO_EXTENSION));
+    return in_array($ext, ['xml', 'zip'], true);
+}
+
+/**
+ * @return array{0:string,1:int}
+ */
+function prepareUploadedLibrarySource(int $djId, string $uploadedPath, string $originalSafeName): array
+{
+    $ext = strtolower((string)pathinfo($originalSafeName, PATHINFO_EXTENSION));
+    if ($ext !== 'zip') {
+        $storedBytes = is_file($uploadedPath) ? max(0, (int)@filesize($uploadedPath)) : 0;
+        return [$uploadedPath, $storedBytes];
+    }
+
+    if (!class_exists('ZipArchive')) {
+        throw new RuntimeException('ZIP uploads are not supported on this server.');
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($uploadedPath) !== true) {
+        throw new RuntimeException('Failed to open ZIP archive.');
+    }
+
+    $xmlEntries = [];
+    $maxExtractedBytes = 2 * 1024 * 1024 * 1024; // 2 GB
+    try {
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $stat = $zip->statIndex($i);
+            if (!is_array($stat)) {
+                continue;
+            }
+            $name = (string)($stat['name'] ?? '');
+            if ($name === '' || str_ends_with($name, '/')) {
+                continue;
+            }
+            if (strtolower((string)pathinfo($name, PATHINFO_EXTENSION)) !== 'xml') {
+                continue;
+            }
+            $xmlEntries[] = $stat;
+        }
+
+        if (count($xmlEntries) !== 1) {
+            throw new RuntimeException('ZIP must contain exactly one XML file.');
+        }
+
+        $entry = $xmlEntries[0];
+        $entryName = (string)($entry['name'] ?? '');
+        $entrySize = max(0, (int)($entry['size'] ?? 0));
+        if ($entrySize <= 0) {
+            throw new RuntimeException('ZIP XML entry is empty.');
+        }
+        if ($entrySize > $maxExtractedBytes) {
+            throw new RuntimeException('Extracted XML exceeds the 2GB safety limit.');
+        }
+
+        $xmlSafeName = sanitiseLibraryFilename((string)basename($entryName));
+        if (strtolower((string)pathinfo($xmlSafeName, PATHINFO_EXTENSION)) !== 'xml') {
+            $xmlSafeName .= '.xml';
+        }
+        $targetXmlPath = buildTargetUploadPath($djId, $xmlSafeName);
+
+        $in = $zip->getStream($entryName);
+        if ($in === false) {
+            throw new RuntimeException('Failed to read XML from ZIP archive.');
+        }
+
+        $out = fopen($targetXmlPath, 'wb');
+        if ($out === false) {
+            fclose($in);
+            throw new RuntimeException('Failed to create extracted XML file.');
+        }
+
+        try {
+            $copied = stream_copy_to_stream($in, $out);
+        } finally {
+            fclose($in);
+            fclose($out);
+        }
+
+        if (!is_int($copied) || $copied <= 0) {
+            @unlink($targetXmlPath);
+            throw new RuntimeException('Failed to extract XML from ZIP archive.');
+        }
+    } finally {
+        $zip->close();
+        if (is_file($uploadedPath)) {
+            @unlink($uploadedPath);
+        }
+    }
+
+    $storedBytes = is_file($targetXmlPath) ? max(0, (int)@filesize($targetXmlPath)) : 0;
+    if ($storedBytes <= 0) {
+        throw new RuntimeException('Extracted XML file is missing.');
+    }
+
+    return [$targetXmlPath, $storedBytes];
 }
 
 function ensureDirectory(string $path): void
@@ -446,8 +550,12 @@ function ensureDjTracksTable(PDO $db): void
             artist VARCHAR(255) NOT NULL,
             bpm DECIMAL(6,2) NULL,
             musical_key VARCHAR(32) NULL,
+            release_year INT NULL,
             genre VARCHAR(128) NULL,
             location TEXT NULL,
+            is_available TINYINT(1) NOT NULL DEFAULT 1,
+            last_seen_import_job_id BIGINT UNSIGNED NULL,
+            last_seen_at DATETIME NULL,
             source VARCHAR(64) NOT NULL DEFAULT 'rekordbox_xml',
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -457,6 +565,26 @@ function ensureDjTracksTable(PDO $db): void
             KEY idx_dj_tracks_artist_title (artist, title)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    ensureDjTracksColumn($db, 'is_available', 'TINYINT(1) NOT NULL DEFAULT 1');
+    ensureDjTracksColumn($db, 'last_seen_import_job_id', 'BIGINT UNSIGNED NULL');
+    ensureDjTracksColumn($db, 'last_seen_at', 'DATETIME NULL');
+    ensureDjTracksColumn($db, 'release_year', 'INT NULL');
+}
+
+function ensureDjTracksColumn(PDO $db, string $column, string $ddl): void
+{
+    $stmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'dj_tracks'
+          AND COLUMN_NAME = ?
+    ");
+    $stmt->execute([$column]);
+    if ((int)$stmt->fetchColumn() > 0) {
+        return;
+    }
+    $db->exec("ALTER TABLE dj_tracks ADD COLUMN `{$column}` {$ddl}");
 }
 
 function ensureImportJobsTable(PDO $db): void

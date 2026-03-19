@@ -224,7 +224,7 @@ $globalOverrideTitleMap = [];
 if ($djId > 0 && !empty($rows)) {
     try {
         $ovStmt = $db->prepare("
-            SELECT override_key, bpm_track_id, bpm, musical_key, release_year, manual_owned, manual_preferred
+            SELECT override_key, bpm_track_id, dj_track_id, bpm, musical_key, release_year, manual_owned, manual_preferred
             FROM dj_event_track_overrides
             WHERE dj_id = ?
               AND event_id = ?
@@ -248,7 +248,7 @@ if ($djId > 0 && !empty($rows)) {
 
     try {
         $govStmt = $db->prepare("
-            SELECT override_key, bpm_track_id, bpm, musical_key, release_year, manual_owned, manual_preferred
+            SELECT override_key, bpm_track_id, dj_track_id, bpm, musical_key, release_year, manual_owned, manual_preferred
             FROM dj_global_track_overrides
             WHERE dj_id = ?
         ");
@@ -273,7 +273,7 @@ if ($djId > 0 && !empty($rows)) {
     // event-level override from any event for this DJ.
     try {
         $legacyStmt = $db->prepare("
-            SELECT override_key, bpm_track_id, bpm, musical_key, release_year, manual_owned, manual_preferred
+            SELECT override_key, bpm_track_id, dj_track_id, bpm, musical_key, release_year, manual_owned, manual_preferred
             FROM dj_event_track_overrides
             WHERE dj_id = ?
             ORDER BY updated_at DESC, id DESC
@@ -293,6 +293,38 @@ if ($djId > 0 && !empty($rows)) {
         }
     } catch (Throwable $e) {
         // Non-blocking.
+    }
+}
+
+$availableExactOverrideDjTrackIds = [];
+if ($djId > 0) {
+    $overrideDjTrackIds = [];
+    foreach ([$eventOverrideMap, $globalOverrideMap] as $map) {
+        foreach ($map as $ov) {
+            $exactId = isset($ov['dj_track_id']) && is_numeric($ov['dj_track_id']) ? (int)$ov['dj_track_id'] : 0;
+            if ($exactId > 0) {
+                $overrideDjTrackIds[$exactId] = true;
+            }
+        }
+    }
+    if (!empty($overrideDjTrackIds)) {
+        try {
+            $ids = array_keys($overrideDjTrackIds);
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            $availStmt = $db->prepare("
+                SELECT id
+                FROM dj_tracks
+                WHERE dj_id = ?
+                  AND COALESCE(is_available, 1) = 1
+                  AND id IN ($in)
+            ");
+            $availStmt->execute(array_merge([$djId], $ids));
+            foreach ($availStmt->fetchAll(PDO::FETCH_COLUMN) as $id) {
+                $availableExactOverrideDjTrackIds[(int)$id] = true;
+            }
+        } catch (Throwable $e) {
+            $availableExactOverrideDjTrackIds = [];
+        }
     }
 }
 
@@ -685,14 +717,19 @@ foreach ($rows as &$row) {
     }
 
     if (is_array($ov)) {
+        $exactDjTrackId = isset($ov['dj_track_id']) && is_numeric($ov['dj_track_id']) ? (int)$ov['dj_track_id'] : 0;
+        $exactDjTrackAvailable = ($exactDjTrackId > 0 && isset($availableExactOverrideDjTrackIds[$exactDjTrackId]));
         if (isset($ov['bpm_track_id']) && is_numeric($ov['bpm_track_id']) && (int)$ov['bpm_track_id'] > 0) {
             $row['selected_bpm_track_id'] = (int)$ov['bpm_track_id'];
-            $row['manual_path_matched'] = 1;
+            $row['manual_path_matched'] = $exactDjTrackAvailable ? 1 : 0;
+            $row['selected_dj_track_id'] = $exactDjTrackId;
         } elseif ($sid !== '' && isset($bpmMap[$sid]['bpm_track_id']) && is_numeric($bpmMap[$sid]['bpm_track_id']) && (int)$bpmMap[$sid]['bpm_track_id'] > 0) {
             // Legacy/manual rows may have override metadata but missing bpm_track_id.
-            // If this row is explicitly overridden and a link exists, hydrate selected id.
+            // Hydrate the selected BPM row for metadata display, but do not mark
+            // the request as path-matched unless an exact local dj_track_id is
+            // still available.
             $row['selected_bpm_track_id'] = (int)$bpmMap[$sid]['bpm_track_id'];
-            $row['manual_path_matched'] = 1;
+            $row['manual_path_matched'] = 0;
         }
         if (isset($ov['bpm']) && is_numeric($ov['bpm']) && (float)$ov['bpm'] > 0) {
             $row['bpm'] = (float)$ov['bpm'];
@@ -705,10 +742,14 @@ foreach ($rows as &$row) {
             $row['release_year'] = (int)$ov['release_year'];
         }
         if ((int)($ov['manual_owned'] ?? 0) === 1) {
-            $row['manual_owned'] = 1;
+            if ($exactDjTrackAvailable) {
+                $row['manual_owned'] = 1;
+            }
         }
         if ((int)($ov['manual_preferred'] ?? 0) === 1) {
-            $row['preferred_selected'] = 1;
+            if ($exactDjTrackAvailable) {
+                $row['preferred_selected'] = 1;
+            }
         }
     }
 
@@ -833,7 +874,7 @@ foreach ($rows as &$row) {
     $derivedPreferred = ($selectedBpmId > 0 && isset($preferredSelectedBpmIds[$selectedBpmId])) ? 1 : 0;
     $row['preferred_selected'] = ($manualPreferred === 1 || $derivedPreferred === 1) ? 1 : 0;
     $manualPathMatched = isset($row['manual_path_matched']) && (int)$row['manual_path_matched'] === 1 ? 1 : 0;
-    $row['manual_path_matched'] = ($manualPathMatched === 1 || $selectedBpmId > 0) ? 1 : 0;
+    $row['manual_path_matched'] = $manualPathMatched === 1 ? 1 : 0;
 }
 unset($row);
 
@@ -1100,6 +1141,7 @@ function ensureDjEventTrackOverridesTable(PDO $db): void
             event_id BIGINT UNSIGNED NOT NULL,
             override_key VARCHAR(512) NOT NULL,
             bpm_track_id BIGINT UNSIGNED NULL,
+            dj_track_id BIGINT UNSIGNED NULL,
             bpm DECIMAL(6,2) NULL,
             musical_key VARCHAR(32) NULL,
             release_year INT NULL,
@@ -1126,6 +1168,9 @@ function ensureDjEventTrackOverridesTable(PDO $db): void
         if (empty($cols['bpm_track_id'])) {
             $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN bpm_track_id BIGINT UNSIGNED NULL AFTER override_key");
         }
+        if (empty($cols['dj_track_id'])) {
+            $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN dj_track_id BIGINT UNSIGNED NULL AFTER bpm_track_id");
+        }
         if (empty($cols['manual_preferred'])) {
             $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned");
         }
@@ -1142,6 +1187,7 @@ function ensureDjGlobalTrackOverridesTable(PDO $db): void
             dj_id BIGINT UNSIGNED NOT NULL,
             override_key VARCHAR(512) NOT NULL,
             bpm_track_id BIGINT UNSIGNED NULL,
+            dj_track_id BIGINT UNSIGNED NULL,
             bpm DECIMAL(6,2) NULL,
             musical_key VARCHAR(32) NULL,
             release_year INT NULL,
@@ -1168,6 +1214,9 @@ function ensureDjGlobalTrackOverridesTable(PDO $db): void
         }
         if (empty($cols['bpm_track_id'])) {
             $db->exec("ALTER TABLE dj_global_track_overrides ADD COLUMN bpm_track_id BIGINT UNSIGNED NULL AFTER override_key");
+        }
+        if (empty($cols['dj_track_id'])) {
+            $db->exec("ALTER TABLE dj_global_track_overrides ADD COLUMN dj_track_id BIGINT UNSIGNED NULL AFTER bpm_track_id");
         }
         if (empty($cols['manual_preferred'])) {
             $db->exec("ALTER TABLE dj_global_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned");

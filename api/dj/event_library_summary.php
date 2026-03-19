@@ -58,6 +58,19 @@ function mdjrTableExists(PDO $db, string $table): bool
     return ((int)$stmt->fetchColumn()) > 0;
 }
 
+function mdjrHasTableColumn(PDO $db, string $table, string $column): bool
+{
+    $stmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND COLUMN_NAME = ?
+    ");
+    $stmt->execute([$table, $column]);
+    return ((int)$stmt->fetchColumn()) > 0;
+}
+
 function mdjrCoreTitle(string $title): string
 {
     $title = mb_strtolower($title, 'UTF-8');
@@ -81,10 +94,10 @@ function mdjrOverrideKey(string $title, string $artist): string
 {
     $t = mdjrCoreTitle($title);
     $a = mdjrCoreArtist($artist);
-    if ($t === '' && $a === '') {
+    if ($a === '' || $t === '') {
         return '';
     }
-    return hash('sha256', $t . '|' . $a);
+    return $a . '|' . $t;
 }
 
 try {
@@ -169,6 +182,7 @@ try {
             SELECT DISTINCT track_identity_id
             FROM dj_tracks
             WHERE dj_id = ?
+              AND COALESCE(is_available, 1) = 1
               AND track_identity_id IN ($in)
         ");
         $ownIdStmt->execute(array_merge([$djId], $ids));
@@ -188,6 +202,7 @@ try {
             SELECT DISTINCT normalized_hash
             FROM dj_tracks
             WHERE dj_id = ?
+              AND COALESCE(is_available, 1) = 1
               AND normalized_hash IN ($in)
         ");
         $ownHashStmt->execute(array_merge([$djId], $hashes));
@@ -228,15 +243,76 @@ try {
     }
 
     $ownedByEventOverrideKey = [];
-    if (mdjrTableExists($db, 'dj_event_track_overrides')) {
-        $stmt = $db->prepare("
-            SELECT override_key, manual_owned
-            FROM dj_event_track_overrides
-            WHERE dj_id = ?
-              AND event_id = ?
-        ");
-        $stmt->execute([$djId, $eventId]);
-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $ov) {
+    $staleOverrideKeys = [];
+    $hasEventOverrides = mdjrTableExists($db, 'dj_event_track_overrides');
+    $hasGlobalOverrides = mdjrTableExists($db, 'dj_global_track_overrides');
+    if ($hasEventOverrides || $hasGlobalOverrides) {
+        $overrideRows = [];
+        $overrideKeysPresent = [];
+        if ($hasEventOverrides) {
+            $eventSelect = mdjrHasTableColumn($db, 'dj_event_track_overrides', 'dj_track_id')
+                ? 'override_key, manual_owned, dj_track_id'
+                : 'override_key, manual_owned, NULL AS dj_track_id';
+            $stmt = $db->prepare("
+                SELECT {$eventSelect}
+                FROM dj_event_track_overrides
+                WHERE dj_id = ?
+                  AND event_id = ?
+            ");
+            $stmt->execute([$djId, $eventId]);
+            $overrideRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($overrideRows as $ov) {
+                $k = trim((string)($ov['override_key'] ?? ''));
+                if ($k !== '') {
+                    $overrideKeysPresent[$k] = true;
+                }
+            }
+        }
+        if ($hasGlobalOverrides) {
+            $globalSelect = mdjrHasTableColumn($db, 'dj_global_track_overrides', 'dj_track_id')
+                ? 'override_key, manual_owned, dj_track_id'
+                : 'override_key, manual_owned, NULL AS dj_track_id';
+            $gstmt = $db->prepare("
+                SELECT {$globalSelect}
+                FROM dj_global_track_overrides
+                WHERE dj_id = ?
+            ");
+            $gstmt->execute([$djId]);
+            foreach ($gstmt->fetchAll(PDO::FETCH_ASSOC) as $gov) {
+                $k = trim((string)($gov['override_key'] ?? ''));
+                if ($k === '' || isset($overrideKeysPresent[$k])) {
+                    continue;
+                }
+                $overrideRows[] = $gov;
+                $overrideKeysPresent[$k] = true;
+            }
+        }
+
+        $exactIds = [];
+        foreach ($overrideRows as $ov) {
+            $exactId = isset($ov['dj_track_id']) && is_numeric($ov['dj_track_id']) ? (int)$ov['dj_track_id'] : 0;
+            if ($exactId > 0) {
+                $exactIds[$exactId] = true;
+            }
+        }
+        $availableExactIds = [];
+        if (!empty($exactIds)) {
+            $ids = array_keys($exactIds);
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            $availStmt = $db->prepare("
+                SELECT id
+                FROM dj_tracks
+                WHERE dj_id = ?
+                  AND COALESCE(is_available, 1) = 1
+                  AND id IN ($in)
+            ");
+            $availStmt->execute(array_merge([$djId], $ids));
+            foreach ($availStmt->fetchAll(PDO::FETCH_COLUMN) as $id) {
+                $availableExactIds[(int)$id] = true;
+            }
+        }
+
+        foreach ($overrideRows as $ov) {
             if ((int)($ov['manual_owned'] ?? 0) !== 1) {
                 continue;
             }
@@ -244,7 +320,16 @@ try {
             if ($k === '') {
                 continue;
             }
-            $ownedByEventOverrideKey[$k] = true;
+            $exactId = isset($ov['dj_track_id']) && is_numeric($ov['dj_track_id']) ? (int)$ov['dj_track_id'] : 0;
+            if ($exactId > 0) {
+                if (isset($availableExactIds[$exactId])) {
+                    $ownedByEventOverrideKey[$k] = true;
+                } else {
+                    $staleOverrideKeys[$k] = true;
+                }
+            } else {
+                $ownedByEventOverrideKey[$k] = true;
+            }
         }
     }
 
@@ -255,10 +340,12 @@ try {
         $hash = mdjrCandidateHash($row);
         $sid = trim((string)($row['spotify_track_id'] ?? ''));
         $ovk = mdjrOverrideKey((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
-        $isOwned = ($tid > 0 && isset($ownedByIdentity[$tid]))
+        $isOwned = (($ovk !== '' && isset($staleOverrideKeys[$ovk])) ? false : (
+            ($tid > 0 && isset($ownedByIdentity[$tid]))
             || ($hash !== '' && isset($ownedByHash[$hash]))
             || ($sid !== '' && isset($ownedByManualSpotify[$sid]))
-            || ($ovk !== '' && isset($ownedByEventOverrideKey[$ovk]));
+            || ($ovk !== '' && isset($ownedByEventOverrideKey[$ovk]))
+        ));
         if ($isOwned) {
             $ownedTracks++;
         } else {

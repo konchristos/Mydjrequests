@@ -179,3 +179,33 @@
   - `api/dj/get_requests.php`
 - Added override-title-core fallback mapping so manual matched versions still resolve when artist text differs slightly between request/cache rows.
 - Result: owned M3U export now correctly prefers the manually matched version path for tracks with persisted manual overrides.
+
+## 2026-03-17 (Full Library Sync Availability + Stale Match Review)
+- Extended Rekordbox full-library imports to track current file availability in `dj_tracks`:
+  - `is_available`
+  - `last_seen_import_job_id`
+  - `last_seen_at`
+- Updated `library_import/RekordboxXMLImporter.php` so each successful full import:
+  - marks seen rows as available
+  - stamps the current import job on seen rows
+  - marks previously imported rows for that DJ as unavailable when they were not seen in the latest XML
+- Updated `dj_library_stats.track_count` and worker-side fallback counting to count only currently available DJ tracks.
+- Updated owned/exportable logic to ignore unavailable `dj_tracks` rows:
+  - `api/dj/export_event_playlist.php`
+  - `api/dj/event_library_summary.php`
+- Added stale match helper: `app/helpers/dj_stale_matches.php`
+- Added stale review UI: `dj/stale_matches.php`
+  - lists DJ-global saved manual matches whose previously linked local file is no longer present in the latest library import
+  - allows one-at-a-time resolution
+- Added stale review APIs:
+  - `api/dj/search_stale_match_candidates.php`
+  - `api/dj/apply_stale_match.php`
+- Applying a stale match updates:
+  - `dj_global_track_overrides`
+  - any existing `dj_event_track_overrides` rows for the same DJ + override key
+- Added entry point from `dj/library_import.php` to the stale review screen.
+## 2026-03-18 - Exact DJ Track Persistence For Saved Matches
+
+- Manual BPM matches now persist the exact selected `dj_track_id` alongside `bpm_track_id` in both `dj_event_track_overrides` and `dj_global_track_overrides`.
+- Full-library re-import stale detection now treats a saved match as stale when that exact local DJ track is no longer available, even if another version with the same normalized hash still exists.
+- Playlist export and event library summary now honor exact saved matches first and stop silently falling back to another local version when the originally matched file has gone stale.

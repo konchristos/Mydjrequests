@@ -6,6 +6,7 @@ ini_set('display_errors', '0');
 error_reporting(E_ALL);
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/helpers/dj_stale_matches.php';
 require_dj_login();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -25,14 +26,17 @@ $trackKey = trim((string)($_POST['track_key'] ?? ''));
 $spotifyTrackId = trim((string)($_POST['spotify_track_id'] ?? ''));
 $spotifyTrackIdsJson = (string)($_POST['spotify_track_ids_json'] ?? '');
 $bpmTrackId = (int)($_POST['bpm_track_id'] ?? 0);
+$djTrackId = (int)($_POST['dj_track_id'] ?? 0);
+$localOnly = (int)($_POST['local_only'] ?? 0) === 1;
 
-if ($eventUuid === '' || $trackKey === '' || $bpmTrackId <= 0) {
+if ($eventUuid === '' || $trackKey === '' || ($bpmTrackId <= 0 && $djTrackId <= 0)) {
     echo json_encode(['ok' => false, 'error' => 'Missing required parameters']);
     exit;
 }
 
 ensureDjOwnedTrackOverridesTable($db);
 ensureDjGlobalTrackOverridesTable($db);
+mdjrEnsureOverrideDjTrackIdColumn($db, 'dj_global_track_overrides');
 
 $eventStmt = $db->prepare(
     "SELECT id FROM events WHERE uuid = ? AND user_id = ? LIMIT 1"
@@ -46,6 +50,7 @@ if (!$event) {
 }
 $eventId = (int)$event['id'];
 ensureDjEventTrackOverridesTable($db);
+mdjrEnsureOverrideDjTrackIdColumn($db, 'dj_event_track_overrides');
 
 $targetSpotifyIds = [];
 if ($spotifyTrackId !== '') {
@@ -87,55 +92,106 @@ $targetSpotifyIds = array_keys($targetSpotifyIds);
 $hasSpotifyIds = !empty($targetSpotifyIds);
 $spotifyTrackId = $hasSpotifyIds ? (string)$targetSpotifyIds[0] : '';
 
-$bpmStmt = $db->prepare("SELECT id, title, artist, bpm, key_text, year FROM bpm_test_tracks WHERE id = ? LIMIT 1");
-$bpmStmt->execute([$bpmTrackId]);
-$bpm = $bpmStmt->fetch(PDO::FETCH_ASSOC);
-if (!$bpm) {
-    echo json_encode(['ok' => false, 'error' => 'Selected BPM track not found']);
-    exit;
-}
-
 $selectedOwned = false;
 $selectedPreferred = false;
-$selectedHash = mdjrCandidateTrackHash(
-    (string)($bpm['title'] ?? ''),
-    (string)($bpm['artist'] ?? '')
-);
-if ($selectedHash !== '') {
-    $ownCheck = $db->prepare("
-        SELECT id
+$selectedDjTrackId = 0;
+$bpm = null;
+$bpmValue = null;
+$keyValue = null;
+$yearValue = null;
+$appliedTrackLabel = '';
+
+if ($localOnly && $djTrackId > 0) {
+    $djTrackCols = [];
+    try {
+        $colStmt = $db->prepare("
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'dj_tracks'
+        ");
+        $colStmt->execute();
+        foreach (($colStmt->fetchAll(PDO::FETCH_COLUMN) ?: []) as $col) {
+            $djTrackCols[strtolower((string)$col)] = true;
+        }
+    } catch (Throwable $e) {
+        $djTrackCols = [];
+    }
+
+    $keyExpr = isset($djTrackCols['musical_key'])
+        ? 'musical_key'
+        : (isset($djTrackCols['key_text']) ? 'key_text' : "NULL");
+    $yearExpr = isset($djTrackCols['release_year'])
+        ? 'release_year'
+        : "NULL";
+
+    $djTrackStmt = $db->prepare("
+        SELECT
+            id,
+            title,
+            artist,
+            bpm,
+            {$keyExpr} AS resolved_key,
+            {$yearExpr} AS resolved_year,
+            location
         FROM dj_tracks
         WHERE dj_id = ?
-          AND normalized_hash = ?
+          AND id = ?
+          AND COALESCE(is_available, 1) = 1
         LIMIT 1
     ");
-    $ownCheck->execute([(int)($_SESSION['dj_id'] ?? 0), $selectedHash]);
-    $selectedOwned = (bool)$ownCheck->fetchColumn();
+    $djTrackStmt->execute([(int)($_SESSION['dj_id'] ?? 0), $djTrackId]);
+    $selectedDjTrack = $djTrackStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$selectedDjTrack) {
+        echo json_encode(['ok' => false, 'error' => 'Selected local track not found']);
+        exit;
+    }
 
-    $prefCheck = $db->prepare("
-        SELECT 1
-        FROM dj_tracks d
-        INNER JOIN dj_playlist_tracks dpt
-            ON dpt.dj_track_id = d.id
-        INNER JOIN dj_preferred_playlists dpp
-            ON dpp.dj_id = d.dj_id
-           AND dpp.playlist_id = dpt.playlist_id
-        WHERE d.dj_id = ?
-          AND d.normalized_hash = ?
-        LIMIT 1
-    ");
-    $prefCheck->execute([(int)($_SESSION['dj_id'] ?? 0), $selectedHash]);
-    $selectedPreferred = (bool)$prefCheck->fetchColumn();
+    $selectedDjTrackId = (int)($selectedDjTrack['id'] ?? 0);
+    $selectedOwned = $selectedDjTrackId > 0;
+    $selectedPreferred = mdjrDjTrackIsPreferred($db, (int)($_SESSION['dj_id'] ?? 0), $selectedDjTrackId);
+    $bpmValue = (isset($selectedDjTrack['bpm']) && is_numeric($selectedDjTrack['bpm']) && (float)$selectedDjTrack['bpm'] > 0)
+        ? (float)$selectedDjTrack['bpm']
+        : null;
+    $keyValueRaw = trim((string)($selectedDjTrack['resolved_key'] ?? ''));
+    $keyValue = $keyValueRaw !== '' ? substr(preg_replace('/\s+/', '', strtoupper($keyValueRaw)), 0, 16) : null;
+    $yearValue = (isset($selectedDjTrack['resolved_year']) && is_numeric($selectedDjTrack['resolved_year']) && (int)$selectedDjTrack['resolved_year'] > 0)
+        ? (int)$selectedDjTrack['resolved_year']
+        : null;
+    $appliedTrackLabel = trim((string)($selectedDjTrack['title'] ?? ''));
+    $bpmTrackId = 0;
+} else {
+    $bpmStmt = $db->prepare("SELECT id, title, artist, bpm, key_text, year FROM bpm_test_tracks WHERE id = ? LIMIT 1");
+    $bpmStmt->execute([$bpmTrackId]);
+    $bpm = $bpmStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$bpm) {
+        echo json_encode(['ok' => false, 'error' => 'Selected BPM track not found']);
+        exit;
+    }
+
+    $selectedHash = mdjrCandidateTrackHash(
+        (string)($bpm['title'] ?? ''),
+        (string)($bpm['artist'] ?? '')
+    );
+    if ($selectedHash !== '') {
+        $selectedDjTrack = mdjrResolveBestAvailableDjTrackByHash($db, (int)($_SESSION['dj_id'] ?? 0), $selectedHash);
+        if (is_array($selectedDjTrack)) {
+            $selectedDjTrackId = (int)($selectedDjTrack['id'] ?? 0);
+            $selectedOwned = $selectedDjTrackId > 0;
+            $selectedPreferred = !empty($selectedDjTrack['is_preferred']);
+        }
+    }
+
+    $bpmValue = (isset($bpm['bpm']) && is_numeric($bpm['bpm']) && (float)$bpm['bpm'] > 0)
+        ? (float)$bpm['bpm']
+        : null;
+    $keyValueRaw = trim((string)($bpm['key_text'] ?? ''));
+    $keyValue = $keyValueRaw !== '' ? substr(preg_replace('/\s+/', '', strtoupper($keyValueRaw)), 0, 16) : null;
+    $yearValue = (isset($bpm['year']) && is_numeric($bpm['year']) && (int)$bpm['year'] > 0)
+        ? (int)$bpm['year']
+        : null;
+    $appliedTrackLabel = trim((string)($bpm['title'] ?? ''));
 }
-
-$bpmValue = (isset($bpm['bpm']) && is_numeric($bpm['bpm']) && (float)$bpm['bpm'] > 0)
-    ? (float)$bpm['bpm']
-    : null;
-$keyValueRaw = trim((string)($bpm['key_text'] ?? ''));
-$keyValue = $keyValueRaw !== '' ? substr(preg_replace('/\s+/', '', strtoupper($keyValueRaw)), 0, 16) : null;
-$yearValue = (isset($bpm['year']) && is_numeric($bpm['year']) && (int)$bpm['year'] > 0)
-    ? (int)$bpm['year']
-    : null;
 
 $reqMetaStmt = $db->prepare(
     "
@@ -210,7 +266,7 @@ try {
     }
 
     $appliedKey = $keyValue;
-    if ($hasSpotifyIds) {
+    if ($hasSpotifyIds && $bpmTrackId > 0) {
         foreach ($targetSpotifyIds as $sid) {
             $linkStmt->execute([
                 ':spotify_track_id' => $sid,
@@ -280,6 +336,7 @@ try {
                 event_id,
                 override_key,
                 bpm_track_id,
+                dj_track_id,
                 bpm,
                 musical_key,
                 release_year,
@@ -290,6 +347,7 @@ try {
                 :event_id,
                 :override_key,
                 :bpm_track_id,
+                :dj_track_id,
                 :bpm,
                 :musical_key,
                 :release_year,
@@ -298,6 +356,7 @@ try {
             )
             ON DUPLICATE KEY UPDATE
                 bpm_track_id = VALUES(bpm_track_id),
+                dj_track_id = VALUES(dj_track_id),
                 bpm = VALUES(bpm),
                 musical_key = VALUES(musical_key),
                 release_year = VALUES(release_year),
@@ -309,7 +368,8 @@ try {
             ':dj_id' => (int)($_SESSION['dj_id'] ?? 0),
             ':event_id' => $eventId,
             ':override_key' => $overrideKey,
-            ':bpm_track_id' => $bpmTrackId,
+            ':bpm_track_id' => $bpmTrackId > 0 ? $bpmTrackId : null,
+            ':dj_track_id' => $selectedDjTrackId > 0 ? $selectedDjTrackId : null,
             ':bpm' => $bpmValue,
             ':musical_key' => $appliedKey,
             ':release_year' => $yearValue,
@@ -323,6 +383,7 @@ try {
                 dj_id,
                 override_key,
                 bpm_track_id,
+                dj_track_id,
                 bpm,
                 musical_key,
                 release_year,
@@ -332,6 +393,7 @@ try {
                 :dj_id,
                 :override_key,
                 :bpm_track_id,
+                :dj_track_id,
                 :bpm,
                 :musical_key,
                 :release_year,
@@ -340,6 +402,7 @@ try {
             )
             ON DUPLICATE KEY UPDATE
                 bpm_track_id = VALUES(bpm_track_id),
+                dj_track_id = VALUES(dj_track_id),
                 bpm = VALUES(bpm),
                 musical_key = VALUES(musical_key),
                 release_year = VALUES(release_year),
@@ -350,7 +413,8 @@ try {
         $globalStmt->execute([
             ':dj_id' => (int)($_SESSION['dj_id'] ?? 0),
             ':override_key' => $overrideKey,
-            ':bpm_track_id' => $bpmTrackId,
+            ':bpm_track_id' => $bpmTrackId > 0 ? $bpmTrackId : null,
+            ':dj_track_id' => $selectedDjTrackId > 0 ? $selectedDjTrackId : null,
             ':bpm' => $bpmValue,
             ':musical_key' => $appliedKey,
             ':release_year' => $yearValue,
@@ -367,11 +431,14 @@ try {
         'applied_spotify_track_ids' => $targetSpotifyIds,
         'non_spotify_override' => !$hasSpotifyIds,
         'owned_marked' => $selectedOwned,
+        'selected_dj_track_id' => $selectedDjTrackId,
         'selected_preferred' => $selectedPreferred,
+        'selected_local_only' => $localOnly ? 1 : 0,
         'applied' => [
             'bpm' => $bpmValue,
             'musical_key' => $appliedKey,
             'release_year' => $yearValue,
+            'title' => $appliedTrackLabel,
         ]
     ]);
 } catch (Throwable $e) {
@@ -407,6 +474,7 @@ function ensureDjEventTrackOverridesTable(PDO $db): void
             event_id BIGINT UNSIGNED NOT NULL,
             override_key VARCHAR(512) NOT NULL,
             bpm_track_id BIGINT UNSIGNED NULL,
+            dj_track_id BIGINT UNSIGNED NULL,
             bpm DECIMAL(6,2) NULL,
             musical_key VARCHAR(32) NULL,
             release_year INT NULL,
@@ -433,6 +501,9 @@ function ensureDjEventTrackOverridesTable(PDO $db): void
         if (empty($cols['bpm_track_id'])) {
             $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN bpm_track_id BIGINT UNSIGNED NULL AFTER override_key");
         }
+        if (empty($cols['dj_track_id'])) {
+            $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN dj_track_id BIGINT UNSIGNED NULL AFTER bpm_track_id");
+        }
         if (empty($cols['manual_preferred'])) {
             $db->exec("ALTER TABLE dj_event_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned");
         }
@@ -449,6 +520,7 @@ function ensureDjGlobalTrackOverridesTable(PDO $db): void
             dj_id BIGINT UNSIGNED NOT NULL,
             override_key VARCHAR(512) NOT NULL,
             bpm_track_id BIGINT UNSIGNED NULL,
+            dj_track_id BIGINT UNSIGNED NULL,
             bpm DECIMAL(6,2) NULL,
             musical_key VARCHAR(32) NULL,
             release_year INT NULL,
@@ -473,10 +545,13 @@ function ensureDjGlobalTrackOverridesTable(PDO $db): void
             $cols[strtolower((string)$col)] = true;
         }
         if (empty($cols['bpm_track_id'])) {
-            $db->exec(\"ALTER TABLE dj_global_track_overrides ADD COLUMN bpm_track_id BIGINT UNSIGNED NULL AFTER override_key\");
+            $db->exec("ALTER TABLE dj_global_track_overrides ADD COLUMN bpm_track_id BIGINT UNSIGNED NULL AFTER override_key");
+        }
+        if (empty($cols['dj_track_id'])) {
+            $db->exec("ALTER TABLE dj_global_track_overrides ADD COLUMN dj_track_id BIGINT UNSIGNED NULL AFTER bpm_track_id");
         }
         if (empty($cols['manual_preferred'])) {
-            $db->exec(\"ALTER TABLE dj_global_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned\");
+            $db->exec("ALTER TABLE dj_global_track_overrides ADD COLUMN manual_preferred TINYINT(1) NOT NULL DEFAULT 0 AFTER manual_owned");
         }
     } catch (Throwable $e) {
         // non-fatal
@@ -531,4 +606,26 @@ function mdjrCandidateTrackHash(string $title, string $artist): string
         return '';
     }
     return hash('sha256', $artist . '|' . $title);
+}
+
+function mdjrDjTrackIsPreferred(PDO $db, int $djId, int $djTrackId): bool
+{
+    if ($djId <= 0 || $djTrackId <= 0) {
+        return false;
+    }
+    try {
+        $stmt = $db->prepare("
+            SELECT 1
+            FROM dj_playlist_tracks dpt
+            INNER JOIN dj_preferred_playlists dpp
+                ON dpp.playlist_id = dpt.playlist_id
+               AND dpp.dj_id = ?
+            WHERE dpt.dj_track_id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$djId, $djTrackId]);
+        return (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return false;
+    }
 }

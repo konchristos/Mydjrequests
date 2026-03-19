@@ -27,8 +27,10 @@ try {
     $beforeIdentityCount = tableCount($db, 'track_identities');
     $beforeDjTracksCount = countDjTracks($db, $djId);
 
-    $importer = new RekordboxXMLImporter($db, $djId);
     $jobIdInt = (int)$job['id'];
+    $importer = new RekordboxXMLImporter($db, $djId, [
+        'import_job_id' => $jobIdInt,
+    ]);
     updateJobStage($db, $jobIdInt, 'processing_tracks', 'Processing track collection...');
     $importer->setProgressCallback(static function (string $stage, string $message) use ($db, $jobIdInt): void {
         updateJobStage($db, $jobIdInt, $stage, $message);
@@ -217,7 +219,7 @@ function tableCount(PDO $db, string $table): int
 
 function countDjTracks(PDO $db, int $djId): int
 {
-    $stmt = $db->prepare("SELECT COUNT(*) FROM dj_tracks WHERE dj_id = ?");
+    $stmt = $db->prepare("SELECT COUNT(*) FROM dj_tracks WHERE dj_id = ? AND COALESCE(is_available, 1) = 1");
     $stmt->execute([$djId]);
     return (int)$stmt->fetchColumn();
 }
@@ -283,6 +285,9 @@ function ensureDjTracksTable(PDO $db): void
             musical_key VARCHAR(32) NULL,
             genre VARCHAR(128) NULL,
             location TEXT NULL,
+            is_available TINYINT(1) NOT NULL DEFAULT 1,
+            last_seen_import_job_id BIGINT UNSIGNED NULL,
+            last_seen_at DATETIME NULL,
             source VARCHAR(64) NOT NULL DEFAULT 'rekordbox_xml',
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -292,6 +297,25 @@ function ensureDjTracksTable(PDO $db): void
             KEY idx_dj_tracks_artist_title (artist, title)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    ensureDjTracksColumn($db, 'is_available', 'TINYINT(1) NOT NULL DEFAULT 1');
+    ensureDjTracksColumn($db, 'last_seen_import_job_id', 'BIGINT UNSIGNED NULL');
+    ensureDjTracksColumn($db, 'last_seen_at', 'DATETIME NULL');
+}
+
+function ensureDjTracksColumn(PDO $db, string $column, string $ddl): void
+{
+    $stmt = $db->prepare("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'dj_tracks'
+          AND COLUMN_NAME = ?
+    ");
+    $stmt->execute([$column]);
+    if ((int)$stmt->fetchColumn() > 0) {
+        return;
+    }
+    $db->exec("ALTER TABLE dj_tracks ADD COLUMN `{$column}` {$ddl}");
 }
 
 function ensureImportJobsTable(PDO $db): void

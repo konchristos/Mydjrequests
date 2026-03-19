@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../app/bootstrap.php';
+require_once __DIR__ . '/../app/helpers/dj_stale_matches.php';
 require_dj_login();
 
 $db = db();
@@ -17,6 +18,7 @@ if (function_exists('djPlaylistPreferencesEnsureSchema')) {
 
 $preferredSaveSuccess = '';
 $preferredSaveError = '';
+$staleMatchRows = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') === 'save_preferred_playlists') {
     if (!verify_csrf_token()) {
@@ -105,7 +107,8 @@ try {
         $lastImportedAt = $statsRow['last_imported_at'] ?? null;
         $lastImportSource = trim((string)($statsRow['source'] ?? 'rekordbox_xml'));
     } else {
-        $countStmt = $db->prepare("SELECT COUNT(*) FROM dj_tracks WHERE dj_id = ?");
+        mdjrEnsureDjTrackAvailabilityColumns($db);
+        $countStmt = $db->prepare("SELECT COUNT(*) FROM dj_tracks WHERE dj_id = ? AND COALESCE(is_available, 1) = 1");
         $countStmt->execute([$djId]);
         $libraryTrackCount = max(0, (int)$countStmt->fetchColumn());
     }
@@ -113,6 +116,12 @@ try {
     $libraryTrackCount = 0;
     $lastImportedAt = null;
     $lastImportSource = 'rekordbox_xml';
+}
+
+try {
+    $staleMatchRows = mdjrLoadStaleGlobalMatches($db, $djId);
+} catch (Throwable $e) {
+    $staleMatchRows = [];
 }
 
 $lastImportedDisplay = 'Never';
@@ -676,6 +685,70 @@ function parseUtcToTs(string $value): int
 .playlist-pref-msg.is-error {
     color: #ff9b9b;
 }
+
+.library-secondary-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin: 0 0 20px;
+}
+
+.library-stale-panel {
+    border: 1px solid #2a2a3f;
+    border-radius: 12px;
+    background: #111116;
+    padding: 14px;
+}
+
+.library-stale-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.library-stale-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.library-stale-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 999px;
+    padding: 4px 10px;
+    border: 1px solid rgba(255, 111, 111, 0.35);
+    background: rgba(255, 111, 111, 0.08);
+    color: #ffb2b2;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.library-stale-sub {
+    margin: 0;
+    color: #b7b7c8;
+    font-size: 13px;
+}
+
+.library-stale-actions {
+    margin-top: 12px;
+}
+
+.library-stale-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid rgba(var(--brand-accent-rgb), 0.45);
+    background: rgba(var(--brand-accent-rgb), 0.12);
+    color: #fff;
+    text-decoration: none;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-weight: 700;
+}
 </style>
 
 <div class="library-import-wrap">
@@ -705,9 +778,25 @@ function parseUtcToTs(string $value): int
         Re-import workflow:
         <ul>
             <li>Export your latest Rekordbox library XML and upload it here.</li>
-            <li>Imports are incremental and update existing tracks by normalized hash.</li>
-            <li>Re-import any time after playlist/library edits to refresh metadata.</li>
+            <li>Imports update existing tracks by normalized hash and refresh file paths when tracks move.</li>
+            <li>Tracks missing from the latest full XML are marked unavailable for playlist export until they return in a later import.</li>
+            <li>Re-import any time after playlist/library edits to refresh metadata and availability.</li>
         </ul>
+    </div>
+
+    <div class="library-secondary-grid">
+        <div class="library-stale-panel">
+            <div class="library-stale-head">
+                <h2 class="library-stale-title">Stale Matched Tracks</h2>
+                <span class="library-stale-count"><?php echo count($staleMatchRows); ?> pending</span>
+            </div>
+            <p class="library-stale-sub">
+                Review saved manual matches whose previously linked local file is no longer available in the latest import.
+            </p>
+            <div class="library-stale-actions">
+                <a class="library-stale-link" href="<?php echo e(url('dj/stale_matches.php')); ?>">Review stale matches</a>
+            </div>
+        </div>
     </div>
 
     <div class="playlist-pref-panel">
@@ -802,11 +891,11 @@ function parseUtcToTs(string $value): int
     </div>
 
     <div id="libraryDropzone" class="library-dropzone" tabindex="0" role="button" aria-label="Upload Rekordbox XML">
-        <p class="library-dropzone-title">Drag Rekordbox XML here or click to upload</p>
-        <p class="library-dropzone-help">XML only • large files supported (up to 500MB)</p>
+        <p class="library-dropzone-title">Drag Rekordbox XML or ZIP here or click to upload</p>
+        <p class="library-dropzone-help">XML or ZIP • large files supported (up to 500MB upload)</p>
     </div>
 
-    <input id="libraryFileInput" type="file" accept=".xml,text/xml,application/xml" style="display:none;">
+    <input id="libraryFileInput" type="file" accept=".xml,.zip,text/xml,application/xml,application/zip" style="display:none;">
 
     <div id="libraryUploadProgress" class="library-upload-progress">
         <div id="libraryUploadProgressBar" class="library-upload-progress-bar"></div>
@@ -984,10 +1073,10 @@ function parseUtcToTs(string $value): int
         progressBar.style.width = '0%';
     }
 
-    function isXmlFile(file) {
+    function isLibraryFile(file) {
         if (!file) return false;
         const name = (file.name || '').toLowerCase();
-        return name.endsWith('.xml');
+        return name.endsWith('.xml') || name.endsWith('.zip');
     }
 
     function setResults(payload) {
@@ -1170,8 +1259,8 @@ function parseUtcToTs(string $value): int
     }
 
     async function uploadFile(file) {
-        if (!isXmlFile(file)) {
-            setStatus('Please select a valid .xml file.', true);
+        if (!isLibraryFile(file)) {
+            setStatus('Please select a valid .xml or .zip file.', true);
             return;
         }
 

@@ -58,6 +58,8 @@ if (!$req) {
     exit;
 }
 $selectedBpmTrackId = 0;
+$selectedExactDjTrackId = 0;
+$selectedExactDjTrackAvailable = false;
 $overrideKey = mdjrOverrideTrackKey(
     trim((string)($req['song_title'] ?? '')),
     trim((string)($req['artist'] ?? ''))
@@ -65,7 +67,7 @@ $overrideKey = mdjrOverrideTrackKey(
 if ($overrideKey !== '') {
     try {
         $ovStmt = $db->prepare("
-            SELECT bpm_track_id
+            SELECT bpm_track_id, dj_track_id
             FROM dj_event_track_overrides
             WHERE dj_id = ?
               AND event_id = ?
@@ -73,30 +75,36 @@ if ($overrideKey !== '') {
             LIMIT 1
         ");
         $ovStmt->execute([(int)($_SESSION['dj_id'] ?? 0), $eventId, $overrideKey]);
-        $selectedBpmTrackId = (int)($ovStmt->fetchColumn() ?: 0);
+        $selectedOverride = $ovStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        $selectedBpmTrackId = (int)($selectedOverride['bpm_track_id'] ?? 0);
+        $selectedExactDjTrackId = (int)($selectedOverride['dj_track_id'] ?? 0);
     } catch (Throwable $e) {
         $selectedBpmTrackId = 0;
+        $selectedExactDjTrackId = 0;
     }
 }
 if ($selectedBpmTrackId <= 0 && $overrideKey !== '') {
     try {
         $govStmt = $db->prepare("
-            SELECT bpm_track_id
+            SELECT bpm_track_id, dj_track_id
             FROM dj_global_track_overrides
             WHERE dj_id = ?
               AND override_key = ?
             LIMIT 1
         ");
         $govStmt->execute([(int)($_SESSION['dj_id'] ?? 0), $overrideKey]);
-        $selectedBpmTrackId = (int)($govStmt->fetchColumn() ?: 0);
+        $selectedOverride = $govStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        $selectedBpmTrackId = (int)($selectedOverride['bpm_track_id'] ?? 0);
+        $selectedExactDjTrackId = (int)($selectedOverride['dj_track_id'] ?? 0);
     } catch (Throwable $e) {
         $selectedBpmTrackId = 0;
+        $selectedExactDjTrackId = 0;
     }
 }
 if ($selectedBpmTrackId <= 0 && $overrideKey !== '') {
     try {
         $legacyStmt = $db->prepare("
-            SELECT bpm_track_id
+            SELECT bpm_track_id, dj_track_id
             FROM dj_event_track_overrides
             WHERE dj_id = ?
               AND override_key = ?
@@ -105,9 +113,12 @@ if ($selectedBpmTrackId <= 0 && $overrideKey !== '') {
             LIMIT 1
         ");
         $legacyStmt->execute([(int)($_SESSION['dj_id'] ?? 0), $overrideKey]);
-        $selectedBpmTrackId = (int)($legacyStmt->fetchColumn() ?: 0);
+        $selectedOverride = $legacyStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        $selectedBpmTrackId = (int)($selectedOverride['bpm_track_id'] ?? 0);
+        $selectedExactDjTrackId = (int)($selectedOverride['dj_track_id'] ?? 0);
     } catch (Throwable $e) {
         $selectedBpmTrackId = 0;
+        $selectedExactDjTrackId = 0;
     }
 }
 if ($selectedBpmTrackId <= 0) {
@@ -127,6 +138,21 @@ if ($selectedBpmTrackId <= 0) {
         }
     }
 }
+if ($selectedExactDjTrackId > 0) {
+    try {
+        $selectedAvailStmt = $db->prepare("
+            SELECT COUNT(*)
+            FROM dj_tracks
+            WHERE dj_id = ?
+              AND id = ?
+              AND COALESCE(is_available, 1) = 1
+        ");
+        $selectedAvailStmt->execute([(int)($_SESSION['dj_id'] ?? 0), $selectedExactDjTrackId]);
+        $selectedExactDjTrackAvailable = ((int)$selectedAvailStmt->fetchColumn() > 0);
+    } catch (Throwable $e) {
+        $selectedExactDjTrackAvailable = false;
+    }
+}
 
 $baseTitle = trim((string)($req['song_title'] ?? ''));
 $baseArtist = trim((string)($req['artist'] ?? ''));
@@ -134,6 +160,7 @@ $search = $q !== '' ? $q : trim($baseTitle . ' ' . $baseArtist);
 $manualMode = ($q !== '');
 $manualPairMode = $manualMode && (bool)preg_match('/\s[-–—]\s/u', $search);
 $manualBroadMode = $manualMode && !$manualPairMode;
+$djId = (int)($_SESSION['dj_id'] ?? 0);
 
 if ($search === '') {
     echo json_encode(['ok' => true, 'rows' => []]);
@@ -653,6 +680,172 @@ if ($selectedBpmTrackId > 0) {
     }
 }
 
+// Add direct local-library candidates that may not exist in bpm_test_tracks.
+// This keeps owned Rekordbox versions visible even when there is no exact
+// global BPM metadata row for that title/artist variant.
+if ($djId > 0) {
+    $localNeedles = array_values(array_filter(array_unique(array_merge(
+        [$rawTitleNeedle, $normTitleNeedle, $rawArtistNeedle, $normArtistNeedle],
+        array_slice($tokens, 0, 6)
+    ))));
+    if (!empty($localNeedles)) {
+        $djTrackCols = mdjrTableColumns($db, 'dj_tracks');
+        $keyExpr = isset($djTrackCols['musical_key'])
+            ? 'd.musical_key'
+            : (isset($djTrackCols['key_text']) ? 'd.key_text' : 'NULL');
+        $yearExpr = isset($djTrackCols['release_year'])
+            ? 'd.release_year'
+            : 'NULL';
+        $genreExpr = isset($djTrackCols['genre'])
+            ? 'd.genre'
+            : 'NULL';
+        $djRatingExpr = mdjrDjTrackRatingExpr($db);
+
+        $whereLocal = [];
+        $paramsLocal = [$djId];
+        foreach ($localNeedles as $needle) {
+            $like = '%' . escapeLike(mb_strtolower($needle, 'UTF-8')) . '%';
+            $whereLocal[] = '(LOWER(d.title) LIKE ? OR LOWER(d.artist) LIKE ?)';
+            $paramsLocal[] = $like;
+            $paramsLocal[] = $like;
+        }
+
+        $localStmt = $db->prepare("
+            SELECT
+                d.id AS dj_track_id,
+                d.title,
+                d.artist,
+                d.bpm,
+                {$keyExpr} AS key_text,
+                {$yearExpr} AS year,
+                {$genreExpr} AS genre,
+                d.location,
+                {$djRatingExpr} AS rating_value,
+                MAX(CASE WHEN dpp.playlist_id IS NULL THEN 0 ELSE 1 END) AS is_preferred,
+                SUBSTRING_INDEX(
+                    GROUP_CONCAT(
+                        DISTINCT CASE WHEN dpp.playlist_id IS NOT NULL THEN dp.name ELSE NULL END
+                        ORDER BY dp.name ASC SEPARATOR '||'
+                    ),
+                    '||',
+                    1
+                ) AS preferred_playlist_name,
+                SUBSTRING_INDEX(
+                    GROUP_CONCAT(
+                        DISTINCT dp.name
+                        ORDER BY dp.name ASC SEPARATOR '||'
+                    ),
+                    '||',
+                    1
+                ) AS any_playlist_name
+            FROM dj_tracks d
+            LEFT JOIN dj_playlist_tracks dpt
+                ON dpt.dj_track_id = d.id
+            LEFT JOIN dj_playlists dp
+                ON dp.id = dpt.playlist_id
+               AND dp.dj_id = d.dj_id
+            LEFT JOIN dj_preferred_playlists dpp
+                ON dpp.dj_id = d.dj_id
+               AND dpp.playlist_id = dpt.playlist_id
+            WHERE d.dj_id = ?
+              AND COALESCE(d.is_available, 1) = 1
+              AND (" . implode(' OR ', $whereLocal) . ")
+            GROUP BY d.id
+            LIMIT 500
+        ");
+        $localStmt->execute($paramsLocal);
+
+        $existingHashes = [];
+        foreach ($scored as $row) {
+            $existingHashes[candidateTrackHash((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''))] = true;
+        }
+
+        foreach ($localStmt->fetchAll(PDO::FETCH_ASSOC) as $localRow) {
+            $title = (string)($localRow['title'] ?? '');
+            $artist = (string)($localRow['artist'] ?? '');
+            $exactHash = candidateTrackHash($title, $artist);
+            if ($exactHash !== '' && isset($existingHashes[$exactHash])) {
+                continue;
+            }
+
+            $titleScore = similarityPercent($matchTitle, $title);
+            $titleScoreLoose = similarityPercentLooseTitle($matchTitle, $title);
+            $effectiveTitleScore = max($titleScore, $titleScoreLoose);
+            $artistScore = similarityPercent($matchArtist, $artist);
+            $rowTokens = tokeniseForMatch($title . ' ' . $artist);
+            $tokenHit = 0;
+            foreach ($tokens as $tk) {
+                if (in_array($tk, $rowTokens, true)) {
+                    $tokenHit++;
+                }
+            }
+            $tokenScore = $tokens ? (($tokenHit / count($tokens)) * 100.0) : 0.0;
+
+            $normTitle = normaliseForMatch($title);
+            $normArtist = normaliseForMatch($artist);
+            $compactTitle = compactForMatch($title);
+            $compactArtist = compactForMatch($artist);
+            $looseNormTitle = colloquialiseGerund($title);
+            $directTitleHit = ($normBaseTitle !== '' && str_contains($normTitle, $normBaseTitle)) ? 1 : 0;
+            $directArtistHit = ($normBaseArtist !== '' && str_contains($normArtist, $normBaseArtist)) ? 1 : 0;
+            $compactArtistHit = ($compactArtistNeedle !== '' && $compactArtist !== '' && str_contains($compactArtist, $compactArtistNeedle)) ? 1 : 0;
+            $compactTitleHit = ($compactTitleNeedle !== '' && $compactTitle !== '' && str_contains($compactTitle, $compactTitleNeedle)) ? 1 : 0;
+            $looseTitleHit = ($looseTitleNeedle !== '' && $looseNormTitle !== '' && str_contains($looseNormTitle, $looseTitleNeedle)) ? 1 : 0;
+            $rawTitleHit = ($rawTitleNeedle !== '' && str_contains(mb_strtolower($title, 'UTF-8'), $rawTitleNeedle)) ? 1 : 0;
+            $rawArtistHit = ($rawArtistNeedle !== '' && str_contains(mb_strtolower($artist, 'UTF-8'), $rawArtistNeedle)) ? 1 : 0;
+            $combined =
+                ($effectiveTitleScore * 0.45) +
+                ($artistScore * 0.20) +
+                ($tokenScore * 0.15) +
+                ($directTitleHit * 10) +
+                ($directArtistHit * 5) +
+                ($compactTitleHit * 10) +
+                ($compactArtistHit * 10) +
+                ($looseTitleHit * 12) +
+                ($rawTitleHit * 12) +
+                ($rawArtistHit * 8) +
+                18.0;
+
+            $scored[] = [
+                'id' => -1 * (int)($localRow['dj_track_id'] ?? 0),
+                'dj_track_id' => (int)($localRow['dj_track_id'] ?? 0),
+                'title' => $title,
+                'artist' => $artist,
+                'bpm' => isset($localRow['bpm']) && is_numeric($localRow['bpm']) ? (float)$localRow['bpm'] : null,
+                'key_text' => trim((string)($localRow['key_text'] ?? '')),
+                'year' => isset($localRow['year']) && is_numeric($localRow['year']) ? (int)$localRow['year'] : null,
+                'genre' => trim((string)($localRow['genre'] ?? '')),
+                'rating_value' => isset($localRow['rating_value']) && is_numeric($localRow['rating_value']) ? (float)$localRow['rating_value'] : 0.0,
+                'match_score' => round($combined, 2),
+                'title_score' => round($effectiveTitleScore, 2),
+                'artist_score' => round($artistScore, 2),
+                'token_score' => round($tokenScore, 2),
+                'direct_title_hit' => $directTitleHit,
+                'direct_artist_hit' => $directArtistHit,
+                'raw_title_hit' => $rawTitleHit,
+                'raw_artist_hit' => $rawArtistHit,
+                'exact_pair_hit' => 0,
+                'is_owned' => 1,
+                'is_preferred' => !empty($localRow['is_preferred']) ? 1 : 0,
+                'playlist_badge' => mdjrPlaylistBadge(
+                    (string)($localRow['preferred_playlist_name'] ?? ''),
+                    (string)($localRow['any_playlist_name'] ?? ''),
+                    (string)($localRow['location'] ?? '')
+                ),
+                'is_title_relevant' => 1,
+                'is_five_star' => (isset($localRow['rating_value']) && is_numeric($localRow['rating_value']) && (float)$localRow['rating_value'] >= 5.0) ? 1 : 0,
+                'is_selected' => ($selectedBpmTrackId <= 0 && $selectedExactDjTrackId > 0 && (int)($localRow['dj_track_id'] ?? 0) === $selectedExactDjTrackId) ? 1 : 0,
+                'selected_exact_missing' => 0,
+                'local_only' => 1,
+                'can_apply' => 1,
+            ];
+            if ($exactHash !== '') {
+                $existingHashes[$exactHash] = true;
+            }
+        }
+    }
+}
+
 // Final guard: in manual mode, ensure results respect the typed search query.
 if ($manualMode && trim($search) !== '') {
     $manualQueryNorm = normaliseForMatch($search);
@@ -714,14 +907,19 @@ usort($scored, static function (array $a, array $b): int {
 
 $scored = array_slice($scored, 0, $manualMode ? 80 : 100);
 
-$djId = (int)($_SESSION['dj_id'] ?? 0);
 $ownedMetaByHash = [];
+$ownedMetaByRelaxedHash = [];
 if ($djId > 0 && !empty($scored)) {
     $candidateHashes = [];
+    $candidateRelaxedHashes = [];
     foreach ($scored as $row) {
         $h = candidateTrackHash((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
         if ($h !== '') {
             $candidateHashes[$h] = true;
+        }
+        $rh = candidateTrackHashRelaxed((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
+        if ($rh !== '') {
+            $candidateRelaxedHashes[$rh] = true;
         }
     }
 
@@ -762,6 +960,7 @@ if ($djId > 0 && !empty($scored)) {
                 ON dpp.dj_id = d.dj_id
                AND dpp.playlist_id = dpt.playlist_id
             WHERE d.dj_id = ?
+              AND COALESCE(d.is_available, 1) = 1
               AND d.normalized_hash IN ($in)
             GROUP BY d.normalized_hash, d.id
         ");
@@ -785,13 +984,100 @@ if ($djId > 0 && !empty($scored)) {
             }
         }
     }
+
+    $libraryNeedles = array_values(array_filter(array_unique(array_merge(
+        [$rawTitleNeedle, $normTitleNeedle, $rawArtistNeedle, $normArtistNeedle],
+        array_slice($tokens, 0, 6)
+    ))));
+    if (!empty($libraryNeedles)) {
+        $whereLibrary = [];
+        $paramsLibrary = [$djId];
+        foreach ($libraryNeedles as $needle) {
+            $like = '%' . escapeLike(mb_strtolower($needle, 'UTF-8')) . '%';
+            $whereLibrary[] = '(LOWER(d.title) LIKE ? OR LOWER(d.artist) LIKE ?)';
+            $paramsLibrary[] = $like;
+            $paramsLibrary[] = $like;
+        }
+
+        $djRatingExpr = mdjrDjTrackRatingExpr($db);
+        $libraryStmt = $db->prepare("
+            SELECT
+                d.id,
+                d.title,
+                d.artist,
+                d.location,
+                {$djRatingExpr} AS rating_value,
+                MAX(CASE WHEN dpp.playlist_id IS NULL THEN 0 ELSE 1 END) AS is_preferred,
+                SUBSTRING_INDEX(
+                    GROUP_CONCAT(
+                        DISTINCT CASE WHEN dpp.playlist_id IS NOT NULL THEN dp.name ELSE NULL END
+                        ORDER BY dp.name ASC SEPARATOR '||'
+                    ),
+                    '||',
+                    1
+                ) AS preferred_playlist_name,
+                SUBSTRING_INDEX(
+                    GROUP_CONCAT(
+                        DISTINCT dp.name
+                        ORDER BY dp.name ASC SEPARATOR '||'
+                    ),
+                    '||',
+                    1
+                ) AS any_playlist_name
+            FROM dj_tracks d
+            LEFT JOIN dj_playlist_tracks dpt
+                ON dpt.dj_track_id = d.id
+            LEFT JOIN dj_playlists dp
+                ON dp.id = dpt.playlist_id
+               AND dp.dj_id = d.dj_id
+            LEFT JOIN dj_preferred_playlists dpp
+                ON dpp.dj_id = d.dj_id
+               AND dpp.playlist_id = dpt.playlist_id
+            WHERE d.dj_id = ?
+              AND COALESCE(d.is_available, 1) = 1
+              AND (" . implode(' OR ', $whereLibrary) . ")
+            GROUP BY d.id
+            LIMIT 2000
+        ");
+        $libraryStmt->execute($paramsLibrary);
+        foreach ($libraryStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $candidate = [
+                'dj_track_id' => (int)($r['id'] ?? 0),
+                'is_preferred' => !empty($r['is_preferred']) ? 1 : 0,
+                'rating_value' => isset($r['rating_value']) && is_numeric($r['rating_value']) ? (float)$r['rating_value'] : 0.0,
+                'playlist_badge' => mdjrPlaylistBadge(
+                    (string)($r['preferred_playlist_name'] ?? ''),
+                    (string)($r['any_playlist_name'] ?? ''),
+                    (string)($r['location'] ?? '')
+                ),
+            ];
+            $exactHash = candidateTrackHash((string)($r['title'] ?? ''), (string)($r['artist'] ?? ''));
+            if ($exactHash !== '' && isset($candidateHashes[$exactHash])) {
+                if (!isset($ownedMetaByHash[$exactHash]) || mdjrOwnedCandidateBetter($candidate, $ownedMetaByHash[$exactHash])) {
+                    $ownedMetaByHash[$exactHash] = $candidate;
+                }
+            }
+            $relaxedHash = candidateTrackHashRelaxed((string)($r['title'] ?? ''), (string)($r['artist'] ?? ''));
+            if ($relaxedHash !== '' && isset($candidateRelaxedHashes[$relaxedHash])) {
+                if (!isset($ownedMetaByRelaxedHash[$relaxedHash]) || mdjrOwnedCandidateBetter($candidate, $ownedMetaByRelaxedHash[$relaxedHash])) {
+                    $ownedMetaByRelaxedHash[$relaxedHash] = $candidate;
+                }
+            }
+        }
+    }
 }
 
 $ownedRows = [];
 $globalRows = [];
 foreach ($scored as $row) {
     $hash = candidateTrackHash((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
-    $ownedMeta = ($hash !== '' && isset($ownedMetaByHash[$hash])) ? $ownedMetaByHash[$hash] : null;
+    $relaxedHash = candidateTrackHashRelaxed((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
+    $ownedMeta = null;
+    if ($hash !== '' && isset($ownedMetaByHash[$hash])) {
+        $ownedMeta = $ownedMetaByHash[$hash];
+    } elseif ($relaxedHash !== '' && isset($ownedMetaByRelaxedHash[$relaxedHash])) {
+        $ownedMeta = $ownedMetaByRelaxedHash[$relaxedHash];
+    }
     $isOwned = is_array($ownedMeta) ? 1 : 0;
     $preferred = ($isOwned === 1 && !empty($ownedMeta['is_preferred'])) ? 1 : 0;
     $row['candidate_hash'] = $hash;
@@ -814,8 +1100,25 @@ foreach ($scored as $row) {
     ) ? 1 : 0;
     $row['is_five_star'] = (isset($row['rating_value']) && is_numeric($row['rating_value']) && (float)$row['rating_value'] >= 5.0) ? 1 : 0;
     $row['is_selected'] = ($selectedBpmTrackId > 0 && (int)($row['id'] ?? 0) === $selectedBpmTrackId) ? 1 : 0;
+    $row['selected_exact_missing'] = 0;
+    $row['can_apply'] = isset($row['can_apply']) ? (int)$row['can_apply'] : 1;
+    if (!empty($row['is_selected']) && $selectedExactDjTrackId > 0 && !$selectedExactDjTrackAvailable) {
+        // The saved exact local file is gone. Keep this candidate pinned as the
+        // selected historical match, but do not present it as currently owned.
+        $row['selected_exact_missing'] = 1;
+        $row['is_owned'] = 0;
+        $row['is_preferred'] = 0;
+        $row['playlist_badge'] = '';
+        if (isset($row['rating_value']) && is_numeric($row['rating_value'])) {
+            $row['rating_value'] = (float)$row['rating_value'];
+        }
+    }
     if ($isOwned === 1) {
-        $ownedRows[] = $row;
+        if (empty($row['selected_exact_missing'])) {
+            $ownedRows[] = $row;
+        } else {
+            $globalRows[] = $row;
+        }
     } else {
         $globalRows[] = $row;
     }
@@ -910,6 +1213,28 @@ if (empty($finalRows)) {
     $finalRows = $globalRows;
 }
 
+if ($selectedBpmTrackId > 0) {
+    $selectedPinned = null;
+    foreach (array_merge($ownedRows, $globalRows) as $row) {
+        if ((int)($row['id'] ?? 0) === $selectedBpmTrackId) {
+            $selectedPinned = $row;
+            break;
+        }
+    }
+    if ($selectedPinned !== null) {
+        $found = false;
+        foreach ($finalRows as $row) {
+            if ((int)($row['id'] ?? 0) === $selectedBpmTrackId) {
+                $found = true;
+                break;
+            }
+        }
+        if (!$found) {
+            array_unshift($finalRows, $selectedPinned);
+        }
+    }
+}
+
 echo json_encode([
     'ok' => true,
     'request' => [
@@ -938,6 +1263,20 @@ function candidateTrackHash(string $title, string $artist): string
         return '';
     }
     return hash('sha256', $artist . '|' . $title);
+}
+
+function candidateTrackHashRelaxed(string $title, string $artist): string
+{
+    $titleTokens = tokeniseForMatch($title);
+    $artistTokens = tokeniseForMatch($artist);
+    sort($titleTokens);
+    sort($artistTokens);
+    $titleKey = implode(' ', $titleTokens);
+    $artistKey = implode(' ', $artistTokens);
+    if ($titleKey === '' && $artistKey === '') {
+        return '';
+    }
+    return hash('sha256', $artistKey . '|' . $titleKey);
 }
 
 function mdjrBpmCandidateRatingSelect(PDO $db): string

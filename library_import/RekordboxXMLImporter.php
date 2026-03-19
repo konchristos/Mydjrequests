@@ -13,6 +13,8 @@ class RekordboxXMLImporter
     private int $batchSize;
     private string $identityProvider;
     private string $sourceLabel;
+    private int $importJobId;
+    private string $importStartedAt = '';
     private array $djTrackColumns = [];
     private array $trackIdToHash = [];
     private array $trackIdToDjTrackId = [];
@@ -28,6 +30,7 @@ class RekordboxXMLImporter
         $this->batchSize = max(50, (int)($options['batch_size'] ?? 500));
         $this->identityProvider = (string)($options['identity_provider'] ?? 'manual');
         $this->sourceLabel = (string)($options['source'] ?? 'rekordbox_xml');
+        $this->importJobId = max(0, (int)($options['import_job_id'] ?? 0));
     }
 
     public function setProgressCallback(?callable $callback): void
@@ -59,12 +62,14 @@ class RekordboxXMLImporter
         $this->ensureIdentitySchema();
         $this->ensureDjLibraryStatsTable();
         $this->ensureDjTracksRatingColumn();
+        $this->ensureDjTracksSyncColumns();
         $this->djTrackColumns = $this->loadTableColumns('dj_tracks');
         if (empty($this->djTrackColumns)) {
             throw new RuntimeException('Table `dj_tracks` does not exist in current schema.');
         }
 
         $startedAt = gmdate('c');
+        $this->importStartedAt = date('Y-m-d H:i:s');
         $reader = new XMLReader();
         $flags = LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_COMPACT | LIBXML_PARSEHUGE;
 
@@ -132,6 +137,7 @@ class RekordboxXMLImporter
             $playlistsImported = (int)($playlistStats['playlists_imported'] ?? 0);
             $playlistTracksAdded = (int)($playlistStats['playlist_tracks_added'] ?? 0);
             $playlistTracksSkipped = (int)($playlistStats['playlist_tracks_skipped'] ?? 0);
+            $this->markMissingTracksUnavailable();
         } finally {
             $reader->close();
         }
@@ -180,6 +186,7 @@ class RekordboxXMLImporter
         $genre = $this->nullIfEmpty($reader->getAttribute('Genre'));
         $location = $this->normaliseLocation($this->nullIfEmpty($reader->getAttribute('Location')));
         $rating = $this->parseRating($reader->getAttribute('Rating'));
+        $releaseYear = $this->parseYear($reader->getAttribute('Year'));
         $normalizedHash = $this->normalisedHash($title, $artist);
         $trackIdentityId = $this->resolveTrackIdentityId($normalizedHash);
         $xmlTrackId = $this->nullIfEmpty($reader->getAttribute('TrackID'));
@@ -192,6 +199,7 @@ class RekordboxXMLImporter
             'genre' => $genre,
             'location' => $location,
             'rating' => $rating,
+            'release_year' => $releaseYear,
             'normalized_hash' => $normalizedHash,
             'track_identity_id' => $trackIdentityId,
             'xml_track_id' => $xmlTrackId,
@@ -295,7 +303,7 @@ class RekordboxXMLImporter
 
     private function mapRowToAvailableColumns(array $row): array
     {
-        $now = date('Y-m-d H:i:s');
+        $now = $this->importStartedAt !== '' ? $this->importStartedAt : date('Y-m-d H:i:s');
         $out = [];
 
         $this->setFirstExistingColumn($out, ['dj_id', 'user_id'], $this->djId);
@@ -305,10 +313,14 @@ class RekordboxXMLImporter
         $this->setFirstExistingColumn($out, ['artist', 'artist_name'], $row['artist'] ?? null);
         $this->setFirstExistingColumn($out, ['bpm', 'average_bpm'], $row['bpm'] ?? null);
         $this->setFirstExistingColumn($out, ['musical_key', 'tonality', 'key_text'], $row['tonality'] ?? null);
+        $this->setFirstExistingColumn($out, ['release_year', 'year'], $row['release_year'] ?? null);
         $this->setFirstExistingColumn($out, ['genre'], $row['genre'] ?? null);
         $this->setFirstExistingColumn($out, ['location', 'file_path'], $row['location'] ?? null);
         $this->setFirstExistingColumn($out, ['rating', 'stars', 'star_rating', 'rekordbox_rating'], $row['rating'] ?? null);
         $this->setFirstExistingColumn($out, ['source', 'source_name'], $this->sourceLabel);
+        $this->setFirstExistingColumn($out, ['is_available'], 1);
+        $this->setFirstExistingColumn($out, ['last_seen_import_job_id'], $this->importJobId > 0 ? $this->importJobId : null);
+        $this->setFirstExistingColumn($out, ['last_seen_at'], $now);
 
         if (isset($this->djTrackColumns['created_at'])) {
             $out['created_at'] = $now;
@@ -375,6 +387,19 @@ class RekordboxXMLImporter
             }
         }
         return null;
+    }
+
+    private function parseYear(?string $value): ?int
+    {
+        $value = $this->nullIfEmpty($value);
+        if ($value === null || !is_numeric($value)) {
+            return null;
+        }
+        $year = (int)$value;
+        if ($year < 1900 || $year > 2100) {
+            return null;
+        }
+        return $year;
     }
 
     private function normalisedHash(string $title, string $artist): ?string
@@ -537,12 +562,89 @@ class RekordboxXMLImporter
         }
     }
 
+    private function ensureDjTracksSyncColumns(): void
+    {
+        try {
+            $cols = $this->loadTableColumns('dj_tracks');
+            if (empty($cols)) {
+                return;
+            }
+            if (!isset($cols['is_available'])) {
+                $this->db->exec("ALTER TABLE dj_tracks ADD COLUMN is_available TINYINT(1) NOT NULL DEFAULT 1");
+            }
+            if (!isset($cols['last_seen_import_job_id'])) {
+                $this->db->exec("ALTER TABLE dj_tracks ADD COLUMN last_seen_import_job_id BIGINT UNSIGNED NULL");
+            }
+            if (!isset($cols['last_seen_at'])) {
+                $this->db->exec("ALTER TABLE dj_tracks ADD COLUMN last_seen_at DATETIME NULL");
+            }
+            if (!isset($cols['release_year'])) {
+                $this->db->exec("ALTER TABLE dj_tracks ADD COLUMN release_year INT NULL");
+            }
+            $this->djTrackColumns = $this->loadTableColumns('dj_tracks');
+        } catch (Throwable $e) {
+            // Non-fatal.
+        }
+    }
+
+    private function markMissingTracksUnavailable(): void
+    {
+        if (!isset($this->djTrackColumns['is_available'])) {
+            return;
+        }
+
+        if ($this->importJobId > 0) {
+            $sql = "
+                UPDATE dj_tracks
+                SET is_available = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE dj_id = :dj_id
+                  AND COALESCE(last_seen_import_job_id, 0) <> :job_id
+            ";
+            if (isset($this->djTrackColumns['last_seen_at'])) {
+                $sql = "
+                    UPDATE dj_tracks
+                    SET is_available = 0,
+                        last_seen_at = COALESCE(last_seen_at, NOW()),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE dj_id = :dj_id
+                      AND COALESCE(last_seen_import_job_id, 0) <> :job_id
+                ";
+            }
+
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([
+                ':dj_id' => $this->djId,
+                ':job_id' => $this->importJobId,
+            ]);
+            return;
+        }
+
+        if (isset($this->djTrackColumns['last_seen_at']) && $this->importStartedAt !== '') {
+            $stmt = $this->db->prepare("
+                UPDATE dj_tracks
+                SET is_available = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE dj_id = :dj_id
+                  AND (
+                    last_seen_at IS NULL
+                    OR last_seen_at < :import_started_at
+                  )
+            ");
+            $stmt->execute([
+                ':dj_id' => $this->djId,
+                ':import_started_at' => $this->importStartedAt,
+            ]);
+        }
+    }
+
     private function updateDjLibraryStats(): void
     {
         $countStmt = $this->db->prepare("
             SELECT COUNT(*)
             FROM dj_tracks
             WHERE dj_id = :dj_id
+              AND COALESCE(is_available, 1) = 1
         ");
         $countStmt->execute([':dj_id' => $this->djId]);
         $trackCount = (int)$countStmt->fetchColumn();

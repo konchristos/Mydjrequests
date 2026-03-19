@@ -295,6 +295,7 @@ function mdjrLoadBpmPathMap(PDO $db, int $djId, string $pathCol, array $bpmIds):
            AND dpp.playlist_id = dpt.playlist_id
         WHERE d.dj_id = ?
           AND d.normalized_hash IN ($hin)
+          AND COALESCE(d.is_available, 1) = 1
           AND NULLIF(d.`{$pathCol}`, '') IS NOT NULL
         GROUP BY d.id, d.normalized_hash, d.`{$pathCol}`
     ";
@@ -422,6 +423,7 @@ try {
     $pathByOverrideKey = [];
     $pathByOverrideTitleCore = [];
     $pathBySpotifyLinkedBpm = [];
+    $staleOverrideKeys = [];
 
     if (!empty($identityIds) || !empty($candidateHashes)) {
         $matchConds = [];
@@ -460,6 +462,7 @@ try {
                 ON dpp.dj_id = d.dj_id
                AND dpp.playlist_id = dpt.playlist_id
             WHERE d.dj_id = ?
+              AND COALESCE(d.is_available, 1) = 1
               AND (" . implode(' OR ', $matchConds) . ")
             GROUP BY d.id, d.track_identity_id, d.normalized_hash, d.artist, d.title, d.`{$pathCol}`
         ";
@@ -497,31 +500,100 @@ try {
         }
     }
 
-    if (mdjrTableExists($db, 'dj_event_track_overrides')) {
+    $hasEventOverrides = mdjrTableExists($db, 'dj_event_track_overrides');
+    $hasGlobalOverrides = mdjrTableExists($db, 'dj_global_track_overrides');
+    $eventOverrideHasDjTrackId = $hasEventOverrides && hasTableColumn($db, 'dj_event_track_overrides', 'dj_track_id');
+    if ($hasEventOverrides || $hasGlobalOverrides) {
+        $overrideRows = [];
+        $overrideKeysPresent = [];
+        if ($hasEventOverrides) {
+        $overrideSelect = $eventOverrideHasDjTrackId ? 'override_key, bpm_track_id, dj_track_id, manual_owned' : 'override_key, bpm_track_id, NULL AS dj_track_id, manual_owned';
         $stmt = $db->prepare("
-            SELECT override_key, bpm_track_id, manual_owned
+            SELECT {$overrideSelect}
             FROM dj_event_track_overrides
             WHERE dj_id = ?
               AND event_id = ?
         ");
         $stmt->execute([$djId, $eventId]);
         $overrideRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($overrideRows as $ov) {
+            $k = trim((string)($ov['override_key'] ?? ''));
+            if ($k !== '') {
+                $overrideKeysPresent[$k] = true;
+            }
+        }
+        }
+        if ($hasGlobalOverrides) {
+            $globalOverrideHasDjTrackId = hasTableColumn($db, 'dj_global_track_overrides', 'dj_track_id');
+            $globalSelect = $globalOverrideHasDjTrackId ? 'override_key, bpm_track_id, dj_track_id, manual_owned' : 'override_key, bpm_track_id, NULL AS dj_track_id, manual_owned';
+            $globalStmt = $db->prepare("
+                SELECT {$globalSelect}
+                FROM dj_global_track_overrides
+                WHERE dj_id = ?
+            ");
+            $globalStmt->execute([$djId]);
+            foreach ($globalStmt->fetchAll(PDO::FETCH_ASSOC) as $gov) {
+                $k = trim((string)($gov['override_key'] ?? ''));
+                if ($k === '' || isset($overrideKeysPresent[$k])) {
+                    continue;
+                }
+                $overrideRows[] = $gov;
+                $overrideKeysPresent[$k] = true;
+            }
+        }
         $overrideBpmIds = [];
+        $overrideDjTrackIds = [];
         foreach ($overrideRows as $ov) {
             $bid = isset($ov['bpm_track_id']) && is_numeric($ov['bpm_track_id']) ? (int)$ov['bpm_track_id'] : 0;
             if ($bid > 0) {
                 $overrideBpmIds[$bid] = true;
             }
+            $exactId = isset($ov['dj_track_id']) && is_numeric($ov['dj_track_id']) ? (int)$ov['dj_track_id'] : 0;
+            if ($exactId > 0) {
+                $overrideDjTrackIds[$exactId] = true;
+            }
         }
         $overridePathByBpmId = mdjrLoadBpmPathMap($db, $djId, $pathCol, array_keys($overrideBpmIds));
+        $overrideExactPathByDjTrackId = [];
+        if (!empty($overrideDjTrackIds)) {
+            $ids = array_keys($overrideDjTrackIds);
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            $pathStmt = $db->prepare("
+                SELECT id, NULLIF(`{$pathCol}`, '') AS file_path
+                FROM dj_tracks
+                WHERE dj_id = ?
+                  AND COALESCE(is_available, 1) = 1
+                  AND id IN ($in)
+            ");
+            $pathStmt->execute(array_merge([$djId], $ids));
+            foreach ($pathStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $exactId = (int)($r['id'] ?? 0);
+                $path = mdjrNormalizePlaylistPath((string)($r['file_path'] ?? ''));
+                if ($exactId > 0 && $path !== '') {
+                    $overrideExactPathByDjTrackId[$exactId] = $path;
+                }
+            }
+        }
         foreach ($overrideRows as $ov) {
             if ((int)($ov['manual_owned'] ?? 0) !== 1) {
                 continue;
             }
             $k = trim((string)($ov['override_key'] ?? ''));
             $bid = isset($ov['bpm_track_id']) && is_numeric($ov['bpm_track_id']) ? (int)$ov['bpm_track_id'] : 0;
-            if ($k !== '' && $bid > 0 && !empty($overridePathByBpmId[$bid])) {
+            $exactId = isset($ov['dj_track_id']) && is_numeric($ov['dj_track_id']) ? (int)$ov['dj_track_id'] : 0;
+            if ($k === '') {
+                continue;
+            }
+            $resolvedPath = '';
+            if ($exactId > 0 && !empty($overrideExactPathByDjTrackId[$exactId])) {
+                $resolvedPath = (string)$overrideExactPathByDjTrackId[$exactId];
+            } elseif ($exactId > 0) {
+                $staleOverrideKeys[$k] = true;
+                continue;
+            } elseif ($bid > 0 && !empty($overridePathByBpmId[$bid])) {
                 $resolvedPath = (string)$overridePathByBpmId[$bid];
+            }
+            if ($resolvedPath !== '') {
                 $pathByOverrideKey[$k] = $resolvedPath;
                 $titleCore = mdjrOverrideTitleFromKey($k);
                 if ($titleCore !== '' && !isset($pathByOverrideTitleCore[$titleCore])) {
@@ -585,6 +657,7 @@ try {
             SELECT title, artist, NULLIF(`{$pathCol}`, '') AS file_path
             FROM dj_tracks
             WHERE dj_id = ?
+              AND COALESCE(is_available, 1) = 1
               AND artist IN ($in)
               AND NULLIF(`{$pathCol}`, '') IS NOT NULL
             ORDER BY id DESC
@@ -616,7 +689,8 @@ try {
             &$pathByCoreKey,
             &$pathByOverrideKey,
             &$pathByOverrideTitleCore,
-            &$pathBySpotifyLinkedBpm
+            &$pathBySpotifyLinkedBpm,
+            &$staleOverrideKeys
         ): array {
             $lines = [];
             $seenPaths = [];
@@ -628,7 +702,9 @@ try {
                 $titleCore = mdjrCoreTitle((string)($row['title'] ?? ''));
 
                 $path = '';
-                if ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
+                if ($ovk !== '' && isset($staleOverrideKeys[$ovk])) {
+                    $path = '';
+                } elseif ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
                     $path = $pathByOverrideKey[$ovk];
                 } elseif ($titleCore !== '' && isset($pathByOverrideTitleCore[$titleCore])) {
                     $path = $pathByOverrideTitleCore[$titleCore];
@@ -700,6 +776,7 @@ try {
                                 ON dpp.dj_id = d.dj_id
                                AND dpp.playlist_id = dpt.playlist_id
                             WHERE d.dj_id = ?
+                              AND COALESCE(d.is_available, 1) = 1
                               AND (" . implode(' OR ', $matchConds) . ")
                             GROUP BY d.id, d.track_identity_id, d.normalized_hash, d.`{$pathCol}`
                         ";
@@ -765,7 +842,8 @@ try {
         $pathByCoreKey,
         $pathByOverrideKey,
         $pathByOverrideTitleCore,
-        $pathBySpotifyLinkedBpm
+        $pathBySpotifyLinkedBpm,
+        $staleOverrideKeys
     ): array {
         $lines = [];
         foreach ($sourceRows as $row) {
@@ -775,7 +853,9 @@ try {
             $ovk = mdjrOverrideKey((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
             $titleCore = mdjrCoreTitle((string)($row['title'] ?? ''));
             $path = '';
-            if ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
+            if ($ovk !== '' && isset($staleOverrideKeys[$ovk])) {
+                $path = '';
+            } elseif ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
                 $path = (string)$pathByOverrideKey[$ovk];
             } elseif ($titleCore !== '' && isset($pathByOverrideTitleCore[$titleCore])) {
                 $path = (string)$pathByOverrideTitleCore[$titleCore];

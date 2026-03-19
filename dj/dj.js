@@ -257,7 +257,7 @@ function groupDjRows(rows) {
       requesters: group.rows.flatMap((r) => Array.isArray(r.requesters) ? r.requesters : []),
       voters: group.rows.flatMap((r) => Array.isArray(r.voters) ? r.voters : []),
       boosters: group.rows.flatMap((r) => Array.isArray(r.boosters) ? r.boosters : []),
-      dj_track_id: (group.rows.find((r) => Number(r.dj_track_id || 0) > 0)?.dj_track_id) || primary.dj_track_id || null,
+      dj_track_id: (group.rows.find((r) => Number(r.manual_owned || 0) === 1 || Number(r.dj_track_id || 0) > 0)?.dj_track_id) || primary.dj_track_id || null,
       manual_owned: group.rows.some((r) => Number(r.manual_owned || 0) === 1) ? 1 : Number(primary.manual_owned || 0),
       preferred_selected: group.rows.some((r) => Number(r.preferred_selected || 0) === 1) ? 1 : Number(primary.preferred_selected || 0),
       manual_path_matched: group.rows.some((r) => Number(r.manual_path_matched || 0) === 1) ? 1 : Number(primary.manual_path_matched || 0),
@@ -355,8 +355,12 @@ async function loadManualMatchCandidates(track, query = "") {
       const playlistBadge = String(row.playlist_badge || "").trim();
       const isFiveStar = Number(row.is_five_star || 0) === 1;
       const isSelected = Number(row.is_selected || 0) === 1 || (selectedBpmId > 0 && Number(row.id || 0) === selectedBpmId);
+      const isOwned = Number(row.is_owned || 0) === 1;
+      const canApply = Number(row.can_apply ?? 1) === 1 && isOwned;
+      const isLocalOnly = Number(row.local_only || 0) === 1;
+      const rowDjTrackId = Number(row.dj_track_id || 0);
       return `
-      <div class="manual-match-item ${isSelected ? "manual-match-item-selected" : ""}">
+      <div class="manual-match-item ${isSelected ? "manual-match-item-selected" : ""} ${!isOwned ? "manual-match-item-missing" : ""}">
         <div class="manual-match-item-main">
           <div class="manual-match-title">${escapeHtml(row.title || "Unknown title")}</div>
           <div class="manual-match-artist">${escapeHtml(row.artist || "Unknown artist")}</div>
@@ -364,18 +368,23 @@ async function loadManualMatchCandidates(track, query = "") {
             ${isPreferred ? '<span class="manual-match-badge manual-match-badge-preferred">Preferred</span>' : ''}
             ${playlistBadge ? `<span class="manual-match-badge manual-match-badge-folder">${escapeHtml(playlistBadge)}</span>` : ''}
             ${isFiveStar ? '<span class="manual-match-badge manual-match-badge-stars">★★★★★</span>' : ''}
+            ${isLocalOnly ? '<span class="manual-match-badge manual-match-badge-local">Library Only</span>' : ''}
           </div>
           <div class="manual-match-meta">${escapeHtml(formatManualMatchRow(row))}</div>
-          <div class="manual-match-meta ${Number(row.is_owned || 0) === 1 ? "manual-match-owned" : "manual-match-missing"}">${Number(row.is_owned || 0) === 1 ? "✓ In your library" : "✕ Global metadata (not in your library)"}</div>
+          ${String(row.genre || "").trim() !== "" ? `<div class="manual-match-meta manual-match-genre">Genre: ${escapeHtml(String(row.genre || "").trim())}</div>` : ""}
+          <div class="manual-match-meta ${isOwned ? "manual-match-owned" : "manual-match-missing"}">${isOwned ? (isLocalOnly ? "✓ In your library (local version only)" : "✓ In your library") : "✕ Global metadata (not in your library)"}</div>
           <div class="manual-match-score">Score: ${Number(row.match_score || 0).toFixed(2)}</div>
         </div>
         <button
           type="button"
           class="reply-btn primary manual-match-apply-btn"
           data-bpm-id="${Number(row.id || 0)}"
+          data-dj-track-id="${rowDjTrackId}"
+          data-local-only="${isLocalOnly ? "1" : "0"}"
           data-is-preferred="${isPreferred ? "1" : "0"}"
+          ${canApply ? "" : `disabled aria-disabled="true" title="${isLocalOnly ? 'This local-only version is not in your library state yet' : 'This version is not in your library'}"`}
         >
-          Apply
+          ${canApply ? "Apply" : "Unavailable"}
         </button>
       </div>
     `;
@@ -385,7 +394,7 @@ async function loadManualMatchCandidates(track, query = "") {
   }
 }
 
-async function applyManualMatch(bpmTrackId) {
+async function applyManualMatch(bpmTrackId, djTrackId = 0, localOnly = false) {
   if (!manualMatchTrack) return;
 
   const statusEl = document.getElementById("manualMatchStatus");
@@ -403,6 +412,8 @@ async function applyManualMatch(bpmTrackId) {
       spotify_track_id: manualMatchTrack.spotify_track_id || "",
       spotify_track_ids_json: JSON.stringify(spotifyTrackIds),
       bpm_track_id: String(Number(bpmTrackId || 0)),
+      dj_track_id: String(Number(djTrackId || 0)),
+      local_only: localOnly ? "1" : "0",
     });
     const res = await fetch("/api/dj/apply_manual_bpm_match.php", {
       method: "POST",
@@ -427,7 +438,8 @@ async function applyManualMatch(bpmTrackId) {
         release_year: applied.release_year ?? r.release_year,
         manual_owned: data.owned_marked ? 1 : Number(r.manual_owned || 0),
         selected_bpm_track_id: Number(bpmTrackId || 0),
-        manual_path_matched: Number(bpmTrackId || 0) > 0 ? 1 : Number(r.manual_path_matched || 0),
+        dj_track_id: Number(data.selected_dj_track_id || 0) > 0 ? Number(data.selected_dj_track_id || 0) : Number(r.dj_track_id || 0),
+        manual_path_matched: data.owned_marked ? 1 : Number(r.manual_path_matched || 0),
         preferred_selected: data.selected_preferred ? 1 : Number(r.preferred_selected || 0),
       };
     });
@@ -950,8 +962,10 @@ case "unblock":
       const btn = e.target.closest(".manual-match-apply-btn");
       if (!btn) return;
       const bpmId = Number(btn.dataset.bpmId || 0);
-      if (!bpmId) return;
-      applyManualMatch(bpmId);
+      const djTrackId = Number(btn.dataset.djTrackId || 0);
+      const localOnly = btn.dataset.localOnly === "1";
+      if (!bpmId && !djTrackId) return;
+      applyManualMatch(bpmId, djTrackId, localOnly);
     });
   }
 
@@ -1162,9 +1176,9 @@ const el = document.createElement("div");
 el.className = "request-row";
 const isPlayed = row.track_status === "played" || row.group_has_played === true;
 const isSkipped = row.track_status === "skipped" || row.group_has_skipped === true;
-const isOwned = Number(row.dj_track_id || 0) > 0 || Number(row.manual_owned || 0) === 1;
+const isOwned = Number(row.manual_owned || 0) === 1 || (Number(row.selected_bpm_track_id || 0) <= 0 && Number(row.dj_track_id || 0) > 0);
 const isPreferredSelected = Number(row.preferred_selected || 0) === 1;
-const isManualPathMatched = Number(row.manual_path_matched || 0) === 1 || Number(row.selected_bpm_track_id || 0) > 0;
+const isManualPathMatched = Number(row.manual_path_matched || 0) === 1;
 const variants = Array.isArray(row.__group_rows) ? row.__group_rows : [];
 const expandable = variants.length > 1;
 
@@ -2755,7 +2769,7 @@ function syncLibrarySummaryFromRows(rows) {
 
   rows.forEach((row) => {
     totalRequests += Number(row?.request_count || 0);
-    const isOwned = Number(row?.dj_track_id || 0) > 0 || Number(row?.manual_owned || 0) === 1;
+    const isOwned = Number(row?.manual_owned || 0) === 1 || (Number(row?.selected_bpm_track_id || 0) <= 0 && Number(row?.dj_track_id || 0) > 0);
     if (isOwned) {
       owned += 1;
     } else {
