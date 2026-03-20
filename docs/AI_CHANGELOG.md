@@ -209,3 +209,227 @@
 - Manual BPM matches now persist the exact selected `dj_track_id` alongside `bpm_track_id` in both `dj_event_track_overrides` and `dj_global_track_overrides`.
 - Full-library re-import stale detection now treats a saved match as stale when that exact local DJ track is no longer available, even if another version with the same normalized hash still exists.
 - Playlist export and event library summary now honor exact saved matches first and stop silently falling back to another local version when the originally matched file has gone stale.
+
+## 2026-03-19 - Detailed Implementation Summary For Lockdown Review
+
+This section summarizes the current DJ library import, matching, resolver, stale review, and export behavior after the latest implementation round.
+
+### 1. DJ Library Import Pipeline
+
+- DJ library import is now centered on `library_import/RekordboxXMLImporter.php`.
+- Import supports:
+  - raw Rekordbox `.xml`
+  - zipped `.zip` uploads that contain exactly one XML file
+- Main entry points:
+  - `dj/library_import.php`
+  - `api/dj/import_rekordbox_xml.php`
+  - `api/dj/import_rekordbox_xml_run.php`
+  - `app/workers/rekordbox_import_worker.php`
+- Imports are asynchronous and job-based.
+- Import history is stored in `dj_library_import_jobs` and shown in the DJ UI.
+- Upload telemetry now records:
+  - upload size
+  - stored file size
+  - processing stage
+  - stage message
+  - elapsed time
+  - tracks processed
+  - tracks added
+  - tracks updated
+- Import status/history UI now shows:
+  - current stage
+  - elapsed processing time
+  - recent import history
+  - upload/stored byte metrics
+- ZIP support was added to reduce upload bandwidth while preserving the same import pipeline after extraction.
+
+### 2. Rekordbox Data Imported Into `dj_tracks`
+
+- The Rekordbox importer currently imports and persists:
+  - title
+  - artist
+  - BPM
+  - musical key
+  - genre
+  - local file path / location
+  - rating
+  - release year
+  - normalized hash / identity information
+- Rekordbox ratings are normalized for multiple scales, including Rekordbox-style `0..255`.
+- Rekordbox year is now stored into `dj_tracks.release_year`.
+- Genre is already stored in `dj_tracks.genre`.
+
+### 3. Playlist Hierarchy + Preferred Playlists
+
+- Playlist schema was added:
+  - `dj_playlists`
+  - `dj_playlist_tracks`
+  - `dj_preferred_playlists`
+- Rekordbox playlist hierarchy and playlist membership are imported and kept idempotent.
+- Preferred playlist selection UI was added in `dj/library_import.php`.
+- DJs can:
+  - search imported playlists
+  - mark preferred playlists
+  - review currently selected preferred playlists
+- Preferred playlists affect resolver ranking, but do not block non-preferred tracks from appearing.
+
+### 4. Full Library Sync State
+
+- The system now treats each Rekordbox re-import as the current truth for that DJ library.
+- `dj_tracks` now includes and uses:
+  - `is_available`
+  - `last_seen_import_job_id`
+  - `last_seen_at`
+- On full import:
+  - seen tracks are marked available
+  - seen tracks are stamped with the current import job
+  - unseen previously imported tracks for that DJ are marked unavailable
+- This means the system now handles:
+  - existing track, same path
+  - existing track, moved path
+  - track removed from collection
+- File moves are supported because the importer updates the stored local path for the same normalized track identity.
+- File removal is supported because the importer now marks missing tracks unavailable instead of continuing to treat them as active.
+
+### 5. Preferred / Rating / Manual Resolver Order
+
+- Resolver priority currently follows this order:
+  1. manual match / explicit override
+  2. preferred playlist membership
+  3. 5-star tracks
+  4. higher rating
+  5. best title/artist match
+  6. deterministic fallback
+- Preferred playlists and stars improve ranking, but are not required for a track to be eligible.
+
+### 6. Metadata Match Modal
+
+- Main matching UI is driven by:
+  - `api/dj/search_bpm_candidates.php`
+  - `api/dj/apply_manual_bpm_match.php`
+  - `dj/dj.js`
+  - `dj/dj.css`
+- Metadata Match now shows:
+  - preferred badge
+  - folder / playlist badge
+  - rating / 5-star badge
+  - BPM
+  - key
+  - year
+  - genre
+  - ownership state
+- Unavailable rows are visually distinct:
+  - muted / red-tinted styling
+  - disabled action button
+  - clear “not in your library” state
+- Deleted matched versions can still be shown for context, but are no longer treated as owned or playable.
+
+### 7. Manual Match Persistence
+
+- Manual matches now persist the exact selected local `dj_track_id`, not only a global BPM metadata row.
+- Manual match state is written to:
+  - `dj_event_track_overrides`
+  - `dj_global_track_overrides`
+- This lets the system reuse selected versions across future events for the same DJ.
+- DJ request tiles now use compact badges:
+  - `P` = preferred
+  - `M` = matched/manual path
+
+### 8. Local-Only Candidate Support
+
+- Some owned tracks exist in `dj_tracks` without a fully matching `bpm_test_tracks` row.
+- These are now surfaced in Metadata Match as owned local versions.
+- This solved cases where a DJ-owned version existed locally but was missing from the previous candidate list.
+- Local-only owned rows can now be applied as the chosen version.
+- Applying a local-only version persists the exact `dj_track_id` so it can be reused later.
+- This is especially important for cases where:
+  - artist text differs slightly
+  - there is no exact BPM cache row
+  - the DJ still owns a usable local file
+
+### 9. Stale Matched Tracks Review
+
+- A dedicated stale review flow was added:
+  - `app/helpers/dj_stale_matches.php`
+  - `dj/stale_matches.php`
+  - `api/dj/search_stale_match_candidates.php`
+  - `api/dj/apply_stale_match.php`
+- This view is used when a previously saved exact local match no longer points to an available DJ file.
+- Stale review now:
+  - searches only current library tracks
+  - avoids unrelated noisy global rows
+  - uses a display style that matches the main Metadata Match modal
+  - allows one-at-a-time reassignment to a replacement local file
+- The stale review modal now uses the same styled Apply button treatment as the main Metadata Match modal.
+
+### 10. Event Library Summary + Playlist Export
+
+- Event library summary and export endpoints are in place:
+  - `api/dj/event_library_summary.php`
+  - `api/dj/export_event_playlist.php`
+- Event summary uses event projection data and current library availability rather than expensive direct request aggregation.
+- Playlist export now prefers:
+  - exact manual override path
+  - deterministic local file resolution
+  - currently available DJ tracks only
+- Export skips invalid local-unusable URI entries such as `spotify:` style paths in owned M3U output.
+- The compact library summary UI was moved into the DJ event header to save vertical space.
+
+### 11. Current Source-Of-Truth Model
+
+- Rekordbox remains the source of truth for a DJ’s library.
+- MyDJRequests mirrors library state for:
+  - matching requests
+  - identifying owned tracks
+  - saving preferred playlist choices
+  - saving reusable matched versions
+  - exporting playable preparation playlists
+- The platform is intentionally not becoming a separate library editor.
+- Library edits should continue to happen in DJ software, then be re-imported into MyDJRequests.
+
+### 12. Validated Behaviors Achieved
+
+- DJs can upload large Rekordbox XML libraries through the web UI.
+- ZIP upload support reduces bandwidth substantially for repeated re-imports.
+- Imported tracks preserve path, genre, rating, year, and ownership state.
+- When a track moves to a new location, the stored path can be updated on re-import.
+- When a track is removed from the library, it can now be marked unavailable and excluded from exports.
+- DJs can manually choose the exact version they want to use.
+- Those choices can be reused in future events.
+- Preferred playlists and ratings now influence version ranking.
+- Local-only owned tracks can be surfaced and selected when no BPM cache row exists.
+- Stale exact-file matches can now be reviewed and reassigned.
+
+### 13. Known Areas To Review In The Next Lockdown Pass
+
+- Harden ZIP upload validation further:
+  - enforce exact archive contents
+  - protect against malicious archive structures
+  - tighten extracted-size policy
+- Add stronger upload abuse protection:
+  - per-DJ rate limiting
+  - one active import job per DJ
+  - upload frequency limits
+  - better logging for operational review
+- Review legacy overrides created before exact `dj_track_id` persistence to determine whether a cleanup/migration path is needed.
+- Continue unifying candidate search behavior across:
+  - main Metadata Match
+  - stale resolver
+  - export selection
+- Review any remaining edge cases where request-tile ownership/match indicators could drift from modal truth after legacy data changes.
+
+### 14. Recommended Summary For ChatGPT
+
+At this point the platform has moved from a BPM-only matching proof-of-concept to a DJ-library-aware resolution workflow with:
+
+- full Rekordbox library import
+- playlist hierarchy import
+- preferred playlist ranking
+- star/rating-aware ranking
+- reusable exact manual match persistence
+- stale matched track recovery
+- event library ownership summary
+- deterministic local playlist export
+- support for moved and removed local files
+
+The next phase should focus on lockdown/hardening rather than new user-facing features.
