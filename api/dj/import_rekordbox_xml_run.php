@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/helpers/rekordbox_import_security.php';
 require_dj_login();
 
 header('Content-Type: application/json; charset=utf-8');
@@ -250,38 +251,22 @@ function countDjTracks(PDO $db, int $djId): int
 
 function baseUploadDir(): string
 {
-    return APP_ROOT . '/uploads/dj_libraries';
+    return mdjr_rekordbox_upload_root();
 }
 
 function chunkRootDir(): string
 {
-    return baseUploadDir() . '/chunks';
+    return mdjr_rekordbox_chunk_root_dir();
 }
 
 function chunkSessionDir(int $djId, string $uploadId): string
 {
-    return chunkRootDir() . '/' . $djId . '_' . $uploadId;
+    return mdjr_rekordbox_chunk_session_dir($djId, $uploadId);
 }
 
 function cleanupChunkSession(int $djId, string $uploadId): void
 {
-    $dir = chunkSessionDir($djId, $uploadId);
-    if (!is_dir($dir)) {
-        return;
-    }
-    $it = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
-        RecursiveIteratorIterator::CHILD_FIRST
-    );
-    foreach ($it as $path) {
-        $p = $path->getPathname();
-        if ($path->isDir()) {
-            @rmdir($p);
-        } else {
-            @unlink($p);
-        }
-    }
-    @rmdir($dir);
+    mdjr_rekordbox_cleanup_chunk_session($djId, $uploadId);
 }
 
 function ensureDjTracksTable(PDO $db): void
@@ -345,6 +330,7 @@ function ensureImportJobsTable(PDO $db): void
             chunk_upload_id VARCHAR(64) NULL,
             upload_bytes BIGINT UNSIGNED NULL,
             stored_bytes BIGINT UNSIGNED NULL,
+            source_sha256 CHAR(64) NULL,
             stage VARCHAR(64) NOT NULL DEFAULT 'queued',
             stage_message VARCHAR(255) NULL,
             tracks_processed INT UNSIGNED NOT NULL DEFAULT 0,
@@ -365,6 +351,7 @@ function ensureImportJobsTable(PDO $db): void
     ensureImportJobsColumn($db, 'dj_tracks_updated', 'INT UNSIGNED NOT NULL DEFAULT 0');
     ensureImportJobsColumn($db, 'upload_bytes', 'BIGINT UNSIGNED NULL');
     ensureImportJobsColumn($db, 'stored_bytes', 'BIGINT UNSIGNED NULL');
+    ensureImportJobsColumn($db, 'source_sha256', 'CHAR(64) NULL');
     ensureImportJobsColumn($db, 'stage', "VARCHAR(64) NOT NULL DEFAULT 'queued'");
     ensureImportJobsColumn($db, 'stage_message', 'VARCHAR(255) NULL');
 }

@@ -143,6 +143,7 @@ function ensureImportJobsTable(PDO $db): void
             chunk_upload_id VARCHAR(64) NULL,
             upload_bytes BIGINT UNSIGNED NULL,
             stored_bytes BIGINT UNSIGNED NULL,
+            source_sha256 CHAR(64) NULL,
             stage VARCHAR(64) NOT NULL DEFAULT 'queued',
             stage_message VARCHAR(255) NULL,
             tracks_processed INT UNSIGNED NOT NULL DEFAULT 0,
@@ -163,6 +164,7 @@ function ensureImportJobsTable(PDO $db): void
     ensureImportJobsColumn($db, 'dj_tracks_updated', 'INT UNSIGNED NOT NULL DEFAULT 0');
     ensureImportJobsColumn($db, 'upload_bytes', 'BIGINT UNSIGNED NULL');
     ensureImportJobsColumn($db, 'stored_bytes', 'BIGINT UNSIGNED NULL');
+    ensureImportJobsColumn($db, 'source_sha256', 'CHAR(64) NULL');
     ensureImportJobsColumn($db, 'stage', "VARCHAR(64) NOT NULL DEFAULT 'queued'");
     ensureImportJobsColumn($db, 'stage_message', 'VARCHAR(255) NULL');
 }

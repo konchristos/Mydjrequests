@@ -259,6 +259,102 @@ This section summarizes the current DJ library import, matching, resolver, stale
 - Rekordbox year is now stored into `dj_tracks.release_year`.
 - Genre is already stored in `dj_tracks.genre`.
 
+## 2026-03-20 - Phase 1 Upload Security Hardening
+
+- Added shared upload hardening helper:
+  - `app/helpers/rekordbox_import_security.php`
+- Centralized secure upload storage path handling:
+  - new default upload root is now outside the web root:
+    - `dirname(APP_ROOT) . '/storage/dj_libraries'`
+  - optional override via secret/config key:
+    - `DJ_LIBRARY_UPLOAD_DIR`
+- Added centralized file naming + directory helpers for:
+  - upload target path generation
+  - chunk session paths
+  - directory creation
+  - chunk cleanup
+
+### Upload Validation
+
+- Upload validation now applies to both:
+  - single uploads
+  - chunked uploads after merge
+- Accepted file types remain:
+  - `.xml`
+  - `.zip`
+- Added MIME/content sniffing using `finfo` plus signature checks:
+  - XML must look like real XML
+  - ZIP must have a valid `PK` ZIP signature
+- App-layer size limits now enforce secret/config-driven maximums:
+  - `REKORDBOX_XML_MAX_UPLOAD_BYTES`
+  - `REKORDBOX_ZIP_MAX_UPLOAD_BYTES`
+  - defaults currently remain `500MB`
+
+### XML Hardening
+
+- Added explicit XML content validation before import:
+  - rejects `<!DOCTYPE`
+  - rejects `<!ENTITY`
+  - requires Rekordbox root marker `<DJ_PLAYLISTS`
+- Existing streaming importer behavior remains unchanged:
+  - `XMLReader`
+  - `LIBXML_NONET`
+  - no full XML load into memory
+
+### ZIP Hardening
+
+- ZIP uploads are now validated before extraction/use:
+  - archive must contain exactly one file
+  - entry must not be a directory
+  - entry path cannot contain `/`, `\\`, or `..`
+  - entry must end in `.xml`
+- Added extracted XML size limit:
+  - `REKORDBOX_XML_MAX_EXTRACTED_BYTES`
+  - default `2GB`
+- Added ZIP compression ratio guard:
+  - `REKORDBOX_ZIP_MAX_RATIO`
+  - default `40`
+- ZIP extraction still uses streamed `ZipArchive::getStream()` extraction rather than `extractTo()`
+
+### Import Queue Protections
+
+- Added one-active-import-per-DJ enforcement at upload entry points:
+  - DJs cannot queue a second import while another is `queued` or `processing`
+- Added duplicate active import detection by SHA-256 hash:
+  - new job column:
+    - `dj_library_import_jobs.source_sha256`
+  - blocks re-queuing the same file when an identical import is already active
+- Updated schema bootstrapping in:
+  - `api/dj/import_rekordbox_xml.php`
+  - `api/dj/import_rekordbox_xml_run.php`
+  - `app/workers/rekordbox_import_worker.php`
+  - `api/dj/import_rekordbox_xml_status.php`
+
+### Consistency Across Processing Paths
+
+- Wired manual runner and background worker paths to the same shared upload/chunk helpers
+- Manual run + worker now understand the hardened job schema including:
+  - `source_sha256`
+- Chunk cleanup now routes through the shared helper implementation
+
+### Outcome
+
+- Phase 1 now materially reduces risk from:
+  - invalid/mislabelled uploads
+  - oversized uploads
+  - XML entity / DTD attacks
+  - ZIP traversal / malformed archive abuse
+  - ZIP bomb-style high compression ratios
+  - repeated parallel import abuse per DJ
+  - accidental duplicate active imports
+
+### Still Deferred To Later Phases
+
+- per-DJ upload rate limiting
+- global worker concurrency caps
+- suspicious upload audit/admin review UI
+- broader duplicate history checks beyond currently active jobs
+
 ### 3. Playlist Hierarchy + Preferred Playlists
 
 - Playlist schema was added:

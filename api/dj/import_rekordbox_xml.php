@@ -7,6 +7,7 @@ ini_set('max_execution_time', '600');
 set_time_limit(600);
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/helpers/rekordbox_import_security.php';
 require_dj_login();
 
 header('Content-Type: application/json; charset=utf-8');
@@ -38,7 +39,7 @@ $action = trim((string)($_POST['action'] ?? ''));
 try {
     switch ($action) {
         case 'start':
-            handleChunkStart($djId);
+            handleChunkStart($db, $djId);
             break;
         case 'chunk':
             handleChunkPart($djId);
@@ -51,11 +52,12 @@ try {
             break;
     }
 } catch (Throwable $e) {
-    http_response_code(500);
+    $httpCode = ((int)$e->getCode() >= 400 && (int)$e->getCode() < 600) ? (int)$e->getCode() : 500;
+    http_response_code($httpCode);
     echo json_encode(['error' => 'Import failed: ' . $e->getMessage()]);
 }
 
-function handleChunkStart(int $djId): void
+function handleChunkStart(PDO $db, int $djId): void
 {
     $fileName = trim((string)($_POST['file_name'] ?? ''));
     $fileSize = (int)($_POST['file_size'] ?? 0);
@@ -67,17 +69,27 @@ function handleChunkStart(int $djId): void
         return;
     }
 
-    if (!isAllowedLibraryUploadName($fileName)) {
+    mdjr_rekordbox_assert_no_active_import($db, $djId);
+
+    if (!mdjr_rekordbox_is_allowed_library_upload_name($fileName)) {
         http_response_code(400);
         echo json_encode(['error' => 'Only .xml and .zip files are allowed.']);
         return;
     }
 
-    $safeName = sanitiseLibraryFilename($fileName);
+    $ext = strtolower((string)pathinfo($fileName, PATHINFO_EXTENSION));
+    $limit = mdjr_rekordbox_max_upload_bytes($ext);
+    if ($fileSize > $limit) {
+        http_response_code(413);
+        echo json_encode(['error' => 'Uploaded file exceeds the allowed size limit.']);
+        return;
+    }
+
+    $safeName = mdjr_rekordbox_sanitise_library_filename($fileName);
     $uploadId = bin2hex(random_bytes(16));
 
-    $sessionDir = chunkSessionDir($djId, $uploadId);
-    ensureDirectory($sessionDir);
+    $sessionDir = mdjr_rekordbox_chunk_session_dir($djId, $uploadId);
+    mdjr_rekordbox_ensure_directory($sessionDir);
 
     $meta = [
         'dj_id' => $djId,
@@ -107,7 +119,7 @@ function handleChunkPart(int $djId): void
         return;
     }
 
-    $meta = loadChunkMeta($djId, $uploadId);
+    $meta = mdjr_rekordbox_load_chunk_meta($djId, $uploadId);
     if (!$meta) {
         http_response_code(404);
         echo json_encode(['error' => 'Upload session not found.']);
@@ -142,7 +154,7 @@ function handleChunkPart(int $djId): void
         return;
     }
 
-    $partPath = chunkPartPath($djId, $uploadId, $chunkIndex);
+    $partPath = mdjr_rekordbox_chunk_part_path($djId, $uploadId, $chunkIndex);
     if (!move_uploaded_file($tmpPath, $partPath)) {
         http_response_code(500);
         echo json_encode(['error' => 'Failed to store uploaded chunk.']);
@@ -159,6 +171,8 @@ function handleChunkFinish(PDO $db, int $djId): void
 {
     set_time_limit(0);
 
+    mdjr_rekordbox_assert_no_active_import($db, $djId);
+
     $uploadId = trim((string)($_POST['upload_id'] ?? ''));
     if ($uploadId === '') {
         http_response_code(400);
@@ -166,7 +180,7 @@ function handleChunkFinish(PDO $db, int $djId): void
         return;
     }
 
-    $meta = loadChunkMeta($djId, $uploadId);
+    $meta = mdjr_rekordbox_load_chunk_meta($djId, $uploadId);
     if (!$meta) {
         http_response_code(404);
         echo json_encode(['error' => 'Upload session not found.']);
@@ -181,7 +195,7 @@ function handleChunkFinish(PDO $db, int $djId): void
     }
 
     for ($i = 0; $i < $totalChunks; $i++) {
-        if (!is_file(chunkPartPath($djId, $uploadId, $i))) {
+        if (!is_file(mdjr_rekordbox_chunk_part_path($djId, $uploadId, $i))) {
             http_response_code(400);
             echo json_encode(['error' => 'Missing one or more upload chunks.']);
             return;
@@ -189,7 +203,7 @@ function handleChunkFinish(PDO $db, int $djId): void
     }
 
     $safeName = (string)($meta['safe_name'] ?? 'rekordbox_library.xml');
-    $targetUploadPath = buildTargetUploadPath($djId, $safeName);
+    $targetUploadPath = mdjr_rekordbox_build_target_upload_path($djId, $safeName);
 
     $out = fopen($targetUploadPath, 'wb');
     if ($out === false) {
@@ -198,7 +212,7 @@ function handleChunkFinish(PDO $db, int $djId): void
 
     try {
         for ($i = 0; $i < $totalChunks; $i++) {
-            $in = fopen(chunkPartPath($djId, $uploadId, $i), 'rb');
+            $in = fopen(mdjr_rekordbox_chunk_part_path($djId, $uploadId, $i), 'rb');
             if ($in === false) {
                 throw new RuntimeException('Failed to read chunk #' . $i);
             }
@@ -210,8 +224,11 @@ function handleChunkFinish(PDO $db, int $djId): void
     }
 
     $declaredBytes = max(0, (int)($meta['file_size'] ?? 0));
-    [$sourcePath, $storedBytes] = prepareUploadedLibrarySource($djId, $targetUploadPath, $safeName);
-    $jobId = createImportJob($db, $djId, $sourcePath, $uploadId, $declaredBytes, $storedBytes);
+    mdjr_rekordbox_validate_uploaded_blob($targetUploadPath, $safeName, $declaredBytes);
+    [$sourcePath, $storedBytes] = mdjr_rekordbox_prepare_uploaded_library_source($djId, $targetUploadPath, $safeName);
+    $sourceSha256 = mdjr_rekordbox_file_sha256($sourcePath);
+    mdjr_rekordbox_assert_no_duplicate_active_hash($db, $djId, $sourceSha256);
+    $jobId = createImportJob($db, $djId, $sourcePath, $uploadId, $declaredBytes, $storedBytes, $sourceSha256);
     $dispatched = dispatchImportWorker($jobId);
 
     echo json_encode([
@@ -223,6 +240,8 @@ function handleChunkFinish(PDO $db, int $djId): void
 
 function handleSingleUpload(PDO $db, int $djId): void
 {
+    mdjr_rekordbox_assert_no_active_import($db, $djId);
+
     if (empty($_FILES['library_xml']) || !is_array($_FILES['library_xml'])) {
         $contentLength = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
         if ($contentLength > 0) {
@@ -251,21 +270,24 @@ function handleSingleUpload(PDO $db, int $djId): void
         return;
     }
 
-    if (!isAllowedLibraryUploadName($originalName)) {
+    if (!mdjr_rekordbox_is_allowed_library_upload_name($originalName)) {
         http_response_code(400);
         echo json_encode(['error' => 'Only .xml and .zip files are allowed.']);
         return;
     }
 
-    $safeName = sanitiseLibraryFilename($originalName);
-    $targetUploadPath = buildTargetUploadPath($djId, $safeName);
+    $safeName = mdjr_rekordbox_sanitise_library_filename($originalName);
+    mdjr_rekordbox_validate_uploaded_blob($tmpPath, $safeName, (int)($file['size'] ?? 0));
+    $targetUploadPath = mdjr_rekordbox_build_target_upload_path($djId, $safeName);
     if (!move_uploaded_file($tmpPath, $targetUploadPath)) {
         throw new RuntimeException('Failed to store uploaded file.');
     }
 
     $declaredBytes = max(0, (int)($file['size'] ?? 0));
-    [$sourcePath, $storedBytes] = prepareUploadedLibrarySource($djId, $targetUploadPath, $safeName);
-    $jobId = createImportJob($db, $djId, $sourcePath, null, $declaredBytes, $storedBytes);
+    [$sourcePath, $storedBytes] = mdjr_rekordbox_prepare_uploaded_library_source($djId, $targetUploadPath, $safeName);
+    $sourceSha256 = mdjr_rekordbox_file_sha256($sourcePath);
+    mdjr_rekordbox_assert_no_duplicate_active_hash($db, $djId, $sourceSha256);
+    $jobId = createImportJob($db, $djId, $sourcePath, null, $declaredBytes, $storedBytes, $sourceSha256);
     $dispatched = dispatchImportWorker($jobId);
 
     echo json_encode([
@@ -281,18 +303,19 @@ function createImportJob(
     string $filePath,
     ?string $uploadId,
     int $uploadBytes,
-    int $storedBytes
+    int $storedBytes,
+    string $sourceSha256
 ): int
 {
     $stmt = $db->prepare('
         INSERT INTO dj_library_import_jobs (
             dj_id, status, source_type, source_file_path, chunk_upload_id,
-            upload_bytes, stored_bytes, stage, stage_message,
+            upload_bytes, stored_bytes, source_sha256, stage, stage_message,
             tracks_processed, new_identities, existing_identities, dj_tracks_added, dj_tracks_updated,
             error_message, created_at, updated_at
         ) VALUES (
             :dj_id, :status, :source_type, :source_file_path, :chunk_upload_id,
-            :upload_bytes, :stored_bytes, :stage, :stage_message,
+            :upload_bytes, :stored_bytes, :source_sha256, :stage, :stage_message,
             0, 0, 0, 0, 0,
             NULL, NOW(), NOW()
         )
@@ -306,6 +329,7 @@ function createImportJob(
         ':chunk_upload_id' => $uploadId,
         ':upload_bytes' => ($uploadBytes > 0 ? $uploadBytes : null),
         ':stored_bytes' => ($storedBytes > 0 ? $storedBytes : null),
+        ':source_sha256' => $sourceSha256,
         ':stage' => 'queued',
         ':stage_message' => 'Queued for processing.',
     ]);
@@ -341,74 +365,42 @@ function dispatchImportWorker(int $jobId): bool
 
 function baseUploadDir(): string
 {
-    $dir = APP_ROOT . '/uploads/dj_libraries';
-    ensureDirectory($dir);
-    return $dir;
+    return mdjr_rekordbox_upload_root();
 }
 
 function chunkRootDir(): string
 {
-    $dir = baseUploadDir() . '/chunks';
-    ensureDirectory($dir);
-    return $dir;
+    return mdjr_rekordbox_chunk_root_dir();
 }
 
 function chunkSessionDir(int $djId, string $uploadId): string
 {
-    return chunkRootDir() . '/' . $djId . '_' . $uploadId;
+    return mdjr_rekordbox_chunk_session_dir($djId, $uploadId);
 }
 
 function chunkPartPath(int $djId, string $uploadId, int $chunkIndex): string
 {
-    return chunkSessionDir($djId, $uploadId) . '/part_' . str_pad((string)$chunkIndex, 6, '0', STR_PAD_LEFT) . '.bin';
+    return mdjr_rekordbox_chunk_part_path($djId, $uploadId, $chunkIndex);
 }
 
 function loadChunkMeta(int $djId, string $uploadId): ?array
 {
-    $metaPath = chunkSessionDir($djId, $uploadId) . '/meta.json';
-    if (!is_file($metaPath)) {
-        return null;
-    }
-
-    $json = file_get_contents($metaPath);
-    if ($json === false || $json === '') {
-        return null;
-    }
-
-    $meta = json_decode($json, true);
-    if (!is_array($meta)) {
-        return null;
-    }
-
-    if ((int)($meta['dj_id'] ?? 0) !== $djId) {
-        return null;
-    }
-
-    return $meta;
+    return mdjr_rekordbox_load_chunk_meta($djId, $uploadId);
 }
 
 function buildTargetUploadPath(int $djId, string $safeName): string
 {
-    return baseUploadDir() . '/' . $djId . '_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '_' . $safeName;
+    return mdjr_rekordbox_build_target_upload_path($djId, $safeName);
 }
 
 function sanitiseLibraryFilename(string $fileName): string
 {
-    $safe = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($fileName));
-    if ($safe === '' || $safe === '.' || $safe === '..') {
-        $safe = 'rekordbox_library.xml';
-    }
-    $ext = strtolower((string)pathinfo($safe, PATHINFO_EXTENSION));
-    if (!in_array($ext, ['xml', 'zip'], true)) {
-        $safe .= '.xml';
-    }
-    return $safe;
+    return mdjr_rekordbox_sanitise_library_filename($fileName);
 }
 
 function isAllowedLibraryUploadName(string $fileName): bool
 {
-    $ext = strtolower((string)pathinfo(trim($fileName), PATHINFO_EXTENSION));
-    return in_array($ext, ['xml', 'zip'], true);
+    return mdjr_rekordbox_is_allowed_library_upload_name($fileName);
 }
 
 /**
@@ -416,105 +408,12 @@ function isAllowedLibraryUploadName(string $fileName): bool
  */
 function prepareUploadedLibrarySource(int $djId, string $uploadedPath, string $originalSafeName): array
 {
-    $ext = strtolower((string)pathinfo($originalSafeName, PATHINFO_EXTENSION));
-    if ($ext !== 'zip') {
-        $storedBytes = is_file($uploadedPath) ? max(0, (int)@filesize($uploadedPath)) : 0;
-        return [$uploadedPath, $storedBytes];
-    }
-
-    if (!class_exists('ZipArchive')) {
-        throw new RuntimeException('ZIP uploads are not supported on this server.');
-    }
-
-    $zip = new ZipArchive();
-    if ($zip->open($uploadedPath) !== true) {
-        throw new RuntimeException('Failed to open ZIP archive.');
-    }
-
-    $xmlEntries = [];
-    $maxExtractedBytes = 2 * 1024 * 1024 * 1024; // 2 GB
-    try {
-        for ($i = 0; $i < $zip->numFiles; $i++) {
-            $stat = $zip->statIndex($i);
-            if (!is_array($stat)) {
-                continue;
-            }
-            $name = (string)($stat['name'] ?? '');
-            if ($name === '' || str_ends_with($name, '/')) {
-                continue;
-            }
-            if (strtolower((string)pathinfo($name, PATHINFO_EXTENSION)) !== 'xml') {
-                continue;
-            }
-            $xmlEntries[] = $stat;
-        }
-
-        if (count($xmlEntries) !== 1) {
-            throw new RuntimeException('ZIP must contain exactly one XML file.');
-        }
-
-        $entry = $xmlEntries[0];
-        $entryName = (string)($entry['name'] ?? '');
-        $entrySize = max(0, (int)($entry['size'] ?? 0));
-        if ($entrySize <= 0) {
-            throw new RuntimeException('ZIP XML entry is empty.');
-        }
-        if ($entrySize > $maxExtractedBytes) {
-            throw new RuntimeException('Extracted XML exceeds the 2GB safety limit.');
-        }
-
-        $xmlSafeName = sanitiseLibraryFilename((string)basename($entryName));
-        if (strtolower((string)pathinfo($xmlSafeName, PATHINFO_EXTENSION)) !== 'xml') {
-            $xmlSafeName .= '.xml';
-        }
-        $targetXmlPath = buildTargetUploadPath($djId, $xmlSafeName);
-
-        $in = $zip->getStream($entryName);
-        if ($in === false) {
-            throw new RuntimeException('Failed to read XML from ZIP archive.');
-        }
-
-        $out = fopen($targetXmlPath, 'wb');
-        if ($out === false) {
-            fclose($in);
-            throw new RuntimeException('Failed to create extracted XML file.');
-        }
-
-        try {
-            $copied = stream_copy_to_stream($in, $out);
-        } finally {
-            fclose($in);
-            fclose($out);
-        }
-
-        if (!is_int($copied) || $copied <= 0) {
-            @unlink($targetXmlPath);
-            throw new RuntimeException('Failed to extract XML from ZIP archive.');
-        }
-    } finally {
-        $zip->close();
-        if (is_file($uploadedPath)) {
-            @unlink($uploadedPath);
-        }
-    }
-
-    $storedBytes = is_file($targetXmlPath) ? max(0, (int)@filesize($targetXmlPath)) : 0;
-    if ($storedBytes <= 0) {
-        throw new RuntimeException('Extracted XML file is missing.');
-    }
-
-    return [$targetXmlPath, $storedBytes];
+    return mdjr_rekordbox_prepare_uploaded_library_source($djId, $uploadedPath, $originalSafeName);
 }
 
 function ensureDirectory(string $path): void
 {
-    if (is_dir($path)) {
-        return;
-    }
-
-    if (!mkdir($path, 0755, true) && !is_dir($path)) {
-        throw new RuntimeException('Failed to create directory: ' . $path);
-    }
+    mdjr_rekordbox_ensure_directory($path);
 }
 
 function uploadErrorMessage(int $code): string
@@ -599,6 +498,7 @@ function ensureImportJobsTable(PDO $db): void
             chunk_upload_id VARCHAR(64) NULL,
             upload_bytes BIGINT UNSIGNED NULL,
             stored_bytes BIGINT UNSIGNED NULL,
+            source_sha256 CHAR(64) NULL,
             stage VARCHAR(64) NOT NULL DEFAULT 'queued',
             stage_message VARCHAR(255) NULL,
             tracks_processed INT UNSIGNED NOT NULL DEFAULT 0,
@@ -619,6 +519,7 @@ function ensureImportJobsTable(PDO $db): void
     ensureImportJobsColumn($db, 'dj_tracks_updated', 'INT UNSIGNED NOT NULL DEFAULT 0');
     ensureImportJobsColumn($db, 'upload_bytes', 'BIGINT UNSIGNED NULL');
     ensureImportJobsColumn($db, 'stored_bytes', 'BIGINT UNSIGNED NULL');
+    ensureImportJobsColumn($db, 'source_sha256', 'CHAR(64) NULL');
     ensureImportJobsColumn($db, 'stage', "VARCHAR(64) NOT NULL DEFAULT 'queued'");
     ensureImportJobsColumn($db, 'stage_message', 'VARCHAR(255) NULL');
 }
