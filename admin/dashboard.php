@@ -326,6 +326,11 @@ include APP_ROOT . '/dj/layout.php';
                 <h3>Performance</h3>
                 <p>Queue pending: <?php echo (int)$enrichmentPending; ?> · toggles and indexes</p>
             </a>
+
+            <a href="/admin/import_security.php" class="admin-card">
+                <h3>Import Security</h3>
+                <p>Review Rekordbox upload rejections, worker failures, and queue activity</p>
+            </a>
         </div>
 
         <div class="admin-dashboard admin-controls-row">

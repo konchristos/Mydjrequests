@@ -567,3 +567,64 @@ if (!function_exists('mdjr_rekordbox_can_dispatch_worker')) {
         return mdjr_rekordbox_count_processing_jobs($db) < mdjr_rekordbox_global_processing_limit();
     }
 }
+
+if (!function_exists('mdjr_rekordbox_log_entries')) {
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    function mdjr_rekordbox_log_entries(int $limit = 200): array
+    {
+        $path = mdjr_rekordbox_log_path('security.log');
+        if (!is_file($path) || !is_readable($path)) {
+            return [];
+        }
+
+        $lines = @file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (!is_array($lines) || empty($lines)) {
+            return [];
+        }
+
+        $slice = array_slice($lines, -max(1, $limit));
+        $rows = [];
+        foreach (array_reverse($slice) as $line) {
+            $decoded = json_decode((string)$line, true);
+            if (is_array($decoded)) {
+                $rows[] = $decoded;
+            }
+        }
+        return $rows;
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_log_summary')) {
+    /**
+     * @return array{total:int,by_category:array<string,int>,recent_errors:int}
+     */
+    function mdjr_rekordbox_log_summary(int $withinHours = 24, int $limit = 500): array
+    {
+        $entries = mdjr_rekordbox_log_entries($limit);
+        $summary = [
+            'total' => 0,
+            'by_category' => [],
+            'recent_errors' => 0,
+        ];
+        $cutoff = time() - (max(1, $withinHours) * 3600);
+
+        foreach ($entries as $entry) {
+            $summary['total']++;
+            $category = trim((string)($entry['category'] ?? 'unknown'));
+            if ($category === '') {
+                $category = 'unknown';
+            }
+            $summary['by_category'][$category] = (int)($summary['by_category'][$category] ?? 0) + 1;
+
+            $ts = strtotime((string)($entry['ts'] ?? ''));
+            if ($ts !== false && $ts >= $cutoff) {
+                $summary['recent_errors']++;
+            }
+        }
+
+        arsort($summary['by_category']);
+        return $summary;
+    }
+}

@@ -261,4 +261,12 @@ include APP_ROOT . '/dj/layout.php';
             <button type="submit" class="perf-btn secondary">Apply Indexes</button>
         </form>
     </div>
+
+    <div class="perf-card">
+        <h3 style="margin-top:0;">Import Security Review</h3>
+        <div class="perf-help" style="margin-bottom:12px;">
+            Review upload rejections, worker failures, and recent Rekordbox import queue activity.
+        </div>
+        <a class="perf-btn" href="/admin/import_security.php" style="display:inline-block; text-decoration:none;">Open Import Security</a>
+    </div>
 </div>

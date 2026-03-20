@@ -606,3 +606,27 @@ At this point the platform has moved from a BPM-only matching proof-of-concept t
 - support for moved and removed local files
 
 The next phase should focus on lockdown/hardening rather than new user-facing features.
+
+## 2026-03-20 - Phase 3 Import Guardrails + Admin Review
+
+- Added importer-side logical caps in `library_import/RekordboxXMLImporter.php`:
+  - max tracks (`REKORDBOX_IMPORT_MAX_TRACKS`, default `150000`)
+  - max playlists (`REKORDBOX_IMPORT_MAX_PLAYLISTS`, default `10000`)
+  - max playlist depth (`REKORDBOX_IMPORT_MAX_PLAYLIST_DEPTH`, default `32`)
+- Added importer watchdog checks:
+  - max runtime (`REKORDBOX_IMPORT_MAX_RUNTIME_SECONDS`, default `3600`)
+  - max memory usage (`REKORDBOX_IMPORT_MAX_MEMORY_MB`, default `768`)
+- Import now aborts safely if XML content is structurally too large or exceeds configured ingestion guardrails.
+- Added security log helper readers in `app/helpers/rekordbox_import_security.php`:
+  - `mdjr_rekordbox_log_entries()`
+  - `mdjr_rekordbox_log_summary()`
+- Added admin review page `admin/import_security.php`:
+  - recent security log entries
+  - recent import jobs
+  - category counts
+  - queued/processing/failed job visibility
+  - storage log path visibility
+- Added navigation access to the review page from:
+  - `admin/dashboard.php`
+  - `admin/performance.php`
+- This phase improves observability and keeps import abuse controls auditable without changing DJ-facing workflow.

@@ -15,11 +15,17 @@ class RekordboxXMLImporter
     private string $sourceLabel;
     private int $importJobId;
     private string $importStartedAt = '';
+    private int $importStartedTs = 0;
     private array $djTrackColumns = [];
     private array $trackIdToHash = [];
     private array $trackIdToDjTrackId = [];
     private ?PDOStatement $playlistUpsertStmt = null;
     private ?PDOStatement $playlistTrackInsertStmt = null;
+    private int $maxTracks;
+    private int $maxPlaylists;
+    private int $maxPlaylistDepth;
+    private int $maxRuntimeSeconds;
+    private int $maxMemoryBytes;
     /** @var callable|null */
     private $progressCallback = null;
 
@@ -31,6 +37,11 @@ class RekordboxXMLImporter
         $this->identityProvider = (string)($options['identity_provider'] ?? 'manual');
         $this->sourceLabel = (string)($options['source'] ?? 'rekordbox_xml');
         $this->importJobId = max(0, (int)($options['import_job_id'] ?? 0));
+        $this->maxTracks = $this->readLimit('REKORDBOX_IMPORT_MAX_TRACKS', 150000);
+        $this->maxPlaylists = $this->readLimit('REKORDBOX_IMPORT_MAX_PLAYLISTS', 10000);
+        $this->maxPlaylistDepth = $this->readLimit('REKORDBOX_IMPORT_MAX_PLAYLIST_DEPTH', 32);
+        $this->maxRuntimeSeconds = $this->readLimit('REKORDBOX_IMPORT_MAX_RUNTIME_SECONDS', 3600);
+        $this->maxMemoryBytes = max(128 * 1024 * 1024, $this->readLimit('REKORDBOX_IMPORT_MAX_MEMORY_MB', 768) * 1024 * 1024);
     }
 
     public function setProgressCallback(?callable $callback): void
@@ -70,6 +81,7 @@ class RekordboxXMLImporter
 
         $startedAt = gmdate('c');
         $this->importStartedAt = date('Y-m-d H:i:s');
+        $this->importStartedTs = time();
         $reader = new XMLReader();
         $flags = LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_COMPACT | LIBXML_PARSEHUGE;
 
@@ -106,6 +118,12 @@ class RekordboxXMLImporter
                 }
 
                 $tracksSeen++;
+                if ($tracksSeen > $this->maxTracks) {
+                    throw new RuntimeException('Import exceeds the maximum allowed track count.');
+                }
+                if (($tracksSeen % 250) === 0) {
+                    $this->enforceRuntimeAndMemoryLimits();
+                }
                 $track = $this->extractTrackFromReader($reader);
                 if ($track === null) {
                     $rowsSkipped++;
@@ -138,6 +156,7 @@ class RekordboxXMLImporter
             $playlistTracksAdded = (int)($playlistStats['playlist_tracks_added'] ?? 0);
             $playlistTracksSkipped = (int)($playlistStats['playlist_tracks_skipped'] ?? 0);
             $this->markMissingTracksUnavailable();
+            $this->enforceRuntimeAndMemoryLimits();
         } finally {
             $reader->close();
         }
@@ -169,6 +188,32 @@ class RekordboxXMLImporter
             call_user_func($this->progressCallback, $stage, $message);
         } catch (Throwable $e) {
             // Progress callback failures should never fail the import itself.
+        }
+    }
+
+    private function readLimit(string $key, int $default): int
+    {
+        if (function_exists('mdjr_secret')) {
+            $value = (int)mdjr_secret($key, (string)$default);
+            return $value > 0 ? $value : $default;
+        }
+        return $default;
+    }
+
+    private function enforceRuntimeAndMemoryLimits(): void
+    {
+        if ($this->importStartedTs > 0) {
+            $elapsed = time() - $this->importStartedTs;
+            if ($elapsed > $this->maxRuntimeSeconds) {
+                throw new RuntimeException('Import exceeded the maximum allowed runtime.');
+            }
+        }
+
+        if (function_exists('memory_get_usage')) {
+            $usage = (int)memory_get_usage(true);
+            if ($usage > $this->maxMemoryBytes) {
+                throw new RuntimeException('Import exceeded the maximum allowed memory usage.');
+            }
         }
     }
 
@@ -777,8 +822,12 @@ class RekordboxXMLImporter
         return $stats;
     }
 
-    private function parsePlaylistNode(XMLReader $reader, ?int $parentPlaylistId, string $pathSeed, array &$stats): void
+    private function parsePlaylistNode(XMLReader $reader, ?int $parentPlaylistId, string $pathSeed, array &$stats, int $level = 1): void
     {
+        if ($level > $this->maxPlaylistDepth) {
+            throw new RuntimeException('Playlist hierarchy exceeded the maximum allowed depth.');
+        }
+
         $type = trim((string)$reader->getAttribute('Type'));
         $name = $this->nullIfEmpty($reader->getAttribute('Name')) ?? 'Untitled';
         $isPlaylist = ($type === '1');
@@ -786,6 +835,12 @@ class RekordboxXMLImporter
 
         $playlistId = $this->upsertPlaylistNode($name, $parentPlaylistId, $pathSeed);
         $stats['playlists_imported']++;
+        if ((int)$stats['playlists_imported'] > $this->maxPlaylists) {
+            throw new RuntimeException('Import exceeded the maximum allowed playlist count.');
+        }
+        if (((int)$stats['playlists_imported'] % 100) === 0) {
+            $this->enforceRuntimeAndMemoryLimits();
+        }
 
         if ($reader->isEmptyElement) {
             return;
@@ -805,7 +860,7 @@ class RekordboxXMLImporter
                 $token = $this->playlistNodeToken($reader);
                 $childOrdinals[$token] = ($childOrdinals[$token] ?? 0) + 1;
                 $childPathSeed = $pathSeed . '/' . $token . '#' . $childOrdinals[$token];
-                $this->parsePlaylistNode($reader, $playlistId, $childPathSeed, $stats);
+                $this->parsePlaylistNode($reader, $playlistId, $childPathSeed, $stats, $level + 1);
                 continue;
             }
 
