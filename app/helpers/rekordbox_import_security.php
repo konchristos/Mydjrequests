@@ -1,6 +1,24 @@
 <?php
 declare(strict_types=1);
 
+if (!function_exists('mdjr_rekordbox_secret_int')) {
+    function mdjr_rekordbox_secret_int(string $key, int $default): int
+    {
+        $raw = function_exists('mdjr_secret') ? mdjr_secret($key, (string)$default) : (string)$default;
+        $value = (int)$raw;
+        return $value > 0 ? $value : $default;
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_secret_float')) {
+    function mdjr_rekordbox_secret_float(string $key, float $default): float
+    {
+        $raw = function_exists('mdjr_secret') ? mdjr_secret($key, (string)$default) : (string)$default;
+        $value = (float)$raw;
+        return $value > 0 ? $value : $default;
+    }
+}
+
 if (!function_exists('mdjr_rekordbox_upload_root')) {
     function mdjr_rekordbox_upload_root(): string
     {
@@ -15,6 +33,38 @@ if (!function_exists('mdjr_rekordbox_upload_root')) {
 
         mdjr_rekordbox_ensure_directory($base);
         return rtrim($base, '/');
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_log_path')) {
+    function mdjr_rekordbox_log_path(string $name): string
+    {
+        return mdjr_rekordbox_upload_root() . '/' . ltrim($name, '/');
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_log_event')) {
+    function mdjr_rekordbox_log_event(string $category, string $message, array $context = []): void
+    {
+        $payload = [
+            'ts' => gmdate('c'),
+            'category' => $category,
+            'message' => $message,
+            'context' => $context,
+        ];
+        @file_put_contents(
+            mdjr_rekordbox_log_path('security.log'),
+            json_encode($payload, JSON_UNESCAPED_SLASHES) . PHP_EOL,
+            FILE_APPEND
+        );
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_throw')) {
+    function mdjr_rekordbox_throw(string $message, int $code, array $context = []): void
+    {
+        mdjr_rekordbox_log_event('upload_rejected', $message, $context + ['code' => $code]);
+        throw new RuntimeException($message, $code);
     }
 }
 
@@ -139,10 +189,7 @@ if (!function_exists('mdjr_rekordbox_max_upload_bytes')) {
     function mdjr_rekordbox_max_upload_bytes(string $ext): int
     {
         $key = strtolower($ext) === 'zip' ? 'REKORDBOX_ZIP_MAX_UPLOAD_BYTES' : 'REKORDBOX_XML_MAX_UPLOAD_BYTES';
-        $default = 500 * 1024 * 1024;
-        $raw = function_exists('mdjr_secret') ? mdjr_secret($key, (string)$default) : (string)$default;
-        $value = (int)$raw;
-        return $value > 0 ? $value : $default;
+        return mdjr_rekordbox_secret_int($key, 500 * 1024 * 1024);
     }
 }
 
@@ -170,23 +217,27 @@ if (!function_exists('mdjr_rekordbox_validate_uploaded_blob')) {
     function mdjr_rekordbox_validate_uploaded_blob(string $path, string $originalName, ?int $declaredBytes = null): void
     {
         if (!is_file($path) || !is_readable($path)) {
-            throw new RuntimeException('Uploaded file is missing.', 400);
+            mdjr_rekordbox_throw('Uploaded file is missing.', 400, ['original_name' => $originalName]);
         }
 
         $ext = strtolower((string)pathinfo($originalName, PATHINFO_EXTENSION));
         if (!in_array($ext, ['xml', 'zip'], true)) {
-            throw new RuntimeException('Only .xml and .zip files are allowed.', 400);
+            mdjr_rekordbox_throw('Only .xml and .zip files are allowed.', 400, ['original_name' => $originalName]);
         }
 
         $size = max(0, (int)@filesize($path));
         if ($size <= 0) {
-            throw new RuntimeException('Uploaded file is empty.', 400);
+            mdjr_rekordbox_throw('Uploaded file is empty.', 400, ['original_name' => $originalName]);
         }
 
         $limit = mdjr_rekordbox_max_upload_bytes($ext);
         $effectiveBytes = max($size, (int)$declaredBytes);
         if ($effectiveBytes > $limit) {
-            throw new RuntimeException('Uploaded file exceeds the allowed size limit.', 413);
+            mdjr_rekordbox_throw('Uploaded file exceeds the allowed size limit.', 413, [
+                'original_name' => $originalName,
+                'effective_bytes' => $effectiveBytes,
+                'limit' => $limit,
+            ]);
         }
 
         $mime = mdjr_rekordbox_detect_mime($path);
@@ -201,11 +252,11 @@ if (!function_exists('mdjr_rekordbox_validate_uploaded_blob')) {
                 'application/octet-stream',
             ];
             if ($mime !== '' && !in_array($mime, $allowedZipMimes, true)) {
-                throw new RuntimeException('Uploaded ZIP file failed MIME validation.', 415);
+                mdjr_rekordbox_throw('Uploaded ZIP file failed MIME validation.', 415, ['original_name' => $originalName, 'mime' => $mime]);
             }
             $sig = substr($head, 0, 4);
             if (!in_array($sig, ["PK\x03\x04", "PK\x05\x06", "PK\x07\x08"], true)) {
-                throw new RuntimeException('Uploaded ZIP file failed signature validation.', 415);
+                mdjr_rekordbox_throw('Uploaded ZIP file failed signature validation.', 415, ['original_name' => $originalName]);
             }
             return;
         }
@@ -217,12 +268,12 @@ if (!function_exists('mdjr_rekordbox_validate_uploaded_blob')) {
             'application/octet-stream',
         ];
         if ($mime !== '' && !in_array($mime, $allowedXmlMimes, true)) {
-            throw new RuntimeException('Uploaded XML file failed MIME validation.', 415);
+            mdjr_rekordbox_throw('Uploaded XML file failed MIME validation.', 415, ['original_name' => $originalName, 'mime' => $mime]);
         }
 
         $trimmed = ltrim($head, "\xEF\xBB\xBF\x00\x09\x0A\x0D\x20");
         if ($trimmed === '' || strpos($trimmed, '<') !== 0) {
-            throw new RuntimeException('Uploaded XML file does not look like XML.', 415);
+            mdjr_rekordbox_throw('Uploaded XML file does not look like XML.', 415, ['original_name' => $originalName]);
         }
     }
 }
@@ -231,21 +282,21 @@ if (!function_exists('mdjr_rekordbox_validate_xml_content')) {
     function mdjr_rekordbox_validate_xml_content(string $path): void
     {
         if (!is_file($path) || !is_readable($path)) {
-            throw new RuntimeException('XML file is missing.', 400);
+            mdjr_rekordbox_throw('XML file is missing.', 400, ['path' => $path]);
         }
 
         $size = max(0, (int)@filesize($path));
         if ($size <= 0) {
-            throw new RuntimeException('XML file is empty.', 400);
+            mdjr_rekordbox_throw('XML file is empty.', 400, ['path' => $path]);
         }
 
         $head = (string)file_get_contents($path, false, null, 0, 65536);
         $normalized = ltrim($head, "\xEF\xBB\xBF\x00\x09\x0A\x0D\x20");
         if ($normalized === '' || stripos($normalized, '<!doctype') !== false || stripos($normalized, '<!entity') !== false) {
-            throw new RuntimeException('XML DTD/ENTITY declarations are not allowed.', 400);
+            mdjr_rekordbox_throw('XML DTD/ENTITY declarations are not allowed.', 400, ['path' => $path]);
         }
         if (stripos($normalized, '<dj_playlists') === false) {
-            throw new RuntimeException('Uploaded XML does not appear to be a Rekordbox export.', 400);
+            mdjr_rekordbox_throw('Uploaded XML does not appear to be a Rekordbox export.', 400, ['path' => $path]);
         }
     }
 }
@@ -261,53 +312,65 @@ if (!function_exists('mdjr_rekordbox_prepare_uploaded_library_source')) {
         }
 
         if (!class_exists('ZipArchive')) {
-            throw new RuntimeException('ZIP uploads are not supported on this server.', 500);
+            mdjr_rekordbox_throw('ZIP uploads are not supported on this server.', 500, ['uploaded_path' => $uploadedPath]);
         }
 
         $zip = new ZipArchive();
         if ($zip->open($uploadedPath) !== true) {
-            throw new RuntimeException('Failed to open ZIP archive.', 400);
+            mdjr_rekordbox_throw('Failed to open ZIP archive.', 400, ['uploaded_path' => $uploadedPath]);
         }
 
-        $maxExtractedBytes = (int)(function_exists('mdjr_secret') ? mdjr_secret('REKORDBOX_XML_MAX_EXTRACTED_BYTES', (string)(2 * 1024 * 1024 * 1024)) : (2 * 1024 * 1024 * 1024));
-        $maxRatio = (float)(function_exists('mdjr_secret') ? mdjr_secret('REKORDBOX_ZIP_MAX_RATIO', '40') : '40');
+        $maxExtractedBytes = mdjr_rekordbox_secret_int('REKORDBOX_XML_MAX_EXTRACTED_BYTES', 2 * 1024 * 1024 * 1024);
+        $maxRatio = mdjr_rekordbox_secret_float('REKORDBOX_ZIP_MAX_RATIO', 40.0);
         $entry = null;
 
         try {
             if ($zip->numFiles !== 1) {
-                throw new RuntimeException('ZIP must contain exactly one XML file.', 400);
+                mdjr_rekordbox_throw('ZIP must contain exactly one XML file.', 400, ['uploaded_path' => $uploadedPath, 'num_files' => $zip->numFiles]);
             }
 
             $stat = $zip->statIndex(0);
             if (!is_array($stat)) {
-                throw new RuntimeException('Failed to inspect ZIP archive.', 400);
+                mdjr_rekordbox_throw('Failed to inspect ZIP archive.', 400, ['uploaded_path' => $uploadedPath]);
             }
 
             $name = (string)($stat['name'] ?? '');
             if ($name === '' || str_ends_with($name, '/')) {
-                throw new RuntimeException('ZIP must contain exactly one XML file.', 400);
+                mdjr_rekordbox_throw('ZIP must contain exactly one XML file.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
             }
             if (strpos($name, '/') !== false || strpos($name, '\\') !== false || str_contains($name, '..')) {
-                throw new RuntimeException('ZIP entry path is not allowed.', 400);
+                mdjr_rekordbox_throw('ZIP entry path is not allowed.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
             }
             if (strtolower((string)pathinfo($name, PATHINFO_EXTENSION)) !== 'xml') {
-                throw new RuntimeException('ZIP must contain exactly one XML file.', 400);
+                mdjr_rekordbox_throw('ZIP must contain exactly one XML file.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
             }
 
             $entrySize = max(0, (int)($stat['size'] ?? 0));
             $compressedSize = max(0, (int)($stat['comp_size'] ?? 0));
             if ($entrySize <= 0) {
-                throw new RuntimeException('ZIP XML entry is empty.', 400);
+                mdjr_rekordbox_throw('ZIP XML entry is empty.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
             }
             if ($entrySize > $maxExtractedBytes) {
-                throw new RuntimeException('Extracted XML exceeds the allowed safety limit.', 413);
+                mdjr_rekordbox_throw('Extracted XML exceeds the allowed safety limit.', 413, [
+                    'uploaded_path' => $uploadedPath,
+                    'entry_name' => $name,
+                    'entry_size' => $entrySize,
+                    'limit' => $maxExtractedBytes,
+                ]);
             }
             if ($compressedSize <= 0) {
-                throw new RuntimeException('ZIP XML entry has invalid compressed size.', 400);
+                mdjr_rekordbox_throw('ZIP XML entry has invalid compressed size.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
             }
             $ratio = $entrySize / max(1, $compressedSize);
             if ($ratio > $maxRatio) {
-                throw new RuntimeException('ZIP archive exceeded the allowed compression ratio.', 400);
+                mdjr_rekordbox_throw('ZIP archive exceeded the allowed compression ratio.', 400, [
+                    'uploaded_path' => $uploadedPath,
+                    'entry_name' => $name,
+                    'entry_size' => $entrySize,
+                    'compressed_size' => $compressedSize,
+                    'ratio' => $ratio,
+                    'limit' => $maxRatio,
+                ]);
             }
 
             $entry = $stat;
@@ -319,13 +382,13 @@ if (!function_exists('mdjr_rekordbox_prepare_uploaded_library_source')) {
 
             $in = $zip->getStream($name);
             if ($in === false) {
-                throw new RuntimeException('Failed to read XML from ZIP archive.', 400);
+                mdjr_rekordbox_throw('Failed to read XML from ZIP archive.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
             }
 
             $out = fopen($targetXmlPath, 'wb');
             if ($out === false) {
                 fclose($in);
-                throw new RuntimeException('Failed to create extracted XML file.', 500);
+                mdjr_rekordbox_throw('Failed to create extracted XML file.', 500, ['target_xml_path' => $targetXmlPath]);
             }
 
             try {
@@ -337,7 +400,7 @@ if (!function_exists('mdjr_rekordbox_prepare_uploaded_library_source')) {
 
             if (!is_int($copied) || $copied <= 0) {
                 @unlink($targetXmlPath);
-                throw new RuntimeException('Failed to extract XML from ZIP archive.', 400);
+                mdjr_rekordbox_throw('Failed to extract XML from ZIP archive.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
             }
 
             mdjr_rekordbox_validate_xml_content($targetXmlPath);
@@ -350,7 +413,7 @@ if (!function_exists('mdjr_rekordbox_prepare_uploaded_library_source')) {
 
         $storedBytes = is_file($targetXmlPath) ? max(0, (int)@filesize($targetXmlPath)) : 0;
         if ($storedBytes <= 0) {
-            throw new RuntimeException('Extracted XML file is missing.', 400);
+            mdjr_rekordbox_throw('Extracted XML file is missing.', 400, ['target_xml_path' => $targetXmlPath]);
         }
 
         return [$targetXmlPath, $storedBytes];
@@ -362,9 +425,70 @@ if (!function_exists('mdjr_rekordbox_file_sha256')) {
     {
         $hash = is_file($path) ? (string)@hash_file('sha256', $path) : '';
         if ($hash === '' || strlen($hash) !== 64) {
-            throw new RuntimeException('Failed to fingerprint uploaded file.', 500);
+            mdjr_rekordbox_throw('Failed to fingerprint uploaded file.', 500, ['path' => $path]);
         }
         return strtolower($hash);
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_count_recent_jobs')) {
+    function mdjr_rekordbox_count_recent_jobs(PDO $db, int $djId, int $windowMinutes): int
+    {
+        $windowMinutes = max(1, $windowMinutes);
+        $stmt = $db->prepare("
+            SELECT COUNT(*)
+            FROM dj_library_import_jobs
+            WHERE dj_id = :dj_id
+              AND created_at >= (NOW() - INTERVAL {$windowMinutes} MINUTE)
+        ");
+        $stmt->execute([':dj_id' => $djId]);
+        return (int)$stmt->fetchColumn();
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_assert_rate_limit')) {
+    function mdjr_rekordbox_assert_rate_limit(PDO $db, int $djId): void
+    {
+        $windowMinutes = mdjr_rekordbox_secret_int('REKORDBOX_IMPORT_RATE_WINDOW_MINUTES', 60);
+        $maxAttempts = mdjr_rekordbox_secret_int('REKORDBOX_IMPORT_MAX_ATTEMPTS_PER_WINDOW', 6);
+        $count = mdjr_rekordbox_count_recent_jobs($db, $djId, $windowMinutes);
+        if ($count >= $maxAttempts) {
+            mdjr_rekordbox_throw('Upload rate limit reached. Please wait before starting another import.', 429, [
+                'dj_id' => $djId,
+                'window_minutes' => $windowMinutes,
+                'max_attempts' => $maxAttempts,
+                'count' => $count,
+            ]);
+        }
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_count_queued_jobs')) {
+    function mdjr_rekordbox_count_queued_jobs(PDO $db, int $djId): int
+    {
+        $stmt = $db->prepare("
+            SELECT COUNT(*)
+            FROM dj_library_import_jobs
+            WHERE dj_id = :dj_id
+              AND status = 'queued'
+        ");
+        $stmt->execute([':dj_id' => $djId]);
+        return (int)$stmt->fetchColumn();
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_assert_queue_capacity')) {
+    function mdjr_rekordbox_assert_queue_capacity(PDO $db, int $djId): void
+    {
+        $maxQueued = mdjr_rekordbox_secret_int('REKORDBOX_IMPORT_MAX_QUEUED_PER_DJ', 1);
+        $queued = mdjr_rekordbox_count_queued_jobs($db, $djId);
+        if ($queued >= $maxQueued) {
+            mdjr_rekordbox_throw('Too many queued imports for this DJ account.', 429, [
+                'dj_id' => $djId,
+                'queued' => $queued,
+                'max_queued' => $maxQueued,
+            ]);
+        }
     }
 }
 
@@ -386,7 +510,7 @@ if (!function_exists('mdjr_rekordbox_assert_no_active_import')) {
     function mdjr_rekordbox_assert_no_active_import(PDO $db, int $djId): void
     {
         if (mdjr_rekordbox_has_active_import($db, $djId)) {
-            throw new RuntimeException('Another import is already queued or processing for this DJ account.', 409);
+            mdjr_rekordbox_throw('Another import is already queued or processing for this DJ account.', 409, ['dj_id' => $djId]);
         }
     }
 }
@@ -409,7 +533,37 @@ if (!function_exists('mdjr_rekordbox_assert_no_duplicate_active_hash')) {
         ]);
         $existingId = (int)$stmt->fetchColumn();
         if ($existingId > 0) {
-            throw new RuntimeException('An identical import is already queued or processing.', 409);
+            mdjr_rekordbox_throw('An identical import is already queued or processing.', 409, [
+                'dj_id' => $djId,
+                'source_sha256' => $sha256,
+                'existing_job_id' => $existingId,
+            ]);
         }
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_count_processing_jobs')) {
+    function mdjr_rekordbox_count_processing_jobs(PDO $db): int
+    {
+        $stmt = $db->query("
+            SELECT COUNT(*)
+            FROM dj_library_import_jobs
+            WHERE status = 'processing'
+        ");
+        return (int)$stmt->fetchColumn();
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_global_processing_limit')) {
+    function mdjr_rekordbox_global_processing_limit(): int
+    {
+        return mdjr_rekordbox_secret_int('REKORDBOX_IMPORT_MAX_CONCURRENT_JOBS', 2);
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_can_dispatch_worker')) {
+    function mdjr_rekordbox_can_dispatch_worker(PDO $db): bool
+    {
+        return mdjr_rekordbox_count_processing_jobs($db) < mdjr_rekordbox_global_processing_limit();
     }
 }

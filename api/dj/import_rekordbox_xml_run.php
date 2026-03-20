@@ -32,6 +32,14 @@ $db = db();
 ensureDjTracksTable($db);
 ensureImportJobsTable($db);
 
+if (!mdjr_rekordbox_can_dispatch_worker($db)) {
+    echo json_encode([
+        'ok' => false,
+        'message' => 'Import worker capacity reached. Please try again shortly.',
+    ]);
+    exit;
+}
+
 $job = claimQueuedJobForDj($db, $jobId, $djId);
 if (!$job) {
     echo json_encode([
@@ -130,7 +138,13 @@ function processImportJob(PDO $db, array $job): void
         if ($chunkUploadId !== '') {
             cleanupChunkSession($djId, $chunkUploadId);
         }
-    } catch (Throwable $e) {
+} catch (Throwable $e) {
+        mdjr_rekordbox_log_event('manual_run_failure', $e->getMessage(), [
+            'job_id' => (int)($job['id'] ?? 0),
+            'dj_id' => (int)($job['dj_id'] ?? 0),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+        ]);
         $failed = $db->prepare("
             UPDATE dj_library_import_jobs
             SET status = 'failed',
@@ -153,6 +167,13 @@ function claimQueuedJobForDj(PDO $db, int $jobId, int $djId): ?array
 {
     $db->beginTransaction();
     try {
+        $processingCount = mdjr_rekordbox_count_processing_jobs($db);
+        $maxConcurrent = mdjr_rekordbox_global_processing_limit();
+        if ($processingCount >= $maxConcurrent) {
+            $db->commit();
+            return null;
+        }
+
         $sel = $db->prepare("
             SELECT *
             FROM dj_library_import_jobs

@@ -201,6 +201,31 @@ try {
     $importHistoryRows = [];
 }
 
+$activeImportJob = null;
+foreach ($importHistoryRows as $row) {
+    $rowStatus = trim((string)($row['status'] ?? ''));
+    if ($rowStatus === 'queued' || $rowStatus === 'processing') {
+        $activeImportJob = [
+            'id' => (int)($row['id'] ?? 0),
+            'status' => $rowStatus,
+            'stage' => trim((string)($row['stage'] ?? '')),
+            'stage_message' => trim((string)($row['stage_message'] ?? '')),
+            'upload_bytes' => isset($row['upload_bytes']) ? (int)$row['upload_bytes'] : 0,
+            'stored_bytes' => isset($row['stored_bytes']) ? (int)$row['stored_bytes'] : 0,
+            'tracks_processed' => (int)($row['tracks_processed'] ?? 0),
+            'new_identities' => 0,
+            'existing_identities' => 0,
+            'dj_tracks_added' => (int)($row['dj_tracks_added'] ?? 0),
+            'dj_tracks_updated' => (int)($row['dj_tracks_updated'] ?? 0),
+            'error_message' => trim((string)($row['error_message'] ?? '')),
+            'started_at' => (string)($row['started_at'] ?? ''),
+            'finished_at' => (string)($row['finished_at'] ?? ''),
+            'created_at' => (string)($row['created_at'] ?? ''),
+        ];
+        break;
+    }
+}
+
 $pageTitle = 'Library Import';
 $pageBodyClass = 'dj-page';
 include __DIR__ . '/layout.php';
@@ -354,6 +379,18 @@ function parseUtcToTs(string $value): int
     border-color: rgba(var(--brand-accent-rgb), 0.95);
     background: rgba(var(--brand-accent-rgb), 0.14);
     transform: translateY(-1px);
+}
+
+.library-dropzone.is-disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.library-dropzone.is-disabled:hover {
+    border-color: rgba(var(--brand-accent-rgb), 0.55);
+    background: rgba(var(--brand-accent-rgb), 0.08);
+    transform: none;
 }
 
 .library-dropzone-title {
@@ -1007,6 +1044,7 @@ function parseUtcToTs(string $value): int
 <script>
 (function () {
     const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
+    const initialActiveJob = <?php echo json_encode($activeImportJob, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE); ?>;
     const dropzone = document.getElementById('libraryDropzone');
     const input = document.getElementById('libraryFileInput');
     const statusEl = document.getElementById('libraryStatus');
@@ -1065,12 +1103,47 @@ function parseUtcToTs(string $value): int
         setStatusMeta('');
         runQueuedBtn.disabled = false;
         activeJobId = 0;
+        dropzone.classList.remove('is-disabled');
+        dropzone.setAttribute('tabindex', '0');
+        input.disabled = false;
     }
 
     function showProgress() {
         progressWrap.style.display = 'block';
         progressBar.classList.remove('is-indeterminate');
         progressBar.style.width = '0%';
+        dropzone.classList.add('is-disabled');
+        dropzone.setAttribute('tabindex', '-1');
+        input.disabled = true;
+    }
+
+    function isImportActiveStatus(status) {
+        return status === 'queued' || status === 'processing';
+    }
+
+    function renderActiveJobState(payload) {
+        const status = String(payload.status || '');
+        const stage = String(payload.stage || '');
+        const stageMessage = String(payload.stage_message || '');
+        const elapsed = formatElapsed(payload.elapsed_seconds || 0);
+        const uploadSize = formatBytes(payload.upload_bytes || 0);
+        const storedSize = formatBytes(payload.stored_bytes || 0);
+        const metaParts = [];
+        if (stage) metaParts.push('Stage: ' + stage.replace(/_/g, ' '));
+        if (stageMessage) metaParts.push(stageMessage);
+        metaParts.push('Elapsed: ' + elapsed);
+        metaParts.push('Upload: ' + uploadSize);
+        metaParts.push('Stored: ' + storedSize);
+        setStatusMeta(metaParts.join(' • '));
+        showProgress();
+        progressBar.classList.add('is-indeterminate');
+        if (status === 'processing') {
+            actions.style.display = 'none';
+            setStatus(stageMessage || 'Processing library... this can take several minutes for large XML files.', false);
+        } else {
+            actions.style.display = 'block';
+            setStatus(stageMessage || 'Queued for processing...', false);
+        }
     }
 
     function isLibraryFile(file) {
@@ -1218,38 +1291,22 @@ function parseUtcToTs(string $value): int
             }
 
             const status = String(payload.status || '');
-            const stage = String(payload.stage || '');
-            const stageMessage = String(payload.stage_message || '');
-            const elapsed = formatElapsed(payload.elapsed_seconds || 0);
-            const uploadSize = formatBytes(payload.upload_bytes || 0);
-            const storedSize = formatBytes(payload.stored_bytes || 0);
-            const metaParts = [];
-            if (stage) metaParts.push('Stage: ' + stage.replace(/_/g, ' '));
-            if (stageMessage) metaParts.push(stageMessage);
-            metaParts.push('Elapsed: ' + elapsed);
-            metaParts.push('Upload: ' + uploadSize);
-            metaParts.push('Stored: ' + storedSize);
-            setStatusMeta(metaParts.join(' • '));
+            renderActiveJobState(payload);
             if (status === 'done') {
                 progressBar.classList.remove('is-indeterminate');
                 progressBar.style.width = '100%';
                 setStatus('Import complete.', false);
                 actions.style.display = 'none';
                 setResults(payload);
+                dropzone.classList.remove('is-disabled');
+                dropzone.setAttribute('tabindex', '0');
+                input.disabled = false;
                 return;
             }
 
             if (status === 'failed') {
                 const err = payload.error_message ? String(payload.error_message) : 'Import failed.';
                 throw new Error(err);
-            }
-
-            if (status === 'processing') {
-                actions.style.display = 'none';
-                setStatus(stageMessage || 'Processing library... this can take several minutes for large XML files.', false);
-            } else {
-                actions.style.display = 'block';
-                setStatus(stageMessage || 'Queued for processing...', false);
             }
 
             await new Promise(function (resolve) {
@@ -1259,6 +1316,10 @@ function parseUtcToTs(string $value): int
     }
 
     async function uploadFile(file) {
+        if (activeJobId > 0) {
+            setStatus('An import is already in progress. Please wait for it to finish.', true);
+            return;
+        }
         if (!isLibraryFile(file)) {
             setStatus('Please select a valid .xml or .zip file.', true);
             return;
@@ -1318,12 +1379,14 @@ function parseUtcToTs(string $value): int
     }
 
     dropzone.addEventListener('click', function () {
+        if (input.disabled) return;
         input.click();
     });
 
     dropzone.addEventListener('keydown', function (event) {
         if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
+            if (input.disabled) return;
             input.click();
         }
     });
@@ -1378,12 +1441,24 @@ function parseUtcToTs(string $value): int
     });
 
     dropzone.addEventListener('drop', function (event) {
+        if (input.disabled) {
+            setStatus('An import is already in progress. Please wait for it to finish.', true);
+            return;
+        }
         const dt = event.dataTransfer;
         const file = dt && dt.files && dt.files[0] ? dt.files[0] : null;
         if (file) uploadFile(file);
     });
 
     renderLocalDatetimes();
+    if (initialActiveJob && Number(initialActiveJob.id || 0) > 0 && isImportActiveStatus(String(initialActiveJob.status || ''))) {
+        activeJobId = Number(initialActiveJob.id || 0);
+        renderActiveJobState(initialActiveJob);
+        pollImportJob(activeJobId).catch(function (err) {
+            const msg = err && err.message ? err.message : 'Import status check failed.';
+            setStatus(msg, true);
+        });
+    }
 })();
 
 (function () {

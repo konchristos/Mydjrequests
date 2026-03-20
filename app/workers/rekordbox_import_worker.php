@@ -87,6 +87,12 @@ try {
         cleanupChunkSession($djId, $chunkUploadId);
     }
 } catch (Throwable $e) {
+    mdjr_rekordbox_log_event('worker_failure', $e->getMessage(), [
+        'job_id' => (int)($job['id'] ?? 0),
+        'dj_id' => (int)($job['dj_id'] ?? 0),
+        'file' => $e->getFile(),
+        'line' => $e->getLine(),
+    ]);
     $failed = $db->prepare("
         UPDATE dj_library_import_jobs
         SET status = 'failed',
@@ -119,6 +125,13 @@ function claimJob(PDO $db, int $jobId): ?array
 {
     $db->beginTransaction();
     try {
+        $processingCount = mdjr_rekordbox_count_processing_jobs($db);
+        $maxConcurrent = mdjr_rekordbox_global_processing_limit();
+        if ($processingCount >= $maxConcurrent) {
+            $db->commit();
+            return null;
+        }
+
         if ($jobId > 0) {
             $sel = $db->prepare("
                 SELECT *

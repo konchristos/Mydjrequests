@@ -309,7 +309,7 @@ include __DIR__ . '/layout.php';
                         '<div class="manual-match-score">Score: ' + escapeHtml(row.match_score || 0) + '</div>' +
                         '</div>' +
                         '<div class="stale-candidate-actions">' +
-                            '<button type="button" class="reply-btn primary manual-match-apply-btn js-stale-apply" data-bpm-track-id="' + Number(row.id || 0) + '" data-dj-track-id="' + Number(row.dj_track_id || 0) + '" data-local-only="' + (Number(row.local_only || 0) === 1 ? '1' : '0') + '"' + (canApply ? '' : ' disabled aria-disabled="true"') + '>Apply</button>' +
+                            '<button type="button" class="manual-match-apply-btn js-stale-apply" data-bpm-track-id="' + Number(row.id || 0) + '" data-dj-track-id="' + Number(row.dj_track_id || 0) + '" data-local-only="' + (Number(row.local_only || 0) === 1 ? '1' : '0') + '"' + (canApply ? '' : ' disabled aria-disabled="true"') + '>Apply</button>' +
                         '</div>' +
                     '</div>';
             }).join('');

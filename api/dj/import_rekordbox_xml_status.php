@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../app/bootstrap.php';
+require_once __DIR__ . '/../../app/helpers/rekordbox_import_security.php';
 require_dj_login();
 
 header('Content-Type: application/json; charset=utf-8');
@@ -63,7 +64,7 @@ if (!$job) {
 }
 
 if (($job['status'] ?? '') === 'queued') {
-    dispatchImportWorker((int)$job['id']);
+    dispatchImportWorker($db, (int)$job['id']);
 }
 
 $elapsedSeconds = 0;
@@ -96,11 +97,19 @@ echo json_encode([
     'elapsed_seconds' => $elapsedSeconds,
 ]);
 
-function dispatchImportWorker(int $jobId): void
+function dispatchImportWorker(PDO $db, int $jobId): void
 {
     $phpBin = defined('PHP_BINARY') && PHP_BINARY ? PHP_BINARY : 'php';
     $worker = APP_ROOT . '/app/workers/rekordbox_import_worker.php';
     if (!is_file($worker) || !function_exists('exec')) {
+        return;
+    }
+    if (!mdjr_rekordbox_can_dispatch_worker($db)) {
+        mdjr_rekordbox_log_event('worker_deferred', 'Status poll skipped worker dispatch due to global concurrency cap.', [
+            'job_id' => $jobId,
+            'processing_jobs' => mdjr_rekordbox_count_processing_jobs($db),
+            'max_concurrent' => mdjr_rekordbox_global_processing_limit(),
+        ]);
         return;
     }
 

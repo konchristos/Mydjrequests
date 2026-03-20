@@ -53,6 +53,11 @@ try {
     }
 } catch (Throwable $e) {
     $httpCode = ((int)$e->getCode() >= 400 && (int)$e->getCode() < 600) ? (int)$e->getCode() : 500;
+    mdjr_rekordbox_log_event('upload_error', $e->getMessage(), [
+        'dj_id' => $djId,
+        'action' => $action,
+        'http_code' => $httpCode,
+    ]);
     http_response_code($httpCode);
     echo json_encode(['error' => 'Import failed: ' . $e->getMessage()]);
 }
@@ -64,11 +69,19 @@ function handleChunkStart(PDO $db, int $djId): void
     $totalChunks = (int)($_POST['total_chunks'] ?? 0);
 
     if ($fileName === '' || $fileSize <= 0 || $totalChunks <= 0) {
+        mdjr_rekordbox_log_event('upload_rejected', 'Missing upload metadata.', [
+            'dj_id' => $djId,
+            'file_name' => $fileName,
+            'file_size' => $fileSize,
+            'total_chunks' => $totalChunks,
+        ]);
         http_response_code(400);
         echo json_encode(['error' => 'Missing upload metadata.']);
         return;
     }
 
+    mdjr_rekordbox_assert_rate_limit($db, $djId);
+    mdjr_rekordbox_assert_queue_capacity($db, $djId);
     mdjr_rekordbox_assert_no_active_import($db, $djId);
 
     if (!mdjr_rekordbox_is_allowed_library_upload_name($fileName)) {
@@ -114,6 +127,11 @@ function handleChunkPart(int $djId): void
     $chunkIndex = (int)($_POST['chunk_index'] ?? -1);
 
     if ($uploadId === '' || $chunkIndex < 0) {
+        mdjr_rekordbox_log_event('upload_rejected', 'Missing chunk metadata.', [
+            'dj_id' => $djId,
+            'upload_id' => $uploadId,
+            'chunk_index' => $chunkIndex,
+        ]);
         http_response_code(400);
         echo json_encode(['error' => 'Missing chunk metadata.']);
         return;
@@ -121,6 +139,10 @@ function handleChunkPart(int $djId): void
 
     $meta = mdjr_rekordbox_load_chunk_meta($djId, $uploadId);
     if (!$meta) {
+        mdjr_rekordbox_log_event('upload_rejected', 'Upload session not found during chunk upload.', [
+            'dj_id' => $djId,
+            'upload_id' => $uploadId,
+        ]);
         http_response_code(404);
         echo json_encode(['error' => 'Upload session not found.']);
         return;
@@ -142,6 +164,11 @@ function handleChunkPart(int $djId): void
     $chunk = $_FILES['chunk'];
     $errorCode = (int)($chunk['error'] ?? UPLOAD_ERR_NO_FILE);
     if ($errorCode !== UPLOAD_ERR_OK) {
+        mdjr_rekordbox_log_event('upload_rejected', 'Chunk upload PHP error.', [
+            'dj_id' => $djId,
+            'upload_id' => $uploadId,
+            'error_code' => $errorCode,
+        ]);
         http_response_code(400);
         echo json_encode(['error' => uploadErrorMessage($errorCode)]);
         return;
@@ -149,6 +176,11 @@ function handleChunkPart(int $djId): void
 
     $tmpPath = (string)($chunk['tmp_name'] ?? '');
     if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+        mdjr_rekordbox_log_event('upload_rejected', 'Chunk upload validation failed.', [
+            'dj_id' => $djId,
+            'upload_id' => $uploadId,
+            'chunk_index' => $chunkIndex,
+        ]);
         http_response_code(400);
         echo json_encode(['error' => 'Chunk upload validation failed.']);
         return;
@@ -156,6 +188,12 @@ function handleChunkPart(int $djId): void
 
     $partPath = mdjr_rekordbox_chunk_part_path($djId, $uploadId, $chunkIndex);
     if (!move_uploaded_file($tmpPath, $partPath)) {
+        mdjr_rekordbox_log_event('upload_error', 'Failed to store uploaded chunk.', [
+            'dj_id' => $djId,
+            'upload_id' => $uploadId,
+            'chunk_index' => $chunkIndex,
+            'part_path' => $partPath,
+        ]);
         http_response_code(500);
         echo json_encode(['error' => 'Failed to store uploaded chunk.']);
         return;
@@ -175,6 +213,7 @@ function handleChunkFinish(PDO $db, int $djId): void
 
     $uploadId = trim((string)($_POST['upload_id'] ?? ''));
     if ($uploadId === '') {
+        mdjr_rekordbox_log_event('upload_rejected', 'Missing upload id on chunk finish.', ['dj_id' => $djId]);
         http_response_code(400);
         echo json_encode(['error' => 'Missing upload id.']);
         return;
@@ -182,6 +221,10 @@ function handleChunkFinish(PDO $db, int $djId): void
 
     $meta = mdjr_rekordbox_load_chunk_meta($djId, $uploadId);
     if (!$meta) {
+        mdjr_rekordbox_log_event('upload_rejected', 'Upload session not found during chunk finish.', [
+            'dj_id' => $djId,
+            'upload_id' => $uploadId,
+        ]);
         http_response_code(404);
         echo json_encode(['error' => 'Upload session not found.']);
         return;
@@ -189,6 +232,11 @@ function handleChunkFinish(PDO $db, int $djId): void
 
     $totalChunks = (int)($meta['total_chunks'] ?? 0);
     if ($totalChunks <= 0) {
+        mdjr_rekordbox_log_event('upload_rejected', 'Invalid upload metadata during chunk finish.', [
+            'dj_id' => $djId,
+            'upload_id' => $uploadId,
+            'total_chunks' => $totalChunks,
+        ]);
         http_response_code(400);
         echo json_encode(['error' => 'Invalid upload metadata.']);
         return;
@@ -196,6 +244,11 @@ function handleChunkFinish(PDO $db, int $djId): void
 
     for ($i = 0; $i < $totalChunks; $i++) {
         if (!is_file(mdjr_rekordbox_chunk_part_path($djId, $uploadId, $i))) {
+            mdjr_rekordbox_log_event('upload_rejected', 'Missing upload chunk during chunk finish.', [
+                'dj_id' => $djId,
+                'upload_id' => $uploadId,
+                'missing_chunk_index' => $i,
+            ]);
             http_response_code(400);
             echo json_encode(['error' => 'Missing one or more upload chunks.']);
             return;
@@ -229,7 +282,7 @@ function handleChunkFinish(PDO $db, int $djId): void
     $sourceSha256 = mdjr_rekordbox_file_sha256($sourcePath);
     mdjr_rekordbox_assert_no_duplicate_active_hash($db, $djId, $sourceSha256);
     $jobId = createImportJob($db, $djId, $sourcePath, $uploadId, $declaredBytes, $storedBytes, $sourceSha256);
-    $dispatched = dispatchImportWorker($jobId);
+    $dispatched = dispatchImportWorker($db, $jobId);
 
     echo json_encode([
         'ok' => true,
@@ -240,15 +293,22 @@ function handleChunkFinish(PDO $db, int $djId): void
 
 function handleSingleUpload(PDO $db, int $djId): void
 {
+    mdjr_rekordbox_assert_rate_limit($db, $djId);
+    mdjr_rekordbox_assert_queue_capacity($db, $djId);
     mdjr_rekordbox_assert_no_active_import($db, $djId);
 
     if (empty($_FILES['library_xml']) || !is_array($_FILES['library_xml'])) {
         $contentLength = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
         if ($contentLength > 0) {
+            mdjr_rekordbox_log_event('upload_rejected', 'Upload rejected before processing by PHP/server limits.', [
+                'dj_id' => $djId,
+                'content_length' => $contentLength,
+            ]);
             http_response_code(413);
             echo json_encode(['error' => 'Upload rejected before processing. Use chunked upload or increase server limits.']);
             return;
         }
+        mdjr_rekordbox_log_event('upload_rejected', 'No file uploaded.', ['dj_id' => $djId]);
         http_response_code(400);
         echo json_encode(['error' => 'No file uploaded.']);
         return;
@@ -257,6 +317,11 @@ function handleSingleUpload(PDO $db, int $djId): void
     $file = $_FILES['library_xml'];
     $errorCode = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
     if ($errorCode !== UPLOAD_ERR_OK) {
+        mdjr_rekordbox_log_event('upload_rejected', 'Upload PHP error.', [
+            'dj_id' => $djId,
+            'error_code' => $errorCode,
+            'original_name' => (string)($file['name'] ?? ''),
+        ]);
         http_response_code(400);
         echo json_encode(['error' => uploadErrorMessage($errorCode)]);
         return;
@@ -265,6 +330,10 @@ function handleSingleUpload(PDO $db, int $djId): void
     $originalName = (string)($file['name'] ?? '');
     $tmpPath = (string)($file['tmp_name'] ?? '');
     if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+        mdjr_rekordbox_log_event('upload_rejected', 'Upload validation failed.', [
+            'dj_id' => $djId,
+            'original_name' => $originalName,
+        ]);
         http_response_code(400);
         echo json_encode(['error' => 'Upload validation failed.']);
         return;
@@ -288,7 +357,7 @@ function handleSingleUpload(PDO $db, int $djId): void
     $sourceSha256 = mdjr_rekordbox_file_sha256($sourcePath);
     mdjr_rekordbox_assert_no_duplicate_active_hash($db, $djId, $sourceSha256);
     $jobId = createImportJob($db, $djId, $sourcePath, null, $declaredBytes, $storedBytes, $sourceSha256);
-    $dispatched = dispatchImportWorker($jobId);
+    $dispatched = dispatchImportWorker($db, $jobId);
 
     echo json_encode([
         'ok' => true,
@@ -342,7 +411,7 @@ function createImportJob(
     return $jobId;
 }
 
-function dispatchImportWorker(int $jobId): bool
+function dispatchImportWorker(PDO $db, int $jobId): bool
 {
     $phpBin = defined('PHP_BINARY') && PHP_BINARY ? PHP_BINARY : 'php';
     $worker = APP_ROOT . '/app/workers/rekordbox_import_worker.php';
@@ -356,6 +425,15 @@ function dispatchImportWorker(int $jobId): bool
         . ' > /dev/null 2>&1 &';
 
     if (!function_exists('exec')) {
+        return false;
+    }
+
+    if (!mdjr_rekordbox_can_dispatch_worker($db)) {
+        mdjr_rekordbox_log_event('worker_deferred', 'Worker dispatch skipped due to global concurrency cap.', [
+            'job_id' => $jobId,
+            'processing_jobs' => mdjr_rekordbox_count_processing_jobs($db),
+            'max_concurrent' => mdjr_rekordbox_global_processing_limit(),
+        ]);
         return false;
     }
 

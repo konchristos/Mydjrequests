@@ -355,6 +355,83 @@ This section summarizes the current DJ library import, matching, resolver, stale
 - suspicious upload audit/admin review UI
 - broader duplicate history checks beyond currently active jobs
 
+## 2026-03-20 - Phase 2 Import Abuse Controls + Operational Logging
+
+- Added upload/import operational controls in `app/helpers/rekordbox_import_security.php`:
+  - per-DJ rate limiting
+  - queued job cap per DJ
+  - global concurrent processing cap
+  - structured security/event logging
+
+### Rate Limiting
+
+- Added per-DJ rate limiting based on recent import job creation volume.
+- New secret/config keys:
+  - `REKORDBOX_IMPORT_RATE_WINDOW_MINUTES`
+  - `REKORDBOX_IMPORT_MAX_ATTEMPTS_PER_WINDOW`
+- Defaults:
+  - `60` minute window
+  - `6` attempts per window
+- Upload attempts beyond the configured window threshold now return HTTP `429`.
+
+### Queue Capacity
+
+- Added queued job cap per DJ.
+- New secret/config key:
+  - `REKORDBOX_IMPORT_MAX_QUEUED_PER_DJ`
+- Default:
+  - `1`
+- This sits alongside the existing one-active-import-per-DJ rule and provides an extra queue abuse guard.
+
+### Global Worker Concurrency
+
+- Added a global processing cap for Rekordbox import jobs.
+- New secret/config key:
+  - `REKORDBOX_IMPORT_MAX_CONCURRENT_JOBS`
+- Default:
+  - `2`
+- Worker dispatch now checks the current number of `processing` jobs before spawning additional workers.
+- Background worker claim logic now also checks this cap before claiming queued jobs.
+- Manual run path (`api/dj/import_rekordbox_xml_run.php`) now respects the same concurrency cap and returns a clear message when capacity is full.
+
+### Logging
+
+- Added structured event logging to:
+  - `storage/dj_libraries/security.log`
+- Logged events now include:
+  - rejected uploads
+  - ZIP/XML validation failures
+  - deferred worker dispatches due to concurrency caps
+  - worker failures
+  - manual-run failures
+- Logging is JSON-lines style for easier operational review.
+
+### Enforcement Points Updated
+
+- `api/dj/import_rekordbox_xml.php`
+  - now enforces:
+    - per-DJ rate limit
+    - per-DJ queue cap
+    - active import lock
+    - duplicate active hash rejection
+  - now logs upload-side exceptions via the shared logging helper
+- `api/dj/import_rekordbox_xml_status.php`
+  - now respects the global concurrency cap before trying to dispatch a worker
+- `app/workers/rekordbox_import_worker.php`
+  - now respects the global concurrency cap when claiming queued jobs
+  - now logs worker failures through the shared logging helper
+- `api/dj/import_rekordbox_xml_run.php`
+  - now respects the global concurrency cap
+  - now logs manual-run failures through the shared logging helper
+
+### Outcome
+
+- Phase 2 now reduces operational abuse risk from:
+  - repeated rapid-fire import attempts by one DJ
+  - queue flooding
+  - uncontrolled worker fan-out
+  - missing audit visibility when uploads are rejected or imports fail
+
 ### 3. Playlist Hierarchy + Preferred Playlists
 
 - Playlist schema was added:
