@@ -702,9 +702,7 @@ try {
                 $titleCore = mdjrCoreTitle((string)($row['title'] ?? ''));
 
                 $path = '';
-                if ($ovk !== '' && isset($staleOverrideKeys[$ovk])) {
-                    $path = '';
-                } elseif ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
+                if ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
                     $path = $pathByOverrideKey[$ovk];
                 } elseif ($titleCore !== '' && isset($pathByOverrideTitleCore[$titleCore])) {
                     $path = $pathByOverrideTitleCore[$titleCore];
@@ -853,9 +851,7 @@ try {
             $ovk = mdjrOverrideKey((string)($row['title'] ?? ''), (string)($row['artist'] ?? ''));
             $titleCore = mdjrCoreTitle((string)($row['title'] ?? ''));
             $path = '';
-            if ($ovk !== '' && isset($staleOverrideKeys[$ovk])) {
-                $path = '';
-            } elseif ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
+            if ($ovk !== '' && isset($pathByOverrideKey[$ovk])) {
                 $path = (string)$pathByOverrideKey[$ovk];
             } elseif ($titleCore !== '' && isset($pathByOverrideTitleCore[$titleCore])) {
                 $path = (string)$pathByOverrideTitleCore[$titleCore];

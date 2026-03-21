@@ -97,6 +97,7 @@ function handleChunkStart(PDO $db, int $djId): void
         echo json_encode(['error' => 'Uploaded file exceeds the allowed size limit.']);
         return;
     }
+    mdjr_rekordbox_assert_storage_quota($djId, $fileSize);
 
     $safeName = mdjr_rekordbox_sanitise_library_filename($fileName);
     $uploadId = bin2hex(random_bytes(16));
@@ -279,6 +280,7 @@ function handleChunkFinish(PDO $db, int $djId): void
     $declaredBytes = max(0, (int)($meta['file_size'] ?? 0));
     mdjr_rekordbox_validate_uploaded_blob($targetUploadPath, $safeName, $declaredBytes);
     [$sourcePath, $storedBytes] = mdjr_rekordbox_prepare_uploaded_library_source($djId, $targetUploadPath, $safeName);
+    mdjr_rekordbox_assert_storage_quota($djId, 0);
     $sourceSha256 = mdjr_rekordbox_file_sha256($sourcePath);
     mdjr_rekordbox_assert_no_duplicate_active_hash($db, $djId, $sourceSha256);
     $jobId = createImportJob($db, $djId, $sourcePath, $uploadId, $declaredBytes, $storedBytes, $sourceSha256);
@@ -347,6 +349,7 @@ function handleSingleUpload(PDO $db, int $djId): void
 
     $safeName = mdjr_rekordbox_sanitise_library_filename($originalName);
     mdjr_rekordbox_validate_uploaded_blob($tmpPath, $safeName, (int)($file['size'] ?? 0));
+    mdjr_rekordbox_assert_storage_quota($djId, (int)($file['size'] ?? 0));
     $targetUploadPath = mdjr_rekordbox_build_target_upload_path($djId, $safeName);
     if (!move_uploaded_file($tmpPath, $targetUploadPath)) {
         throw new RuntimeException('Failed to store uploaded file.');
@@ -354,6 +357,7 @@ function handleSingleUpload(PDO $db, int $djId): void
 
     $declaredBytes = max(0, (int)($file['size'] ?? 0));
     [$sourcePath, $storedBytes] = mdjr_rekordbox_prepare_uploaded_library_source($djId, $targetUploadPath, $safeName);
+    mdjr_rekordbox_assert_storage_quota($djId, 0);
     $sourceSha256 = mdjr_rekordbox_file_sha256($sourcePath);
     mdjr_rekordbox_assert_no_duplicate_active_hash($db, $djId, $sourceSha256);
     $jobId = createImportJob($db, $djId, $sourcePath, null, $declaredBytes, $storedBytes, $sourceSha256);
@@ -600,6 +604,12 @@ function ensureImportJobsTable(PDO $db): void
     ensureImportJobsColumn($db, 'source_sha256', 'CHAR(64) NULL');
     ensureImportJobsColumn($db, 'stage', "VARCHAR(64) NOT NULL DEFAULT 'queued'");
     ensureImportJobsColumn($db, 'stage_message', 'VARCHAR(255) NULL');
+    ensureImportJobsColumn($db, 'tracks_started_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'tracks_finished_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'playlists_started_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'playlists_finished_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'finalizing_started_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'finalizing_finished_at', 'DATETIME NULL');
 }
 
 function ensureImportJobsColumn(PDO $db, string $column, string $ddl): void

@@ -630,3 +630,107 @@ The next phase should focus on lockdown/hardening rather than new user-facing fe
   - `admin/dashboard.php`
   - `admin/performance.php`
 - This phase improves observability and keeps import abuse controls auditable without changing DJ-facing workflow.
+
+## 2026-03-21 - Import Timing Breakdown + Live AJAX Import History
+
+- Added per-stage import timing columns to `dj_library_import_jobs`:
+  - `tracks_started_at`
+  - `tracks_finished_at`
+  - `playlists_started_at`
+  - `playlists_finished_at`
+  - `finalizing_started_at`
+  - `finalizing_finished_at`
+- Updated import stage transitions in:
+  - `app/workers/rekordbox_import_worker.php`
+  - `api/dj/import_rekordbox_xml_run.php`
+  so the job now stamps stage boundaries when moving through:
+  - `processing_tracks`
+  - `processing_playlists`
+  - `finalizing`
+  - `done` / `failed`
+- Extended `api/dj/import_rekordbox_xml_status.php` to return stage-duration metrics:
+  - `tracks_seconds`
+  - `playlists_seconds`
+  - `finalizing_seconds`
+- Added a new history endpoint:
+  - `api/dj/import_rekordbox_xml_history.php`
+  which returns the latest import jobs with:
+  - local display timestamps
+  - elapsed time
+  - stage breakdown summaries
+  - upload/stored sizes
+  - counts and error summaries
+- Updated `dj/library_import.php` AJAX UX so the page now:
+  - inserts newly created jobs into Recent Import History without a refresh
+  - refreshes the history table while a job is queued/processing
+  - shows per-stage breakdown text in history rows such as:
+    - `Tracks 42s • Playlists 4m 11s • Finalize 3s`
+  - keeps the existing pre-job upload lock/restore behavior
+- Result:
+  - import slowdowns can now be diagnosed by stage instead of guesswork
+  - DJs no longer need to refresh the page to see a new import job appear in history
+
+## 2026-03-21 - Library Import Live Overview + Friendlier Re-import Copy
+
+- Added a live overview endpoint:
+  - `api/dj/library_import_overview.php`
+- The endpoint now returns JSON for the Library Import page with:
+  - `track_count`
+  - `last_imported_at`
+  - `last_imported_iso_utc`
+  - `last_imported_display`
+  - `last_import_source`
+  - `stale_count`
+- Updated `dj/library_import.php` so the page now refreshes overview data via AJAX:
+  - on page load
+  - on successful import status polling
+  - on window focus
+  - on `pageshow`
+  - on a timed interval while the page is open
+- This keeps the following areas current without a full page reload:
+  - Tracks in Library
+  - Last Import
+  - Stale Matched Tracks count
+- Added a small live-status note to the page so DJs can see that the overview is actively refreshing in the background.
+- Updated the Re-import workflow copy on `dj/library_import.php` to be less technical and more user-friendly:
+  - removed internal language such as `normalized hash`
+  - explained moved tracks in plain English
+  - explained unavailable tracks in plain English
+  - encouraged DJs to ZIP large XML files before uploading to reduce upload time and bandwidth
+
+## 2026-03-21 - Final Upload Hardening Pass
+
+- Tightened XML validation in `app/helpers/rekordbox_import_security.php`:
+  - still rejects `DOCTYPE` / `ENTITY`
+  - now also performs streaming structural validation with `XMLReader`
+  - requires Rekordbox root and expected sections:
+    - `DJ_PLAYLISTS`
+    - `COLLECTION`
+    - `TRACK`
+    - `PLAYLISTS`
+- Tightened ZIP validation in `app/helpers/rekordbox_import_security.php`:
+  - reduced max compression ratio default from `40` to `30`
+  - added safer ZIP entry name validation
+  - still rejects nested archives, traversal paths, and multiple XML payloads
+  - added streamed byte cap while reading `ZipArchive::getStream()` so extracted bytes cannot exceed declared ZIP entry size
+- Added per-DJ temporary storage quota enforcement:
+  - counts active import files and chunk uploads under the private storage area
+  - configurable via `REKORDBOX_IMPORT_MAX_STORAGE_BYTES_PER_DJ`
+  - enforced for both single uploads and chunked uploads in `api/dj/import_rekordbox_xml.php`
+- Tightened importer watchdog checks in `library_import/RekordboxXMLImporter.php`:
+  - checks now run more frequently during track import
+  - checks now run before batch flushes
+  - playlist processing checks run more frequently by playlist count
+  - playlist track membership parsing also triggers periodic watchdog checks
+- These changes are focused on parser safety, resource control, and abuse prevention rather than antivirus-style scanning.
+
+## 2026-03-21 - Admin Import Review UX
+
+- Updated `admin/import_security.php` to make the admin review page easier to navigate:
+  - added tabbed switching between `Import Jobs` and `Security Log`
+  - removed the need to scroll all the way to the bottom just to review security events
+- Extended the Import Jobs view to show historical stage timing breakdowns per job:
+  - `Tracks`
+  - `Playlists`
+  - `Finalize`
+- Formatted admin timestamps into local-friendly display values so slow-run investigations are easier to compare visually against the DJ-facing import history.

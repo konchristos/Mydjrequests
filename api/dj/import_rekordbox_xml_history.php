@@ -20,15 +20,9 @@ if ($djId <= 0) {
     exit;
 }
 
-$jobId = (int)($_GET['job_id'] ?? 0);
-if ($jobId <= 0) {
-    http_response_code(400);
-    echo json_encode(['error' => 'Missing or invalid job id.']);
-    exit;
-}
-
 $db = db();
 ensureImportJobsTable($db);
+
 $stmt = $db->prepare("
     SELECT
         id,
@@ -38,14 +32,12 @@ $stmt = $db->prepare("
         upload_bytes,
         stored_bytes,
         tracks_processed,
-        new_identities,
-        existing_identities,
         dj_tracks_added,
         dj_tracks_updated,
         error_message,
+        created_at,
         started_at,
         finished_at,
-        created_at,
         tracks_started_at,
         tracks_finished_at,
         playlists_started_at,
@@ -53,71 +45,100 @@ $stmt = $db->prepare("
         finalizing_started_at,
         finalizing_finished_at
     FROM dj_library_import_jobs
-    WHERE id = :id
-      AND dj_id = :dj_id
-    LIMIT 1
+    WHERE dj_id = ?
+    ORDER BY id DESC
+    LIMIT 12
 ");
-$stmt->execute([
-    ':id' => $jobId,
-    ':dj_id' => $djId,
-]);
-$job = $stmt->fetch(PDO::FETCH_ASSOC);
+$stmt->execute([$djId]);
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-if (!$job) {
-    http_response_code(404);
-    echo json_encode(['error' => 'Import job not found.']);
-    exit;
-}
-
-if (($job['status'] ?? '') === 'queued') {
-    dispatchImportWorker($db, (int)$job['id']);
-}
-
-$elapsedSeconds = 0;
-$createdTs = parseUtcTimestamp((string)($job['created_at'] ?? ''));
-$startTs = parseUtcTimestamp((string)($job['started_at'] ?? ''));
-$endTs = parseUtcTimestamp((string)($job['finished_at'] ?? ''));
 $nowTs = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp();
-$stage = (string)($job['stage'] ?? '');
-if ($startTs !== false && $startTs > 0) {
-    $elapsedSeconds = max(0, (($endTs !== false && $endTs > 0) ? $endTs : $nowTs) - $startTs);
-} elseif ($createdTs !== false && $createdTs > 0) {
-    $elapsedSeconds = max(0, $nowTs - $createdTs);
+$items = [];
+foreach ($rows as $row) {
+    $status = trim((string)($row['status'] ?? 'queued'));
+    $stage = trim((string)($row['stage'] ?? ''));
+    $elapsedSeconds = computeElapsedSeconds(
+        (string)($row['created_at'] ?? ''),
+        (string)($row['started_at'] ?? ''),
+        (string)($row['finished_at'] ?? ''),
+        $nowTs
+    );
+    $items[] = [
+        'id' => (int)($row['id'] ?? 0),
+        'status' => $status,
+        'stage' => $stage !== '' ? $stage : 'queued',
+        'stage_message' => trim((string)($row['stage_message'] ?? '')),
+        'created_at' => (string)($row['created_at'] ?? ''),
+        'created_at_iso' => formatUtcIso((string)($row['created_at'] ?? '')),
+        'created_at_display' => formatLocalDisplay((string)($row['created_at'] ?? '')),
+        'elapsed_seconds' => $elapsedSeconds,
+        'elapsed_display' => formatElapsedSeconds($elapsedSeconds),
+        'upload_bytes' => isset($row['upload_bytes']) ? (int)$row['upload_bytes'] : null,
+        'upload_display' => formatBytesHuman(isset($row['upload_bytes']) ? (int)$row['upload_bytes'] : null),
+        'stored_bytes' => isset($row['stored_bytes']) ? (int)$row['stored_bytes'] : null,
+        'stored_display' => formatBytesHuman(isset($row['stored_bytes']) ? (int)$row['stored_bytes'] : null),
+        'tracks_processed' => (int)($row['tracks_processed'] ?? 0),
+        'dj_tracks_added' => (int)($row['dj_tracks_added'] ?? 0),
+        'dj_tracks_updated' => (int)($row['dj_tracks_updated'] ?? 0),
+        'error_message' => trim((string)($row['error_message'] ?? '')),
+        'error_display' => formatErrorDisplay((string)($row['error_message'] ?? '')),
+        'tracks_seconds' => computeStageSeconds(
+            (string)($row['tracks_started_at'] ?? ''),
+            (string)($row['tracks_finished_at'] ?? ''),
+            $status === 'processing' && $stage === 'processing_tracks' ? $nowTs : null
+        ),
+        'playlists_seconds' => computeStageSeconds(
+            (string)($row['playlists_started_at'] ?? ''),
+            (string)($row['playlists_finished_at'] ?? ''),
+            $status === 'processing' && $stage === 'processing_playlists' ? $nowTs : null
+        ),
+        'finalizing_seconds' => computeStageSeconds(
+            (string)($row['finalizing_started_at'] ?? ''),
+            (string)($row['finalizing_finished_at'] ?? ''),
+            $status === 'processing' && $stage === 'finalizing' ? $nowTs : null
+        ),
+    ];
 }
 
 echo json_encode([
-    'job_id' => (int)$job['id'],
-    'status' => (string)$job['status'],
-    'stage' => (string)($job['stage'] ?? ''),
-    'stage_message' => (string)($job['stage_message'] ?? ''),
-    'upload_bytes' => isset($job['upload_bytes']) ? (int)$job['upload_bytes'] : 0,
-    'stored_bytes' => isset($job['stored_bytes']) ? (int)$job['stored_bytes'] : 0,
-    'tracks_processed' => (int)$job['tracks_processed'],
-    'new_identities' => (int)$job['new_identities'],
-    'existing_identities' => (int)$job['existing_identities'],
-    'dj_tracks_added' => (int)$job['dj_tracks_added'],
-    'dj_tracks_updated' => (int)$job['dj_tracks_updated'],
-    'error_message' => (string)($job['error_message'] ?? ''),
-    'started_at' => (string)($job['started_at'] ?? ''),
-    'finished_at' => (string)($job['finished_at'] ?? ''),
-    'created_at' => (string)($job['created_at'] ?? ''),
-    'elapsed_seconds' => $elapsedSeconds,
-    'tracks_seconds' => computeStageSeconds(
-        (string)($job['tracks_started_at'] ?? ''),
-        (string)($job['tracks_finished_at'] ?? ''),
-        $stage === 'processing_tracks' ? $nowTs : null
-    ),
-    'playlists_seconds' => computeStageSeconds(
-        (string)($job['playlists_started_at'] ?? ''),
-        (string)($job['playlists_finished_at'] ?? ''),
-        $stage === 'processing_playlists' ? $nowTs : null
-    ),
-    'finalizing_seconds' => computeStageSeconds(
-        (string)($job['finalizing_started_at'] ?? ''),
-        (string)($job['finalizing_finished_at'] ?? ''),
-        $stage === 'finalizing' ? $nowTs : null
-    ),
+    'items' => $items,
 ]);
+
+function formatUtcIso(string $value): string
+{
+    try {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return '';
+        }
+        return (new DateTimeImmutable($trimmed, new DateTimeZone('UTC')))->format(DateTime::ATOM);
+    } catch (Throwable $e) {
+        return '';
+    }
+}
+
+function formatLocalDisplay(string $value): string
+{
+    $ts = parseUtcTimestamp($value);
+    if ($ts === false || $ts <= 0) {
+        return '—';
+    }
+    return date('d M Y, H:i:s', $ts);
+}
+
+function computeElapsedSeconds(string $createdAt, string $startedAt, string $finishedAt, int $nowTs): int
+{
+    $createdTs = parseUtcTimestamp($createdAt);
+    $startTs = parseUtcTimestamp($startedAt);
+    $endTs = parseUtcTimestamp($finishedAt);
+    if ($startTs !== false && $startTs > 0) {
+        return max(0, (($endTs !== false && $endTs > 0) ? $endTs : $nowTs) - $startTs);
+    }
+    if ($createdTs !== false && $createdTs > 0) {
+        return max(0, $nowTs - $createdTs);
+    }
+    return 0;
+}
 
 function computeStageSeconds(string $startValue, string $endValue, ?int $fallbackEndTs = null): ?int
 {
@@ -135,32 +156,45 @@ function computeStageSeconds(string $startValue, string $endValue, ?int $fallbac
     return max(0, $endTs - $startTs);
 }
 
-function dispatchImportWorker(PDO $db, int $jobId): void
+function formatElapsedSeconds(int $seconds): string
 {
-    $phpBin = defined('PHP_BINARY') && PHP_BINARY ? PHP_BINARY : 'php';
-    $worker = APP_ROOT . '/app/workers/rekordbox_import_worker.php';
-    if (!is_file($worker) || !function_exists('exec')) {
-        return;
+    $n = max(0, $seconds);
+    $h = (int)floor($n / 3600);
+    $m = (int)floor(($n % 3600) / 60);
+    $s = (int)($n % 60);
+    if ($h > 0) {
+        return sprintf('%dh %02dm %02ds', $h, $m, $s);
     }
-    if (!mdjr_rekordbox_can_dispatch_worker($db)) {
-        mdjr_rekordbox_log_event('worker_deferred', 'Status poll skipped worker dispatch due to global concurrency cap.', [
-            'job_id' => $jobId,
-            'processing_jobs' => mdjr_rekordbox_count_processing_jobs($db),
-            'max_concurrent' => mdjr_rekordbox_global_processing_limit(),
-        ]);
-        return;
+    if ($m > 0) {
+        return sprintf('%dm %02ds', $m, $s);
     }
-
-    $cmd = escapeshellarg($phpBin)
-        . ' ' . escapeshellarg($worker)
-        . ' --job-id=' . (int)$jobId
-        . ' > /dev/null 2>&1 &';
-    @exec($cmd);
+    return sprintf('%ds', $s);
 }
 
-/**
- * Parses DB timestamps as UTC to avoid timezone skew in elapsed calculations.
- */
+function formatBytesHuman(?int $bytes): string
+{
+    if ($bytes === null || $bytes <= 0) {
+        return '—';
+    }
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $size = (float)$bytes;
+    $unit = 0;
+    while ($size >= 1024 && $unit < count($units) - 1) {
+        $size /= 1024;
+        $unit++;
+    }
+    return $unit === 0 ? sprintf('%d %s', (int)$size, $units[$unit]) : sprintf('%.2f %s', $size, $units[$unit]);
+}
+
+function formatErrorDisplay(string $value): string
+{
+    $trimmed = trim($value);
+    if ($trimmed === '') {
+        return '—';
+    }
+    return mb_strimwidth($trimmed, 0, 80, '…', 'UTF-8');
+}
+
 function parseUtcTimestamp(string $value)
 {
     $value = trim($value);
@@ -236,6 +270,5 @@ function ensureImportJobsColumn(PDO $db, string $column, string $ddl): void
     if ($exists) {
         return;
     }
-
     $db->exec("ALTER TABLE dj_library_import_jobs ADD COLUMN `{$column}` {$ddl}");
 }

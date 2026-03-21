@@ -708,10 +708,10 @@ foreach ($rows as &$row) {
     $ov = null;
     if ($overrideKey !== '' && isset($eventOverrideMap[$overrideKey])) {
         $ov = $eventOverrideMap[$overrideKey];
-    } elseif ($overrideTitleCore !== '' && isset($eventOverrideTitleMap[$overrideTitleCore])) {
-        $ov = $eventOverrideTitleMap[$overrideTitleCore];
     } elseif ($overrideKey !== '' && isset($globalOverrideMap[$overrideKey])) {
         $ov = $globalOverrideMap[$overrideKey];
+    } elseif ($overrideTitleCore !== '' && isset($eventOverrideTitleMap[$overrideTitleCore])) {
+        $ov = $eventOverrideTitleMap[$overrideTitleCore];
     } elseif ($overrideTitleCore !== '' && isset($globalOverrideTitleMap[$overrideTitleCore])) {
         $ov = $globalOverrideTitleMap[$overrideTitleCore];
     }
@@ -723,6 +723,12 @@ foreach ($rows as &$row) {
             $row['selected_bpm_track_id'] = (int)$ov['bpm_track_id'];
             $row['manual_path_matched'] = $exactDjTrackAvailable ? 1 : 0;
             $row['selected_dj_track_id'] = $exactDjTrackId;
+        } elseif ($exactDjTrackAvailable) {
+            // Local-only saved selections from stale resolution or manual rebinding
+            // are still exact path matches even without a linked BPM catalog row.
+            $row['selected_dj_track_id'] = $exactDjTrackId;
+            $row['dj_track_id'] = $exactDjTrackId;
+            $row['manual_path_matched'] = 1;
         } elseif ($sid !== '' && isset($bpmMap[$sid]['bpm_track_id']) && is_numeric($bpmMap[$sid]['bpm_track_id']) && (int)$bpmMap[$sid]['bpm_track_id'] > 0) {
             // Legacy/manual rows may have override metadata but missing bpm_track_id.
             // Hydrate the selected BPM row for metadata display, but do not mark

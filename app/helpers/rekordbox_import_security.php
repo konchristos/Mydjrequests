@@ -295,8 +295,149 @@ if (!function_exists('mdjr_rekordbox_validate_xml_content')) {
         if ($normalized === '' || stripos($normalized, '<!doctype') !== false || stripos($normalized, '<!entity') !== false) {
             mdjr_rekordbox_throw('XML DTD/ENTITY declarations are not allowed.', 400, ['path' => $path]);
         }
-        if (stripos($normalized, '<dj_playlists') === false) {
-            mdjr_rekordbox_throw('Uploaded XML does not appear to be a Rekordbox export.', 400, ['path' => $path]);
+        mdjr_rekordbox_validate_xml_structure($path);
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_validate_xml_structure')) {
+    function mdjr_rekordbox_validate_xml_structure(string $path): void
+    {
+        $reader = new XMLReader();
+        $flags = LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING | LIBXML_COMPACT | LIBXML_PARSEHUGE;
+
+        if (!$reader->open($path, null, $flags)) {
+            mdjr_rekordbox_throw('Uploaded XML could not be opened for validation.', 400, ['path' => $path]);
+        }
+
+        $rootSeen = false;
+        $collectionSeen = false;
+        $trackSeen = false;
+        $playlistsSeen = false;
+        $nodesChecked = 0;
+
+        try {
+            while ($reader->read()) {
+                $nodesChecked++;
+                if ($nodesChecked > 50000) {
+                    break;
+                }
+
+                if ($reader->nodeType === XMLReader::DOC_TYPE) {
+                    mdjr_rekordbox_throw('XML DTD declarations are not allowed.', 400, ['path' => $path]);
+                }
+
+                if ($reader->nodeType !== XMLReader::ELEMENT) {
+                    continue;
+                }
+
+                if (!$rootSeen) {
+                    $rootSeen = true;
+                    if ($reader->name !== 'DJ_PLAYLISTS') {
+                        mdjr_rekordbox_throw('Uploaded XML does not appear to be a Rekordbox export.', 400, [
+                            'path' => $path,
+                            'root' => $reader->name,
+                        ]);
+                    }
+                }
+
+                if ($reader->name === 'COLLECTION') {
+                    $collectionSeen = true;
+                } elseif ($reader->name === 'TRACK') {
+                    $trackSeen = true;
+                } elseif ($reader->name === 'PLAYLISTS') {
+                    $playlistsSeen = true;
+                }
+
+                if ($rootSeen && $collectionSeen && $trackSeen && $playlistsSeen) {
+                    break;
+                }
+            }
+        } finally {
+            $reader->close();
+        }
+
+        if (!$rootSeen || !$collectionSeen || !$trackSeen || !$playlistsSeen) {
+            mdjr_rekordbox_throw('Uploaded XML is missing required Rekordbox sections.', 400, [
+                'path' => $path,
+                'root_seen' => $rootSeen,
+                'collection_seen' => $collectionSeen,
+                'track_seen' => $trackSeen,
+                'playlists_seen' => $playlistsSeen,
+            ]);
+        }
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_is_safe_zip_entry_name')) {
+    function mdjr_rekordbox_is_safe_zip_entry_name(string $name): bool
+    {
+        if ($name === '' || preg_match('/[\x00-\x1F\x7F]/', $name)) {
+            return false;
+        }
+
+        $normalized = str_replace('\\', '/', $name);
+        if (strpos($normalized, '/') !== false || str_contains($normalized, '..')) {
+            return false;
+        }
+
+        return (bool)preg_match('/^[A-Za-z0-9 ._()\\-]+$/', basename($normalized));
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_directory_size')) {
+    function mdjr_rekordbox_directory_size(string $dir): int
+    {
+        if (!is_dir($dir)) {
+            return 0;
+        }
+
+        $size = 0;
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)
+        );
+        foreach ($iterator as $item) {
+            if ($item->isFile()) {
+                $size += max(0, (int)$item->getSize());
+            }
+        }
+        return $size;
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_dj_storage_bytes')) {
+    function mdjr_rekordbox_dj_storage_bytes(int $djId): int
+    {
+        $root = mdjr_rekordbox_upload_root();
+        $bytes = 0;
+
+        foreach (glob($root . '/' . $djId . '_*') ?: [] as $path) {
+            if (is_file($path)) {
+                $bytes += max(0, (int)@filesize($path));
+            }
+        }
+
+        $chunkRoot = mdjr_rekordbox_chunk_root_dir();
+        foreach (glob($chunkRoot . '/' . $djId . '_*') ?: [] as $path) {
+            $bytes += is_dir($path) ? mdjr_rekordbox_directory_size($path) : max(0, (int)@filesize($path));
+        }
+
+        return $bytes;
+    }
+}
+
+if (!function_exists('mdjr_rekordbox_assert_storage_quota')) {
+    function mdjr_rekordbox_assert_storage_quota(int $djId, int $incomingBytes): void
+    {
+        $quota = mdjr_rekordbox_secret_int('REKORDBOX_IMPORT_MAX_STORAGE_BYTES_PER_DJ', 5 * 1024 * 1024 * 1024);
+        $incomingBytes = max(0, $incomingBytes);
+        $currentBytes = mdjr_rekordbox_dj_storage_bytes($djId);
+        if (($currentBytes + $incomingBytes) > $quota) {
+            mdjr_rekordbox_throw('Upload exceeds the temporary storage quota for this DJ account.', 429, [
+                'dj_id' => $djId,
+                'current_bytes' => $currentBytes,
+                'incoming_bytes' => $incomingBytes,
+                'quota_bytes' => $quota,
+            ]);
         }
     }
 }
@@ -321,29 +462,60 @@ if (!function_exists('mdjr_rekordbox_prepare_uploaded_library_source')) {
         }
 
         $maxExtractedBytes = mdjr_rekordbox_secret_int('REKORDBOX_XML_MAX_EXTRACTED_BYTES', 2 * 1024 * 1024 * 1024);
-        $maxRatio = mdjr_rekordbox_secret_float('REKORDBOX_ZIP_MAX_RATIO', 40.0);
+        $maxRatio = mdjr_rekordbox_secret_float('REKORDBOX_ZIP_MAX_RATIO', 30.0);
         $entry = null;
+        $candidateEntries = [];
 
         try {
-            if ($zip->numFiles !== 1) {
-                mdjr_rekordbox_throw('ZIP must contain exactly one XML file.', 400, ['uploaded_path' => $uploadedPath, 'num_files' => $zip->numFiles]);
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $stat = $zip->statIndex($i);
+                if (!is_array($stat)) {
+                    continue;
+                }
+
+                $name = (string)($stat['name'] ?? '');
+                if ($name === '' || str_ends_with($name, '/')) {
+                    continue;
+                }
+
+                $baseName = (string)basename($name);
+                $normalizedName = str_replace('\\', '/', $name);
+
+                // Ignore common macOS/Finder metadata entries.
+                if (
+                    str_starts_with($normalizedName, '__MACOSX/')
+                    || $baseName === '.DS_Store'
+                    || str_starts_with($baseName, '._')
+                ) {
+                    continue;
+                }
+
+                if (!mdjr_rekordbox_is_safe_zip_entry_name($name)) {
+                    mdjr_rekordbox_throw('ZIP entry path is not allowed.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
+                }
+
+                $extName = strtolower((string)pathinfo($baseName, PATHINFO_EXTENSION));
+                if (in_array($extName, ['zip', 'gz', 'rar', '7z', 'tar'], true)) {
+                    mdjr_rekordbox_throw('Nested archives are not allowed inside ZIP uploads.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
+                }
+
+                if ($extName !== 'xml') {
+                    mdjr_rekordbox_throw('ZIP may only contain one XML file and optional macOS metadata.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
+                }
+
+                $candidateEntries[] = $stat;
             }
 
-            $stat = $zip->statIndex(0);
-            if (!is_array($stat)) {
-                mdjr_rekordbox_throw('Failed to inspect ZIP archive.', 400, ['uploaded_path' => $uploadedPath]);
+            if (count($candidateEntries) !== 1) {
+                mdjr_rekordbox_throw('ZIP must contain exactly one XML file.', 400, [
+                    'uploaded_path' => $uploadedPath,
+                    'candidate_xml_files' => count($candidateEntries),
+                    'num_files' => $zip->numFiles,
+                ]);
             }
 
+            $stat = $candidateEntries[0];
             $name = (string)($stat['name'] ?? '');
-            if ($name === '' || str_ends_with($name, '/')) {
-                mdjr_rekordbox_throw('ZIP must contain exactly one XML file.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
-            }
-            if (strpos($name, '/') !== false || strpos($name, '\\') !== false || str_contains($name, '..')) {
-                mdjr_rekordbox_throw('ZIP entry path is not allowed.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
-            }
-            if (strtolower((string)pathinfo($name, PATHINFO_EXTENSION)) !== 'xml') {
-                mdjr_rekordbox_throw('ZIP must contain exactly one XML file.', 400, ['uploaded_path' => $uploadedPath, 'entry_name' => $name]);
-            }
 
             $entrySize = max(0, (int)($stat['size'] ?? 0));
             $compressedSize = max(0, (int)($stat['comp_size'] ?? 0));
@@ -391,8 +563,26 @@ if (!function_exists('mdjr_rekordbox_prepare_uploaded_library_source')) {
                 mdjr_rekordbox_throw('Failed to create extracted XML file.', 500, ['target_xml_path' => $targetXmlPath]);
             }
 
+            $copied = 0;
+            $bufferSize = 1024 * 1024;
             try {
-                $copied = stream_copy_to_stream($in, $out);
+                while (!feof($in)) {
+                    $chunk = fread($in, $bufferSize);
+                    if ($chunk === false) {
+                        break;
+                    }
+                    $copied += strlen($chunk);
+                    if ($copied > $entrySize || $copied > $maxExtractedBytes) {
+                        @unlink($targetXmlPath);
+                        mdjr_rekordbox_throw('ZIP stream exceeded the declared extracted size.', 400, [
+                            'uploaded_path' => $uploadedPath,
+                            'entry_name' => $name,
+                            'streamed_bytes' => $copied,
+                            'declared_bytes' => $entrySize,
+                        ]);
+                    }
+                    fwrite($out, $chunk);
+                }
             } finally {
                 fclose($in);
                 fclose($out);

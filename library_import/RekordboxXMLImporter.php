@@ -121,7 +121,7 @@ class RekordboxXMLImporter
                 if ($tracksSeen > $this->maxTracks) {
                     throw new RuntimeException('Import exceeds the maximum allowed track count.');
                 }
-                if (($tracksSeen % 250) === 0) {
+                if (($tracksSeen % 100) === 0) {
                     $this->enforceRuntimeAndMemoryLimits();
                 }
                 $track = $this->extractTrackFromReader($reader);
@@ -136,6 +136,7 @@ class RekordboxXMLImporter
                 $rowsBuffered++;
 
                 if (count($batch) >= $this->batchSize) {
+                    $this->enforceRuntimeAndMemoryLimits();
                     $batchStats = $this->flushBatch($batch);
                     $rowsInserted += (int)$batchStats['inserted'];
                     $rowsUpdated += (int)$batchStats['updated'];
@@ -144,6 +145,7 @@ class RekordboxXMLImporter
             }
 
             if (!empty($batch)) {
+                $this->enforceRuntimeAndMemoryLimits();
                 $batchStats = $this->flushBatch($batch);
                 $rowsInserted += (int)$batchStats['inserted'];
                 $rowsUpdated += (int)$batchStats['updated'];
@@ -838,7 +840,7 @@ class RekordboxXMLImporter
         if ((int)$stats['playlists_imported'] > $this->maxPlaylists) {
             throw new RuntimeException('Import exceeded the maximum allowed playlist count.');
         }
-        if (((int)$stats['playlists_imported'] % 100) === 0) {
+        if (((int)$stats['playlists_imported'] % 25) === 0) {
             $this->enforceRuntimeAndMemoryLimits();
         }
 
@@ -865,6 +867,9 @@ class RekordboxXMLImporter
             }
 
             if ($isPlaylist && $reader->name === 'TRACK') {
+                if (((int)$stats['playlist_tracks_added'] + (int)$stats['playlist_tracks_skipped']) % 250 === 0) {
+                    $this->enforceRuntimeAndMemoryLimits();
+                }
                 $trackRef = $this->nullIfEmpty($reader->getAttribute('Key'))
                     ?? $this->nullIfEmpty($reader->getAttribute('TrackID'));
                 if ($trackRef === null || !isset($this->trackIdToDjTrackId[$trackRef])) {

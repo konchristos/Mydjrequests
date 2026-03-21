@@ -116,6 +116,10 @@ function processImportJob(PDO $db, array $job): void
                 dj_tracks_added = :dj_tracks_added,
                 dj_tracks_updated = :dj_tracks_updated,
                 error_message = NULL,
+                tracks_finished_at = COALESCE(tracks_finished_at, NOW()),
+                playlists_finished_at = COALESCE(playlists_finished_at, NOW()),
+                finalizing_started_at = COALESCE(finalizing_started_at, NOW()),
+                finalizing_finished_at = COALESCE(finalizing_finished_at, NOW()),
                 finished_at = NOW(),
                 updated_at = NOW()
             WHERE id = :id
@@ -151,6 +155,9 @@ function processImportJob(PDO $db, array $job): void
                 stage = 'failed',
                 stage_message = 'Import failed.',
                 error_message = :error_message,
+                tracks_finished_at = COALESCE(tracks_finished_at, NOW()),
+                playlists_finished_at = COALESCE(playlists_finished_at, NOW()),
+                finalizing_finished_at = COALESCE(finalizing_finished_at, NOW()),
                 finished_at = NOW(),
                 updated_at = NOW()
             WHERE id = :id
@@ -232,11 +239,12 @@ function updateJobStage(PDO $db, int $jobId, string $stage, string $message): vo
     if ($jobId <= 0) {
         return;
     }
+    $timingSql = importStageTimingSql($stage);
     $stmt = $db->prepare("
         UPDATE dj_library_import_jobs
         SET stage = :stage,
             stage_message = :stage_message,
-            updated_at = NOW()
+            updated_at = NOW(){$timingSql}
         WHERE id = :id
         LIMIT 1
     ");
@@ -245,6 +253,44 @@ function updateJobStage(PDO $db, int $jobId, string $stage, string $message): vo
         ':stage_message' => mb_substr($message, 0, 255, 'UTF-8'),
         ':id' => $jobId,
     ]);
+}
+
+function importStageTimingSql(string $stage): string
+{
+    switch ($stage) {
+        case 'processing_tracks':
+            return ",
+                tracks_started_at = COALESCE(tracks_started_at, NOW()),
+                tracks_finished_at = NULL,
+                playlists_started_at = NULL,
+                playlists_finished_at = NULL,
+                finalizing_started_at = NULL,
+                finalizing_finished_at = NULL";
+        case 'processing_playlists':
+            return ",
+                tracks_finished_at = COALESCE(tracks_finished_at, NOW()),
+                playlists_started_at = COALESCE(playlists_started_at, NOW()),
+                playlists_finished_at = NULL";
+        case 'finalizing':
+            return ",
+                tracks_finished_at = COALESCE(tracks_finished_at, NOW()),
+                playlists_finished_at = COALESCE(playlists_finished_at, NOW()),
+                finalizing_started_at = COALESCE(finalizing_started_at, NOW()),
+                finalizing_finished_at = NULL";
+        case 'done':
+            return ",
+                tracks_finished_at = COALESCE(tracks_finished_at, NOW()),
+                playlists_finished_at = COALESCE(playlists_finished_at, NOW()),
+                finalizing_started_at = COALESCE(finalizing_started_at, NOW()),
+                finalizing_finished_at = COALESCE(finalizing_finished_at, NOW())";
+        case 'failed':
+            return ",
+                tracks_finished_at = COALESCE(tracks_finished_at, NOW()),
+                playlists_finished_at = COALESCE(playlists_finished_at, NOW()),
+                finalizing_finished_at = COALESCE(finalizing_finished_at, NOW())";
+        default:
+            return '';
+    }
 }
 
 function tableCount(PDO $db, string $table): int
@@ -375,6 +421,12 @@ function ensureImportJobsTable(PDO $db): void
     ensureImportJobsColumn($db, 'source_sha256', 'CHAR(64) NULL');
     ensureImportJobsColumn($db, 'stage', "VARCHAR(64) NOT NULL DEFAULT 'queued'");
     ensureImportJobsColumn($db, 'stage_message', 'VARCHAR(255) NULL');
+    ensureImportJobsColumn($db, 'tracks_started_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'tracks_finished_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'playlists_started_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'playlists_finished_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'finalizing_started_at', 'DATETIME NULL');
+    ensureImportJobsColumn($db, 'finalizing_finished_at', 'DATETIME NULL');
 }
 
 function ensureImportJobsColumn(PDO $db, string $column, string $ddl): void

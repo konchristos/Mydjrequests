@@ -210,15 +210,23 @@ function mdjrLoadStaleGlobalMatches(PDO $db, int $djId): array
             b.artist AS matched_artist,
             b.bpm AS matched_bpm,
             b.key_text AS matched_key,
-            b.year AS matched_year
+            b.year AS matched_year,
+            dt.id AS exact_track_row_id,
+            COALESCE(dt.is_available, 0) AS exact_track_is_available
         FROM dj_global_track_overrides g
         LEFT JOIN bpm_test_tracks b
             ON b.id = g.bpm_track_id
+        LEFT JOIN dj_tracks dt
+            ON dt.id = g.dj_track_id
+           AND dt.dj_id = ?
         WHERE g.dj_id = ?
-          AND g.bpm_track_id IS NOT NULL
+          AND (
+              g.bpm_track_id IS NOT NULL
+              OR g.dj_track_id IS NOT NULL
+          )
         ORDER BY g.updated_at DESC, g.id DESC
     ");
-    $stmt->execute([$djId]);
+    $stmt->execute([$djId, $djId]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
     if (mdjrTableExistsForHelper($db, 'dj_event_track_overrides')) {
@@ -235,15 +243,23 @@ function mdjrLoadStaleGlobalMatches(PDO $db, int $djId): array
                 b.artist AS matched_artist,
                 b.bpm AS matched_bpm,
                 b.key_text AS matched_key,
-                b.year AS matched_year
+                b.year AS matched_year,
+                dt.id AS exact_track_row_id,
+                COALESCE(dt.is_available, 0) AS exact_track_is_available
             FROM dj_event_track_overrides e
             LEFT JOIN bpm_test_tracks b
                 ON b.id = e.bpm_track_id
+            LEFT JOIN dj_tracks dt
+                ON dt.id = e.dj_track_id
+               AND dt.dj_id = ?
             WHERE e.dj_id = ?
-              AND e.bpm_track_id IS NOT NULL
+              AND (
+                  e.bpm_track_id IS NOT NULL
+                  OR e.dj_track_id IS NOT NULL
+              )
             ORDER BY e.updated_at DESC, e.id DESC
         ");
-        $legacyStmt->execute([$djId]);
+        $legacyStmt->execute([$djId, $djId]);
         $existingKeys = [];
         foreach ($rows as $row) {
             $key = trim((string)($row['override_key'] ?? ''));
@@ -265,58 +281,6 @@ function mdjrLoadStaleGlobalMatches(PDO $db, int $djId): array
         return [];
     }
 
-    $hashes = [];
-    $exactDjTrackIds = [];
-    foreach ($rows as $row) {
-        $exactDjTrackId = isset($row['dj_track_id']) && is_numeric($row['dj_track_id']) ? (int)$row['dj_track_id'] : 0;
-        if ($exactDjTrackId > 0) {
-            $exactDjTrackIds[$exactDjTrackId] = true;
-        }
-        $hash = mdjrCandidateTrackHashForStale(
-            (string)($row['matched_title'] ?? ''),
-            (string)($row['matched_artist'] ?? '')
-        );
-        if ($hash !== '') {
-            $hashes[$hash] = true;
-        }
-    }
-
-    $availableByHash = [];
-    $availableExactDjTrackIds = [];
-    if (!empty($exactDjTrackIds)) {
-        $in = implode(',', array_fill(0, count($exactDjTrackIds), '?'));
-        $exactStmt = $db->prepare("
-            SELECT id
-            FROM dj_tracks
-            WHERE dj_id = ?
-              AND COALESCE(is_available, 1) = 1
-              AND id IN ($in)
-        ");
-        $exactStmt->execute(array_merge([$djId], array_keys($exactDjTrackIds)));
-        foreach ($exactStmt->fetchAll(PDO::FETCH_COLUMN) as $id) {
-            $availableExactDjTrackIds[(int)$id] = true;
-        }
-    }
-
-    if (!empty($hashes)) {
-        $in = implode(',', array_fill(0, count($hashes), '?'));
-        $availableStmt = $db->prepare("
-            SELECT normalized_hash, COUNT(*) AS row_count
-            FROM dj_tracks
-            WHERE dj_id = ?
-              AND COALESCE(is_available, 1) = 1
-              AND normalized_hash IN ($in)
-            GROUP BY normalized_hash
-        ");
-        $availableStmt->execute(array_merge([$djId], array_keys($hashes)));
-        foreach ($availableStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $hash = trim((string)($row['normalized_hash'] ?? ''));
-            if ($hash !== '') {
-                $availableByHash[$hash] = (int)($row['row_count'] ?? 0);
-            }
-        }
-    }
-
     $stale = [];
     foreach ($rows as $row) {
         $matchedTitle = trim((string)($row['matched_title'] ?? ''));
@@ -328,24 +292,15 @@ function mdjrLoadStaleGlobalMatches(PDO $db, int $djId): array
             // stays focused on exact saved local files that truly disappeared.
             continue;
         }
-        if ($exactDjTrackId > 0) {
-            if (!isset($availableExactDjTrackIds[$exactDjTrackId])) {
-                $fallback = mdjrOverrideKeySplit((string)($row['override_key'] ?? ''));
-                $row['display_title'] = $matchedTitle !== '' ? $matchedTitle : (string)$fallback['title'];
-                $row['display_artist'] = $matchedArtist !== '' ? $matchedArtist : (string)$fallback['artist'];
-                $row['stale_reason'] = 'exact_track_missing';
-                $stale[] = $row;
-            }
+        $exactAvailable = ((int)($row['exact_track_row_id'] ?? 0) > 0) && ((int)($row['exact_track_is_available'] ?? 0) === 1);
+        if ($exactAvailable) {
             continue;
         }
-        $hash = mdjrCandidateTrackHashForStale($matchedTitle, $matchedArtist);
-        if ($hash !== '' && !empty($availableByHash[$hash])) {
-            continue;
-        }
+
         $fallback = mdjrOverrideKeySplit((string)($row['override_key'] ?? ''));
         $row['display_title'] = $matchedTitle !== '' ? $matchedTitle : (string)$fallback['title'];
         $row['display_artist'] = $matchedArtist !== '' ? $matchedArtist : (string)$fallback['artist'];
-        $row['stale_reason'] = 'hash_unavailable';
+        $row['stale_reason'] = 'exact_track_missing';
         $stale[] = $row;
     }
 

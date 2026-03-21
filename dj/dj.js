@@ -258,6 +258,8 @@ function groupDjRows(rows) {
       voters: group.rows.flatMap((r) => Array.isArray(r.voters) ? r.voters : []),
       boosters: group.rows.flatMap((r) => Array.isArray(r.boosters) ? r.boosters : []),
       dj_track_id: (group.rows.find((r) => Number(r.manual_owned || 0) === 1 || Number(r.dj_track_id || 0) > 0)?.dj_track_id) || primary.dj_track_id || null,
+      selected_dj_track_id: (group.rows.find((r) => Number(r.selected_dj_track_id || 0) > 0)?.selected_dj_track_id) || primary.selected_dj_track_id || null,
+      selected_bpm_track_id: (group.rows.find((r) => Number(r.selected_bpm_track_id || 0) > 0)?.selected_bpm_track_id) || primary.selected_bpm_track_id || null,
       manual_owned: group.rows.some((r) => Number(r.manual_owned || 0) === 1) ? 1 : Number(primary.manual_owned || 0),
       preferred_selected: group.rows.some((r) => Number(r.preferred_selected || 0) === 1) ? 1 : Number(primary.preferred_selected || 0),
       manual_path_matched: group.rows.some((r) => Number(r.manual_path_matched || 0) === 1) ? 1 : Number(primary.manual_path_matched || 0),
@@ -335,6 +337,7 @@ async function loadManualMatchCandidates(track, query = "") {
 
     const rows = Array.isArray(data.rows) ? data.rows : [];
     const selectedBpmId = Number(track?.selected_bpm_track_id || data?.selected_bpm_track_id || 0);
+    const selectedDjTrackId = Number(track?.selected_dj_track_id || data?.selected_dj_track_id || 0);
     const scope = String(data.scope || "");
     const scopeMessage = String(data.scope_message || "");
     if (!rows.length) {
@@ -354,7 +357,10 @@ async function loadManualMatchCandidates(track, query = "") {
       const isPreferred = Number(row.is_preferred || 0) === 1;
       const playlistBadge = String(row.playlist_badge || "").trim();
       const isFiveStar = Number(row.is_five_star || 0) === 1;
-      const isSelected = Number(row.is_selected || 0) === 1 || (selectedBpmId > 0 && Number(row.id || 0) === selectedBpmId);
+      const isSelected =
+        Number(row.is_selected || 0) === 1 ||
+        (selectedBpmId > 0 && Number(row.id || 0) === selectedBpmId) ||
+        (selectedDjTrackId > 0 && Number(row.dj_track_id || 0) === selectedDjTrackId);
       const isOwned = Number(row.is_owned || 0) === 1;
       const canApply = Number(row.can_apply ?? 1) === 1 && isOwned;
       const isLocalOnly = Number(row.local_only || 0) === 1;

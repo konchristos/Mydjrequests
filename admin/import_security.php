@@ -40,7 +40,10 @@ try {
     }
 
     $jobsStmt = $db->query("
-        SELECT id, dj_id, status, stage, stage_message, error_message, created_at, started_at, finished_at
+        SELECT id, dj_id, status, stage, stage_message, error_message, created_at, started_at, finished_at,
+               tracks_started_at, tracks_finished_at,
+               playlists_started_at, playlists_finished_at,
+               finalizing_started_at, finalizing_finished_at
         FROM dj_library_import_jobs
         ORDER BY id DESC
         LIMIT 25
@@ -68,6 +71,12 @@ include APP_ROOT . '/dj/layout.php';
 .import-sec-pill.worker_deferred { color:#ffe2a3; border-color:#826126; background:rgba(180,130,40,0.16); }
 .import-sec-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; color:#dfe6ff; white-space:pre-wrap; word-break:break-word; }
 .import-sec-muted { color:#9ea1bc; }
+.import-sec-tabs { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 16px; }
+.import-sec-tab-btn { background:#1a1a26; color:#d8d8e8; border:1px solid #2d2d44; border-radius:999px; padding:9px 14px; font-weight:700; cursor:pointer; }
+.import-sec-tab-btn.active { background:linear-gradient(135deg, #47c2ff 0%, #ff2fd2 100%); border-color:transparent; color:#fff; }
+.import-sec-panel { display:none; }
+.import-sec-panel.active { display:block; }
+.import-sec-timing { color:#9ea1bc; font-size:13px; margin-top:6px; }
 .error { color:#ff8080; margin-bottom:10px; }
 </style>
 
@@ -121,73 +130,192 @@ include APP_ROOT . '/dj/layout.php';
     </div>
 
     <div class="import-sec-card">
-        <h3 style="margin-top:0;">Recent Import Jobs</h3>
-        <div class="import-sec-table-wrap">
-            <table class="import-sec-table">
-                <thead>
-                    <tr>
-                        <th>Job</th>
-                        <th>DJ</th>
-                        <th>Status</th>
-                        <th>Stage</th>
-                        <th>Created</th>
-                        <th>Started</th>
-                        <th>Finished</th>
-                        <th>Error</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($recentJobs as $row): ?>
-                        <tr>
-                            <td>#<?php echo (int)($row['id'] ?? 0); ?></td>
-                            <td><?php echo (int)($row['dj_id'] ?? 0); ?></td>
-                            <td><?php echo e((string)($row['status'] ?? '')); ?></td>
-                            <td>
-                                <span class="import-sec-pill"><?php echo e((string)($row['stage'] ?? '')); ?></span>
-                                <?php if (!empty($row['stage_message'])): ?>
-                                    <div class="import-sec-muted" style="margin-top:4px;"><?php echo e((string)$row['stage_message']); ?></div>
-                                <?php endif; ?>
-                            </td>
-                            <td><?php echo e((string)($row['created_at'] ?? '—')); ?></td>
-                            <td><?php echo e((string)($row['started_at'] ?? '—')); ?></td>
-                            <td><?php echo e((string)($row['finished_at'] ?? '—')); ?></td>
-                            <td><?php echo e(trim((string)($row['error_message'] ?? '')) !== '' ? (string)$row['error_message'] : '—'); ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
+        <div class="import-sec-tabs" role="tablist" aria-label="Import security views">
+            <button type="button" class="import-sec-tab-btn active" data-tab-target="jobs-panel" aria-selected="true">Import Jobs</button>
+            <button type="button" class="import-sec-tab-btn" data-tab-target="security-panel" aria-selected="false">Security Log</button>
         </div>
-    </div>
 
-    <div class="import-sec-card">
-        <h3 style="margin-top:0;">Recent Security Log Entries</h3>
-        <div class="import-sec-table-wrap">
-            <table class="import-sec-table">
-                <thead>
-                    <tr>
-                        <th>Time</th>
-                        <th>Category</th>
-                        <th>Message</th>
-                        <th>Context</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if (empty($entries)): ?>
+        <div id="jobs-panel" class="import-sec-panel active">
+            <h3 style="margin-top:0;">Recent Import Jobs</h3>
+            <div class="import-sec-table-wrap">
+                <table class="import-sec-table">
+                    <thead>
                         <tr>
-                            <td colspan="4" class="import-sec-muted">No security log entries yet.</td>
+                            <th>Job</th>
+                            <th>DJ</th>
+                            <th>Status</th>
+                            <th>Stage</th>
+                            <th>Timings</th>
+                            <th>Created</th>
+                            <th>Started</th>
+                            <th>Finished</th>
+                            <th>Error</th>
                         </tr>
-                    <?php else: ?>
-                        <?php foreach ($entries as $entry): ?>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($recentJobs as $row): ?>
+                            <?php
+                                $tracksSeconds = importSecComputeStageSeconds((string)($row['tracks_started_at'] ?? ''), (string)($row['tracks_finished_at'] ?? ''));
+                                $playlistsSeconds = importSecComputeStageSeconds((string)($row['playlists_started_at'] ?? ''), (string)($row['playlists_finished_at'] ?? ''));
+                                $finalizingSeconds = importSecComputeStageSeconds((string)($row['finalizing_started_at'] ?? ''), (string)($row['finalizing_finished_at'] ?? ''));
+                                $timingParts = [];
+                                if ($tracksSeconds !== null) {
+                                    $timingParts[] = 'Tracks ' . importSecFormatElapsed($tracksSeconds);
+                                }
+                                if ($playlistsSeconds !== null) {
+                                    $timingParts[] = 'Playlists ' . importSecFormatElapsed($playlistsSeconds);
+                                }
+                                if ($finalizingSeconds !== null) {
+                                    $timingParts[] = 'Finalize ' . importSecFormatElapsed($finalizingSeconds);
+                                }
+                            ?>
                             <tr>
-                                <td><?php echo e((string)($entry['ts'] ?? '')); ?></td>
-                                <td><span class="import-sec-pill <?php echo e((string)($entry['category'] ?? '')); ?>"><?php echo e((string)($entry['category'] ?? 'unknown')); ?></span></td>
-                                <td><?php echo e((string)($entry['message'] ?? '')); ?></td>
-                                <td class="import-sec-code"><?php echo e(json_encode($entry['context'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); ?></td>
+                                <td>#<?php echo (int)($row['id'] ?? 0); ?></td>
+                                <td><?php echo (int)($row['dj_id'] ?? 0); ?></td>
+                                <td><?php echo e((string)($row['status'] ?? '')); ?></td>
+                                <td>
+                                    <span class="import-sec-pill"><?php echo e((string)($row['stage'] ?? '')); ?></span>
+                                    <?php if (!empty($row['stage_message'])): ?>
+                                        <div class="import-sec-muted" style="margin-top:4px;"><?php echo e((string)$row['stage_message']); ?></div>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if (empty($timingParts)): ?>
+                                        <span class="import-sec-muted">—</span>
+                                    <?php else: ?>
+                                        <div class="import-sec-timing"><?php echo e(implode(' • ', $timingParts)); ?></div>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?php echo e(importSecFormatLocal((string)($row['created_at'] ?? ''))); ?></td>
+                                <td><?php echo e(importSecFormatLocal((string)($row['started_at'] ?? ''))); ?></td>
+                                <td><?php echo e(importSecFormatLocal((string)($row['finished_at'] ?? ''))); ?></td>
+                                <td><?php echo e(trim((string)($row['error_message'] ?? '')) !== '' ? (string)$row['error_message'] : '—'); ?></td>
                             </tr>
                         <?php endforeach; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="security-panel" class="import-sec-panel">
+            <h3 style="margin-top:0;">Recent Security Log Entries</h3>
+            <div class="import-sec-table-wrap">
+                <table class="import-sec-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Category</th>
+                            <th>Message</th>
+                            <th>Context</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($entries)): ?>
+                            <tr>
+                                <td colspan="4" class="import-sec-muted">No security log entries yet.</td>
+                            </tr>
+                        <?php else: ?>
+                            <?php foreach ($entries as $entry): ?>
+                                <tr>
+                                    <td><?php echo e(importSecFormatLogTime((string)($entry['ts'] ?? ''))); ?></td>
+                                    <td><span class="import-sec-pill <?php echo e((string)($entry['category'] ?? '')); ?>"><?php echo e((string)($entry['category'] ?? 'unknown')); ?></span></td>
+                                    <td><?php echo e((string)($entry['message'] ?? '')); ?></td>
+                                    <td class="import-sec-code"><?php echo e(json_encode($entry['context'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const tabButtons = Array.from(document.querySelectorAll('.import-sec-tab-btn'));
+    const panels = Array.from(document.querySelectorAll('.import-sec-panel'));
+
+    function activateTab(targetId) {
+        tabButtons.forEach(function (button) {
+            const isActive = button.getAttribute('data-tab-target') === targetId;
+            button.classList.toggle('active', isActive);
+            button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        panels.forEach(function (panel) {
+            panel.classList.toggle('active', panel.id === targetId);
+        });
+    }
+
+    tabButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+            activateTab(button.getAttribute('data-tab-target'));
+        });
+    });
+});
+</script>
+<?php
+function importSecParseUtcTimestamp(string $value)
+{
+    $value = trim($value);
+    if ($value === '') {
+        return false;
+    }
+    try {
+        $dt = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $value, new DateTimeZone('UTC'));
+        if (!$dt) {
+            $dt = new DateTimeImmutable($value, new DateTimeZone('UTC'));
+        }
+        return $dt->getTimestamp();
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function importSecComputeStageSeconds(string $startValue, string $endValue): ?int
+{
+    $startTs = importSecParseUtcTimestamp($startValue);
+    $endTs = importSecParseUtcTimestamp($endValue);
+    if ($startTs === false || $startTs <= 0 || $endTs === false || $endTs <= 0) {
+        return null;
+    }
+    return max(0, $endTs - $startTs);
+}
+
+function importSecFormatElapsed(int $seconds): string
+{
+    $n = max(0, $seconds);
+    $h = (int)floor($n / 3600);
+    $m = (int)floor(($n % 3600) / 60);
+    $s = (int)($n % 60);
+    if ($h > 0) {
+        return sprintf('%dh %02dm %02ds', $h, $m, $s);
+    }
+    if ($m > 0) {
+        return sprintf('%dm %02ds', $m, $s);
+    }
+    return sprintf('%ds', $s);
+}
+
+function importSecFormatLocal(string $value): string
+{
+    $ts = importSecParseUtcTimestamp($value);
+    if ($ts === false || $ts <= 0) {
+        return '—';
+    }
+    return date('d M Y, g:i:s a', $ts);
+}
+
+function importSecFormatLogTime(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return '—';
+    }
+    try {
+        $dt = new DateTimeImmutable($value, new DateTimeZone('UTC'));
+        return $dt->setTimezone(new DateTimeZone(date_default_timezone_get()))->format('d M Y, g:i:s a');
+    } catch (Throwable $e) {
+        return $value;
+    }
+}
+?>

@@ -64,6 +64,7 @@ $overrideKey = mdjrOverrideTrackKey(
     trim((string)($req['song_title'] ?? '')),
     trim((string)($req['artist'] ?? ''))
 );
+$overrideTitleCore = mdjrCoreTitle((string)($req['song_title'] ?? ''));
 if ($overrideKey !== '') {
     try {
         $ovStmt = $db->prepare("
@@ -83,7 +84,7 @@ if ($overrideKey !== '') {
         $selectedExactDjTrackId = 0;
     }
 }
-if ($selectedBpmTrackId <= 0 && $overrideKey !== '') {
+if ($selectedBpmTrackId <= 0 && $selectedExactDjTrackId <= 0 && $overrideKey !== '') {
     try {
         $govStmt = $db->prepare("
             SELECT bpm_track_id, dj_track_id
@@ -101,7 +102,52 @@ if ($selectedBpmTrackId <= 0 && $overrideKey !== '') {
         $selectedExactDjTrackId = 0;
     }
 }
-if ($selectedBpmTrackId <= 0 && $overrideKey !== '') {
+if ($selectedBpmTrackId <= 0 && $selectedExactDjTrackId <= 0 && $overrideTitleCore !== '') {
+    try {
+        $ovStmt = $db->prepare("
+            SELECT override_key, bpm_track_id, dj_track_id
+            FROM dj_event_track_overrides
+            WHERE dj_id = ?
+              AND event_id = ?
+            ORDER BY updated_at DESC, id DESC
+        ");
+        $ovStmt->execute([(int)($_SESSION['dj_id'] ?? 0), $eventId]);
+        foreach (($ovStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) as $row) {
+            if (mdjrOverrideTitleFromKey((string)($row['override_key'] ?? '')) !== $overrideTitleCore) {
+                continue;
+            }
+            $selectedBpmTrackId = (int)($row['bpm_track_id'] ?? 0);
+            $selectedExactDjTrackId = (int)($row['dj_track_id'] ?? 0);
+            break;
+        }
+    } catch (Throwable $e) {
+        $selectedBpmTrackId = 0;
+        $selectedExactDjTrackId = 0;
+    }
+}
+if ($selectedBpmTrackId <= 0 && $selectedExactDjTrackId <= 0 && $overrideTitleCore !== '') {
+    try {
+        $govStmt = $db->prepare("
+            SELECT override_key, bpm_track_id, dj_track_id
+            FROM dj_global_track_overrides
+            WHERE dj_id = ?
+            ORDER BY updated_at DESC, id DESC
+        ");
+        $govStmt->execute([(int)($_SESSION['dj_id'] ?? 0)]);
+        foreach (($govStmt->fetchAll(PDO::FETCH_ASSOC) ?: []) as $row) {
+            if (mdjrOverrideTitleFromKey((string)($row['override_key'] ?? '')) !== $overrideTitleCore) {
+                continue;
+            }
+            $selectedBpmTrackId = (int)($row['bpm_track_id'] ?? 0);
+            $selectedExactDjTrackId = (int)($row['dj_track_id'] ?? 0);
+            break;
+        }
+    } catch (Throwable $e) {
+        $selectedBpmTrackId = 0;
+        $selectedExactDjTrackId = 0;
+    }
+}
+if ($selectedBpmTrackId <= 0 && $selectedExactDjTrackId <= 0 && $overrideKey !== '') {
     try {
         $legacyStmt = $db->prepare("
             SELECT bpm_track_id, dj_track_id
@@ -121,7 +167,7 @@ if ($selectedBpmTrackId <= 0 && $overrideKey !== '') {
         $selectedExactDjTrackId = 0;
     }
 }
-if ($selectedBpmTrackId <= 0) {
+if ($selectedBpmTrackId <= 0 && $selectedExactDjTrackId <= 0) {
     $sid = trim((string)($req['spotify_track_id'] ?? ''));
     if ($sid !== '') {
         try {
@@ -1086,6 +1132,9 @@ foreach ($scored as $row) {
     $row['playlist_badge'] = ($isOwned === 1 && is_array($ownedMeta) && !empty($ownedMeta['playlist_badge']))
         ? (string)$ownedMeta['playlist_badge']
         : '';
+    if ($isOwned === 1 && is_array($ownedMeta) && !empty($ownedMeta['dj_track_id'])) {
+        $row['dj_track_id'] = (int)$ownedMeta['dj_track_id'];
+    }
     if ($isOwned === 1 && isset($ownedMeta['rating_value'])) {
         $current = isset($row['rating_value']) && is_numeric($row['rating_value']) ? (float)$row['rating_value'] : 0.0;
         $ownedVal = (float)$ownedMeta['rating_value'];
@@ -1099,7 +1148,11 @@ foreach ($scored as $row) {
         (isset($row['token_score']) && is_numeric($row['token_score']) && (float)$row['token_score'] >= 58.0)
     ) ? 1 : 0;
     $row['is_five_star'] = (isset($row['rating_value']) && is_numeric($row['rating_value']) && (float)$row['rating_value'] >= 5.0) ? 1 : 0;
-    $row['is_selected'] = ($selectedBpmTrackId > 0 && (int)($row['id'] ?? 0) === $selectedBpmTrackId) ? 1 : 0;
+    $rowDjTrackId = (int)($row['dj_track_id'] ?? 0);
+    $row['is_selected'] = (
+        ($selectedBpmTrackId > 0 && (int)($row['id'] ?? 0) === $selectedBpmTrackId) ||
+        ($selectedExactDjTrackId > 0 && $rowDjTrackId > 0 && $rowDjTrackId === $selectedExactDjTrackId)
+    ) ? 1 : 0;
     $row['selected_exact_missing'] = 0;
     $row['can_apply'] = isset($row['can_apply']) ? (int)$row['can_apply'] : 1;
     if (!empty($row['is_selected']) && $selectedExactDjTrackId > 0 && !$selectedExactDjTrackAvailable) {
@@ -1248,8 +1301,18 @@ echo json_encode([
     'library_candidate_count' => count($ownedRows),
     'global_candidate_count' => count($globalRows),
     'selected_bpm_track_id' => $selectedBpmTrackId,
+    'selected_dj_track_id' => $selectedExactDjTrackId,
     'rows' => $finalRows,
 ], JSON_UNESCAPED_UNICODE);
+
+function mdjrOverrideTitleFromKey(string $overrideKey): string
+{
+    $parts = explode('|', $overrideKey, 2);
+    if (count($parts) !== 2) {
+        return '';
+    }
+    return trim((string)$parts[1]);
+}
 
 function candidateTrackHash(string $title, string $artist): string
 {

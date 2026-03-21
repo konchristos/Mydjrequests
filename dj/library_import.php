@@ -189,7 +189,13 @@ try {
             error_message,
             created_at,
             started_at,
-            finished_at
+            finished_at,
+            tracks_started_at,
+            tracks_finished_at,
+            playlists_started_at,
+            playlists_finished_at,
+            finalizing_started_at,
+            finalizing_finished_at
         FROM dj_library_import_jobs
         WHERE dj_id = ?
         ORDER BY id DESC
@@ -284,6 +290,30 @@ function formatElapsedRange(?string $start, ?string $end): string
         return sprintf('%dm %02ds', $m, $s);
     }
     return sprintf('%ds', $s);
+}
+
+function stageElapsedRange(?string $start, ?string $end): string
+{
+    $start = trim((string)$start);
+    if ($start === '') {
+        return '';
+    }
+    return formatElapsedRange($start, $end);
+}
+
+function stageBreakdownDisplay(string $tracks, string $playlists, string $finalizing): string
+{
+    $parts = [];
+    if ($tracks !== '') {
+        $parts[] = 'Tracks ' . $tracks;
+    }
+    if ($playlists !== '') {
+        $parts[] = 'Playlists ' . $playlists;
+    }
+    if ($finalizing !== '') {
+        $parts[] = 'Finalize ' . $finalizing;
+    }
+    return implode(' • ', $parts);
 }
 
 function parseUtcToTs(string $value): int
@@ -774,6 +804,12 @@ function parseUtcToTs(string $value): int
     margin-top: 12px;
 }
 
+.library-live-note {
+    margin: 10px 0 0;
+    color: #9e9eb3;
+    font-size: 12px;
+}
+
 .library-stale-link {
     display: inline-flex;
     align-items: center;
@@ -797,7 +833,7 @@ function parseUtcToTs(string $value): int
     <div class="library-overview">
         <div class="library-overview-card">
             <p class="library-overview-label">Tracks in Library</p>
-            <p class="library-overview-value"><?php echo (int)$libraryTrackCount; ?></p>
+            <p id="libraryTrackCountValue" class="library-overview-value"><?php echo (int)$libraryTrackCount; ?></p>
         </div>
         <div class="library-overview-card">
             <p class="library-overview-label">Last Import</p>
@@ -807,17 +843,18 @@ function parseUtcToTs(string $value): int
                 data-utc="<?php echo e($lastImportedIsoUtc); ?>"
                 style="font-size:18px;"
             ><?php echo e($lastImportedDisplay); ?></p>
-            <p class="library-overview-label" style="margin-top:6px;">Source: <?php echo e($lastImportSource !== '' ? $lastImportSource : 'rekordbox_xml'); ?></p>
+            <p id="lastImportSourceValue" class="library-overview-label" style="margin-top:6px;">Source: <?php echo e($lastImportSource !== '' ? $lastImportSource : 'rekordbox_xml'); ?></p>
         </div>
     </div>
 
     <div class="library-reimport-help">
         Re-import workflow:
         <ul>
-            <li>Export your latest Rekordbox library XML and upload it here.</li>
-            <li>Imports update existing tracks by normalized hash and refresh file paths when tracks move.</li>
-            <li>Tracks missing from the latest full XML are marked unavailable for playlist export until they return in a later import.</li>
-            <li>Re-import any time after playlist/library edits to refresh metadata and availability.</li>
+            <li>Export your latest Rekordbox library and upload it here.</li>
+            <li>For large libraries, zip the XML first to make the upload much faster.</li>
+            <li>If you move tracks to a new folder or drive, importing again will refresh their saved file paths.</li>
+            <li>If tracks are missing from your latest export, they will be treated as unavailable until they appear again in a later import.</li>
+            <li>Re-import any time after library changes to keep your tracks, playlists, and availability up to date.</li>
         </ul>
     </div>
 
@@ -825,7 +862,7 @@ function parseUtcToTs(string $value): int
         <div class="library-stale-panel">
             <div class="library-stale-head">
                 <h2 class="library-stale-title">Stale Matched Tracks</h2>
-                <span class="library-stale-count"><?php echo count($staleMatchRows); ?> pending</span>
+                <span id="libraryStaleCountValue" class="library-stale-count"><?php echo count($staleMatchRows); ?> pending</span>
             </div>
             <p class="library-stale-sub">
                 Review saved manual matches whose previously linked local file is no longer available in the latest import.
@@ -833,6 +870,7 @@ function parseUtcToTs(string $value): int
             <div class="library-stale-actions">
                 <a class="library-stale-link" href="<?php echo e(url('dj/stale_matches.php')); ?>">Review stale matches</a>
             </div>
+            <p id="libraryOverviewRefreshNote" class="library-live-note">Live data. Waiting for next refresh…</p>
         </div>
     </div>
 
@@ -942,6 +980,7 @@ function parseUtcToTs(string $value): int
     <div id="libraryStatusMeta" class="library-status-meta" aria-live="polite"></div>
     <div id="libraryActions" class="library-actions">
         <button id="runQueuedImportBtn" type="button" class="library-run-btn">Process Queued Import Now</button>
+        <button id="clearUploadStateBtn" type="button" class="library-run-btn" style="display:none;">Reset Upload State</button>
     </div>
 
     <div id="libraryResults" class="library-results">
@@ -972,11 +1011,9 @@ function parseUtcToTs(string $value): int
 
     <div class="library-history">
         <h3>Recent Import History</h3>
-        <?php if (empty($importHistoryRows)): ?>
-            <p class="library-overview-label" style="margin:0;">No imports yet.</p>
-        <?php else: ?>
-            <div class="library-history-table-wrap">
-                <table class="library-history-table">
+        <p id="libraryHistoryEmpty" class="library-overview-label" style="margin:0;<?php echo empty($importHistoryRows) ? '' : 'display:none;'; ?>">No imports yet.</p>
+        <div id="libraryHistoryTableWrap" class="library-history-table-wrap" style="<?php echo empty($importHistoryRows) ? 'display:none;' : ''; ?>">
+                <table class="library-history-table" id="libraryHistoryTable">
                     <thead>
                         <tr>
                             <th>Job</th>
@@ -992,7 +1029,7 @@ function parseUtcToTs(string $value): int
                             <th>Error</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="libraryHistoryBody">
                         <?php foreach ($importHistoryRows as $row): ?>
                             <?php
                             $created = (string)($row['created_at'] ?? '');
@@ -1009,8 +1046,11 @@ function parseUtcToTs(string $value): int
                             $stage = trim((string)($row['stage'] ?? ''));
                             $stageMessage = trim((string)($row['stage_message'] ?? ''));
                             $elapsed = formatElapsedRange((string)($row['started_at'] ?? ''), (string)($row['finished_at'] ?? ''));
+                            $tracksSeconds = stageElapsedRange((string)($row['tracks_started_at'] ?? ''), (string)($row['tracks_finished_at'] ?? ''));
+                            $playlistsSeconds = stageElapsedRange((string)($row['playlists_started_at'] ?? ''), (string)($row['playlists_finished_at'] ?? ''));
+                            $finalizingSeconds = stageElapsedRange((string)($row['finalizing_started_at'] ?? ''), (string)($row['finalizing_finished_at'] ?? ''));
                             ?>
-                            <tr>
+                            <tr data-job-id="<?php echo (int)($row['id'] ?? 0); ?>">
                                 <td>#<?php echo (int)($row['id'] ?? 0); ?></td>
                                 <td class="js-local-datetime" data-utc="<?php echo e($createdIsoUtc); ?>"><?php echo e($createdDisplay); ?></td>
                                 <td><?php echo e($status); ?></td>
@@ -1018,6 +1058,11 @@ function parseUtcToTs(string $value): int
                                     <span class="library-stage-pill"><?php echo e($stage !== '' ? $stage : 'queued'); ?></span>
                                     <?php if ($stageMessage !== ''): ?>
                                         <div class="library-overview-label" style="margin-top:4px;"><?php echo e($stageMessage); ?></div>
+                                    <?php endif; ?>
+                                    <?php if ($tracksSeconds !== '' || $playlistsSeconds !== '' || $finalizingSeconds !== ''): ?>
+                                        <div class="library-overview-label" style="margin-top:4px;">
+                                            <?php echo e(stageBreakdownDisplay($tracksSeconds, $playlistsSeconds, $finalizingSeconds)); ?>
+                                        </div>
                                     <?php endif; ?>
                                 </td>
                                 <td><?php echo e($elapsed); ?></td>
@@ -1037,7 +1082,6 @@ function parseUtcToTs(string $value): int
                     </tbody>
                 </table>
             </div>
-        <?php endif; ?>
     </div>
 </div>
 
@@ -1049,18 +1093,70 @@ function parseUtcToTs(string $value): int
     const input = document.getElementById('libraryFileInput');
     const statusEl = document.getElementById('libraryStatus');
     const statusMetaEl = document.getElementById('libraryStatusMeta');
+    const historyBody = document.getElementById('libraryHistoryBody');
+    const historyEmpty = document.getElementById('libraryHistoryEmpty');
+    const historyWrap = document.getElementById('libraryHistoryTableWrap');
+    const libraryTrackCountValue = document.getElementById('libraryTrackCountValue');
+    const lastImportValue = document.getElementById('lastImportValue');
+    const lastImportSourceValue = document.getElementById('lastImportSourceValue');
+    const libraryStaleCountValue = document.getElementById('libraryStaleCountValue');
+    const libraryOverviewRefreshNote = document.getElementById('libraryOverviewRefreshNote');
     const progressWrap = document.getElementById('libraryUploadProgress');
     const progressBar = document.getElementById('libraryUploadProgressBar');
     const results = document.getElementById('libraryResults');
     const actions = document.getElementById('libraryActions');
     const runQueuedBtn = document.getElementById('runQueuedImportBtn');
+    const clearUploadStateBtn = document.getElementById('clearUploadStateBtn');
+    const pendingStateKey = 'mdjrImportPendingState:<?php echo (int)$djId; ?>';
     let activeJobId = 0;
+    let uploadLocked = false;
 
     const statTracks = document.getElementById('statTracksProcessed');
     const statNewIds = document.getElementById('statNewIdentities');
     const statExistingIds = document.getElementById('statExistingIdentities');
     const statTracksAdded = document.getElementById('statDjTracksAdded');
     const statTracksUpdated = document.getElementById('statDjTracksUpdated');
+
+    function readPendingState() {
+        try {
+            const raw = window.localStorage.getItem(pendingStateKey);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function writePendingState(patch) {
+        const current = readPendingState() || {};
+        const next = Object.assign({}, current, patch, { updated_at: Date.now() });
+        try {
+            window.localStorage.setItem(pendingStateKey, JSON.stringify(next));
+        } catch (e) {
+            // ignore storage failures
+        }
+        return next;
+    }
+
+    function clearPendingState() {
+        try {
+            window.localStorage.removeItem(pendingStateKey);
+        } catch (e) {
+            // ignore storage failures
+        }
+    }
+
+    function setActionMode(mode) {
+        if (!actions) return;
+        if (runQueuedBtn) {
+            runQueuedBtn.style.display = mode === 'queued' ? 'inline-flex' : 'none';
+        }
+        if (clearUploadStateBtn) {
+            clearUploadStateBtn.style.display = mode === 'pending' ? 'inline-flex' : 'none';
+        }
+        actions.style.display = mode === 'none' ? 'none' : 'block';
+    }
 
     function setStatus(text, isError) {
         statusEl.textContent = text || '';
@@ -1095,14 +1191,168 @@ function parseUtcToTs(string $value): int
         return s + 's';
     }
 
+    function escapeHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
+            return ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            })[char] || char;
+        });
+    }
+
+    function formatStageBreakdown(item) {
+        const parts = [];
+        if (item && item.tracks_seconds != null) parts.push('Tracks ' + formatElapsed(item.tracks_seconds));
+        if (item && item.playlists_seconds != null) parts.push('Playlists ' + formatElapsed(item.playlists_seconds));
+        if (item && item.finalizing_seconds != null) parts.push('Finalize ' + formatElapsed(item.finalizing_seconds));
+        return parts.join(' • ');
+    }
+
+    function renderHistoryRow(item) {
+        const breakdown = formatStageBreakdown(item);
+        const stageMessageHtml = item.stage_message ? ('<div class="library-overview-label" style="margin-top:4px;">' + escapeHtml(item.stage_message) + '</div>') : '';
+        const breakdownHtml = breakdown ? ('<div class="library-overview-label" style="margin-top:4px;">' + escapeHtml(breakdown) + '</div>') : '';
+        return [
+            '<tr data-job-id="' + Number(item.id || 0) + '">',
+                '<td>#' + Number(item.id || 0) + '</td>',
+                '<td class="js-local-datetime" data-utc="' + escapeHtml(item.created_at_iso || '') + '">' + escapeHtml(item.created_at_display || '—') + '</td>',
+                '<td>' + escapeHtml(item.status || 'queued') + '</td>',
+                '<td>',
+                    '<span class="library-stage-pill">' + escapeHtml(item.stage || 'queued') + '</span>',
+                    stageMessageHtml,
+                    breakdownHtml,
+                '</td>',
+                '<td>' + escapeHtml(item.elapsed_display || '0s') + '</td>',
+                '<td>' + escapeHtml(item.upload_display || '—') + '</td>',
+                '<td>' + escapeHtml(item.stored_display || '—') + '</td>',
+                '<td>' + Number(item.tracks_processed || 0) + '</td>',
+                '<td>' + Number(item.dj_tracks_added || 0) + '</td>',
+                '<td>' + Number(item.dj_tracks_updated || 0) + '</td>',
+                '<td>' + escapeHtml(item.error_display || '—') + '</td>',
+            '</tr>'
+        ].join('');
+    }
+
+    function updateOverview(payload) {
+        if (!payload || typeof payload !== 'object') return;
+        if (libraryTrackCountValue) {
+            libraryTrackCountValue.textContent = String(Number(payload.track_count || 0));
+        }
+        if (lastImportValue) {
+            const isoUtc = String(payload.last_imported_iso_utc || '').trim();
+            lastImportValue.setAttribute('data-utc', isoUtc);
+            lastImportValue.textContent = payload.last_imported_display ? String(payload.last_imported_display) : 'Never';
+        }
+        if (lastImportSourceValue) {
+            const source = String(payload.last_import_source || 'rekordbox_xml').trim() || 'rekordbox_xml';
+            lastImportSourceValue.textContent = 'Source: ' + source;
+        }
+        if (libraryStaleCountValue) {
+            const staleCount = Math.max(0, Number(payload.stale_count || 0));
+            libraryStaleCountValue.textContent = staleCount + ' pending';
+        }
+        if (libraryOverviewRefreshNote) {
+            try {
+                libraryOverviewRefreshNote.textContent = 'Live data. Refreshed ' + new Date().toLocaleTimeString(undefined, {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+            } catch (e) {
+                libraryOverviewRefreshNote.textContent = 'Live data. Refreshed just now.';
+            }
+        }
+        renderLocalDatetimes();
+    }
+
+    async function refreshLibraryOverview() {
+        const resp = await fetch('/api/dj/library_import_overview.php', {
+            method: 'GET',
+            cache: 'no-store'
+        });
+        const text = await resp.text();
+        let payload = null;
+        try {
+            payload = JSON.parse(text || '{}');
+        } catch (e) {
+            payload = null;
+        }
+        if (!resp.ok || !payload || payload.error) {
+            throw new Error(payload && payload.error ? payload.error : 'Failed to refresh library overview.');
+        }
+        updateOverview(payload);
+        return payload;
+    }
+
+    async function refreshHistory(jobIdToPin) {
+        if (!historyBody || !historyWrap || !historyEmpty) return;
+        const resp = await fetch('/api/dj/import_rekordbox_xml_history.php', {
+            method: 'GET',
+            cache: 'no-store'
+        });
+        const text = await resp.text();
+        let payload = null;
+        try {
+            payload = JSON.parse(text || '{}');
+        } catch (e) {
+            payload = null;
+        }
+        if (!resp.ok || !payload || !Array.isArray(payload.items)) {
+            throw new Error('Failed to refresh import history.');
+        }
+        const items = payload.items.slice();
+        if (jobIdToPin) {
+            items.sort(function (a, b) {
+                if (Number(a.id || 0) === Number(jobIdToPin)) return -1;
+                if (Number(b.id || 0) === Number(jobIdToPin)) return 1;
+                return Number(b.id || 0) - Number(a.id || 0);
+            });
+        }
+        if (!items.length) {
+            historyWrap.style.display = 'none';
+            historyEmpty.style.display = '';
+            historyBody.innerHTML = '';
+            return;
+        }
+        historyWrap.style.display = '';
+        historyEmpty.style.display = 'none';
+        historyBody.innerHTML = items.map(renderHistoryRow).join('');
+        renderLocalDatetimes();
+    }
+
+    async function getServerActiveJob() {
+        const resp = await fetch('/api/dj/import_rekordbox_xml_history.php', {
+            method: 'GET',
+            cache: 'no-store'
+        });
+        const text = await resp.text();
+        let payload = null;
+        try {
+            payload = JSON.parse(text || '{}');
+        } catch (e) {
+            payload = null;
+        }
+        if (!resp.ok || !payload || !Array.isArray(payload.items)) {
+            throw new Error('Unable to confirm current import state.');
+        }
+        return payload.items.find(function (item) {
+            return isImportActiveStatus(String(item.status || ''));
+        }) || null;
+    }
+
     function resetProgress() {
         progressWrap.style.display = 'none';
         progressBar.classList.remove('is-indeterminate');
         progressBar.style.width = '0%';
-        actions.style.display = 'none';
+        setActionMode('none');
         setStatusMeta('');
         runQueuedBtn.disabled = false;
         activeJobId = 0;
+        uploadLocked = false;
+        clearPendingState();
         dropzone.classList.remove('is-disabled');
         dropzone.setAttribute('tabindex', '0');
         input.disabled = false;
@@ -1112,6 +1362,7 @@ function parseUtcToTs(string $value): int
         progressWrap.style.display = 'block';
         progressBar.classList.remove('is-indeterminate');
         progressBar.style.width = '0%';
+        uploadLocked = true;
         dropzone.classList.add('is-disabled');
         dropzone.setAttribute('tabindex', '-1');
         input.disabled = true;
@@ -1137,13 +1388,16 @@ function parseUtcToTs(string $value): int
         setStatusMeta(metaParts.join(' • '));
         showProgress();
         progressBar.classList.add('is-indeterminate');
+        clearPendingState();
         if (status === 'processing') {
-            actions.style.display = 'none';
+            setActionMode('none');
             setStatus(stageMessage || 'Processing library... this can take several minutes for large XML files.', false);
         } else {
-            actions.style.display = 'block';
+            setActionMode('queued');
             setStatus(stageMessage || 'Queued for processing...', false);
         }
+        refreshHistory(payload.job_id || activeJobId).catch(function () {});
+        refreshLibraryOverview().catch(function () {});
     }
 
     function isLibraryFile(file) {
@@ -1228,6 +1482,7 @@ function parseUtcToTs(string $value): int
             xhr.upload.addEventListener('progress', function (event) {
                 if (!event.lengthComputable) {
                     progressBar.classList.add('is-indeterminate');
+                    writePendingState({ phase: 'uploading', message: 'Uploading chunk ' + (chunkIndex + 1) + '/' + totalChunks + '...' });
                     setStatus('Uploading chunk ' + (chunkIndex + 1) + '/' + totalChunks + '...', false);
                     return;
                 }
@@ -1237,6 +1492,7 @@ function parseUtcToTs(string $value): int
                 const overallRatio = (chunkIndex + chunkRatio) / totalChunks;
                 const pct = Math.max(0, Math.min(100, Math.round(overallRatio * 100)));
                 progressBar.style.width = pct + '%';
+                writePendingState({ phase: 'uploading', progress_pct: pct, message: 'Uploading... ' + pct + '%' });
                 setStatus('Uploading... ' + pct + '%', false);
                 setStatusMeta('');
             });
@@ -1292,6 +1548,7 @@ function parseUtcToTs(string $value): int
 
             const status = String(payload.status || '');
             renderActiveJobState(payload);
+            refreshLibraryOverview().catch(function () {});
             if (status === 'done') {
                 progressBar.classList.remove('is-indeterminate');
                 progressBar.style.width = '100%';
@@ -1301,6 +1558,7 @@ function parseUtcToTs(string $value): int
                 dropzone.classList.remove('is-disabled');
                 dropzone.setAttribute('tabindex', '0');
                 input.disabled = false;
+                refreshLibraryOverview().catch(function () {});
                 return;
             }
 
@@ -1316,9 +1574,26 @@ function parseUtcToTs(string $value): int
     }
 
     async function uploadFile(file) {
-        if (activeJobId > 0) {
-            setStatus('An import is already in progress. Please wait for it to finish.', true);
-            return;
+        if (activeJobId > 0 || uploadLocked) {
+            if (activeJobId <= 0 && uploadLocked) {
+                try {
+                    const liveJob = await getServerActiveJob();
+                    if (!liveJob) {
+                        resetProgress();
+                    } else {
+                        activeJobId = Number(liveJob.id || 0);
+                        renderActiveJobState(liveJob);
+                    }
+                } catch (err) {
+                    const msg = err && err.message ? err.message : 'Unable to confirm current import state.';
+                    setStatus(msg, true);
+                    return;
+                }
+            }
+            if (activeJobId > 0 || uploadLocked) {
+                setStatus('An import is already in progress. Please wait for it to finish.', true);
+                return;
+            }
         }
         if (!isLibraryFile(file)) {
             setStatus('Please select a valid .xml or .zip file.', true);
@@ -1328,6 +1603,13 @@ function parseUtcToTs(string $value): int
         const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
         results.style.display = 'none';
         showProgress();
+        setActionMode('pending');
+        writePendingState({
+            phase: 'starting',
+            file_name: file.name,
+            file_size: file.size,
+            message: 'Preparing upload...'
+        });
         setStatus('Preparing upload...', false);
         setStatusMeta('');
 
@@ -1343,6 +1625,12 @@ function parseUtcToTs(string $value): int
             if (!uploadId) {
                 throw new Error('Failed to initialize upload session.');
             }
+            writePendingState({
+                phase: 'uploading',
+                upload_id: uploadId,
+                total_chunks: totalChunks,
+                message: 'Uploading file...'
+            });
 
             for (let i = 0; i < totalChunks; i++) {
                 const start = i * CHUNK_SIZE;
@@ -1352,8 +1640,14 @@ function parseUtcToTs(string $value): int
             }
 
             progressBar.classList.add('is-indeterminate');
-            setStatus('Processing library...', false);
-            setStatusMeta('Waiting for server status…');
+            setActionMode('pending');
+            writePendingState({
+                phase: 'validating',
+                upload_id: uploadId,
+                message: 'Validating upload and creating import job...'
+            });
+            setStatus('Validating upload and creating import job...', false);
+            setStatusMeta('This step happens before the import job appears in history.');
 
             const finishFd = new FormData();
             finishFd.append('action', 'finish');
@@ -1363,13 +1657,22 @@ function parseUtcToTs(string $value): int
             const jobId = Number(payload.job_id || 0);
             if (jobId > 0) {
                 activeJobId = jobId;
+                writePendingState({
+                    phase: 'queued',
+                    job_id: jobId,
+                    message: 'Queued for processing...'
+                });
+                await refreshHistory(jobId);
                 await pollImportJob(jobId);
             } else {
                 progressBar.classList.remove('is-indeterminate');
                 progressBar.style.width = '100%';
+                clearPendingState();
                 setStatus('Import complete.', false);
                 setStatusMeta('');
                 setResults(payload);
+                await refreshHistory();
+                await refreshLibraryOverview();
             }
         } catch (err) {
             const msg = err && err.message ? err.message : 'Upload failed. Please try again.';
@@ -1424,6 +1727,13 @@ function parseUtcToTs(string $value): int
         }
     });
 
+    if (clearUploadStateBtn) {
+        clearUploadStateBtn.addEventListener('click', function () {
+            resetProgress();
+            setStatus('Upload state cleared. You can start a new import.', false);
+        });
+    }
+
     ['dragenter', 'dragover'].forEach(function (evtName) {
         dropzone.addEventListener(evtName, function (event) {
             event.preventDefault();
@@ -1451,6 +1761,25 @@ function parseUtcToTs(string $value): int
     });
 
     renderLocalDatetimes();
+    refreshHistory().catch(function () {});
+    refreshLibraryOverview().catch(function () {});
+    window.setInterval(function () {
+        refreshLibraryOverview().catch(function () {});
+    }, 10000);
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') {
+            refreshLibraryOverview().catch(function () {});
+            refreshHistory(activeJobId || 0).catch(function () {});
+        }
+    });
+    window.addEventListener('focus', function () {
+        refreshLibraryOverview().catch(function () {});
+        refreshHistory(activeJobId || 0).catch(function () {});
+    });
+    window.addEventListener('pageshow', function () {
+        refreshLibraryOverview().catch(function () {});
+        refreshHistory(activeJobId || 0).catch(function () {});
+    });
     if (initialActiveJob && Number(initialActiveJob.id || 0) > 0 && isImportActiveStatus(String(initialActiveJob.status || ''))) {
         activeJobId = Number(initialActiveJob.id || 0);
         renderActiveJobState(initialActiveJob);
@@ -1458,6 +1787,18 @@ function parseUtcToTs(string $value): int
             const msg = err && err.message ? err.message : 'Import status check failed.';
             setStatus(msg, true);
         });
+    } else {
+        const pendingState = readPendingState();
+        const pendingAgeMs = pendingState && pendingState.updated_at ? (Date.now() - Number(pendingState.updated_at || 0)) : Number.POSITIVE_INFINITY;
+        if (pendingState && pendingAgeMs >= 0 && pendingAgeMs <= (30 * 60 * 1000)) {
+            showProgress();
+            setActionMode('pending');
+            progressBar.classList.add('is-indeterminate');
+            setStatus(String(pendingState.message || 'Upload or validation is still in progress...'), false);
+            setStatusMeta('A previous upload may still be validating or creating an import job. If nothing appears in Recent Import History after a minute, click Reset Upload State.');
+        } else if (pendingState) {
+            clearPendingState();
+        }
     }
 })();
 
