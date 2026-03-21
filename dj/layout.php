@@ -149,25 +149,36 @@ $bpmAccessEnabled = bpmCurrentUserHasAccess($db);
     
     /* PROFILE DROPDOWN */
 .profile-dropdown,
-.reports-dropdown {
+.reports-dropdown,
+.premium-dropdown {
     position: relative;
     display: inline-block;
 }
 
 .profile-dropdown-toggle,
-.reports-dropdown-toggle {
+.reports-dropdown-toggle,
+.premium-dropdown-toggle {
     cursor: pointer;
     color: #cfcfcf;
     font-size: 15px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.premium-dropdown-toggle .premium-badge {
+    cursor: pointer;
 }
 
 .profile-dropdown-toggle:hover,
-.reports-dropdown-toggle:hover {
+.reports-dropdown-toggle:hover,
+.premium-dropdown-toggle:hover {
     color: var(--brand-accent);
 }
 
 .profile-dropdown-menu,
-.reports-dropdown-menu {
+.reports-dropdown-menu,
+.premium-dropdown-menu {
     display: none;
     position: absolute;
     top: 32px;
@@ -183,7 +194,8 @@ $bpmAccessEnabled = bpmCurrentUserHasAccess($db);
 }
 
 .profile-dropdown-menu a,
-.reports-dropdown-menu a {
+.reports-dropdown-menu a,
+.premium-dropdown-menu a {
     display: block;
     padding: 10px 14px;
     color: #cfcfcf;
@@ -192,14 +204,22 @@ $bpmAccessEnabled = bpmCurrentUserHasAccess($db);
 }
 
 .profile-dropdown-menu a:hover,
-.reports-dropdown-menu a:hover {
+.reports-dropdown-menu a:hover,
+.premium-dropdown-menu a:hover {
     background: #1f1f29;
     color: var(--brand-accent);
 }
 
 .profile-dropdown-menu a:last-child,
-.reports-dropdown-menu a:last-child {
+.reports-dropdown-menu a:last-child,
+.premium-dropdown-menu a:last-child {
     border-bottom: none;
+}
+
+.premium-nav-trigger-badge {
+    font-size: 10px;
+    padding: 3px 8px;
+    line-height: 1;
 }
    
     
@@ -352,7 +372,7 @@ function toggleMenu() {
 
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-    const toggles = document.querySelectorAll(".profile-dropdown-toggle, .reports-dropdown-toggle");
+    const toggles = document.querySelectorAll(".profile-dropdown-toggle, .reports-dropdown-toggle, .premium-dropdown-toggle");
 
     toggles.forEach((toggle) => {
         const menu = toggle.nextElementSibling;
@@ -360,7 +380,7 @@ document.addEventListener("DOMContentLoaded", () => {
         toggle.addEventListener("click", (e) => {
             e.stopPropagation();
             const willOpen = menu.style.display !== "block";
-            document.querySelectorAll(".profile-dropdown-menu, .reports-dropdown-menu").forEach((m) => {
+            document.querySelectorAll(".profile-dropdown-menu, .reports-dropdown-menu, .premium-dropdown-menu").forEach((m) => {
                 m.style.display = "none";
             });
             menu.style.display = willOpen ? "block" : "none";
@@ -368,7 +388,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     document.addEventListener("click", (e) => {
-        document.querySelectorAll(".profile-dropdown-menu, .reports-dropdown-menu").forEach((menu) => {
+        document.querySelectorAll(".profile-dropdown-menu, .reports-dropdown-menu, .premium-dropdown-menu").forEach((menu) => {
             const toggle = menu.previousElementSibling;
             if (!toggle) return;
             if (!menu.contains(e.target) && !toggle.contains(e.target)) {
@@ -452,7 +472,6 @@ if (!empty($_SESSION['dj_id'])) {
     <a href="<?php echo e(url('dj/dashboard.php')); ?>">Dashboard</a>
     <a href="<?php echo e(url('dj/events.php')); ?>">My Events</a>
     <?php if ($bpmAccessEnabled): ?>
-    <a href="<?php echo e(url('dj/library_import.php')); ?>">Library Import <span class="premium-badge premium-nav-badge">Premium</span></a>
     <?php endif; ?>
     <a href="<?php echo e(url('dj/how_to.php')); ?>">How To</a>
     <a href="<?php echo e(url('dj/terms.php')); ?>">Terms</a>
@@ -468,6 +487,18 @@ if (!empty($_SESSION['dj_id'])) {
             <a href="<?php echo e(url('dj/broadcasts.php')); ?>">MyDJRequests Messages</a>
         </div>
     </div>
+
+    <?php if ($bpmAccessEnabled): ?>
+    <div class="premium-dropdown">
+        <span class="premium-dropdown-toggle">
+            <span class="premium-badge premium-nav-badge premium-nav-trigger-badge">Premium</span>
+            <span aria-hidden="true">▾</span>
+        </span>
+        <div class="premium-dropdown-menu">
+            <a href="<?php echo e(url('dj/library_import.php')); ?>">Library Import</a>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <div class="notif-wrap">
         <span class="notif-bell" title="Notifications">
@@ -530,7 +561,7 @@ if (!empty($_SESSION['dj_id'])) {
     <a href="<?php echo e(url('dj/dashboard.php')); ?>">Dashboard</a>
     <a href="<?php echo e(url('dj/events.php')); ?>">My Events</a>
     <?php if ($bpmAccessEnabled): ?>
-    <a href="<?php echo e(url('dj/library_import.php')); ?>">Library Import <span class="premium-badge premium-nav-badge">Premium</span></a>
+    <a href="<?php echo e(url('dj/library_import.php')); ?>">Premium: Library Import <span class="premium-badge premium-nav-badge">Premium</span></a>
     <?php endif; ?>
     <a href="<?php echo e(url('dj/how_to.php')); ?>">How To</a>
     <a href="<?php echo e(url('dj/reports.php?view=performance')); ?>">Reports</a>
