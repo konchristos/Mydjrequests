@@ -55,7 +55,13 @@ SELECT
   COALESCE(b.boost_count, 0) AS boost_count,
   b.booster_data,
 
-  (r_group.request_count + COALESCE(v.vote_count, 0)) AS popularity
+  (r_group.request_count + COALESCE(v.vote_count, 0)) AS popularity,
+
+  (
+    r_group.request_count * 2
+    + COALESCE(v.vote_count, 0) * 1
+    + COALESCE(b.boost_count, 0) * 10
+  ) AS score
 
 FROM (
     -- Projection path (preferred): event_tracks

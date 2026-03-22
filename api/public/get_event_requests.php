@@ -39,11 +39,18 @@ SELECT
 
     COUNT(DISTINCT sr.id) AS request_count,
     COUNT(DISTINCT sv_all.guest_token) AS vote_count,
+    MAX(COALESCE(b.boost_count, 0)) AS boost_count,
 
     (
         COUNT(DISTINCT sr.id)
       + COUNT(DISTINCT sv_all.guest_token)
     ) AS popularity_count,
+
+    (
+        COUNT(DISTINCT sr.id) * 2
+      + COUNT(DISTINCT sv_all.guest_token) * 1
+      + MAX(COALESCE(b.boost_count, 0)) * 10
+    ) AS score,
 
     MAX(sr.created_at) AS last_requested_at,
 
@@ -65,6 +72,20 @@ LEFT JOIN song_votes sv_guest
 LEFT JOIN song_votes sv_all
   ON sv_all.event_id = sr.event_id
  AND sv_all.track_key = COALESCE(
+        NULLIF(sr.spotify_track_id, ''),
+        CONCAT(LOWER(sr.song_title), '::', LOWER(sr.artist))
+     )
+
+LEFT JOIN (
+    SELECT
+        track_key,
+        COUNT(*) AS boost_count
+    FROM event_track_boosts
+    WHERE event_id = :event_id_boosts
+      AND status = 'succeeded'
+    GROUP BY track_key
+) b
+  ON b.track_key = COALESCE(
         NULLIF(sr.spotify_track_id, ''),
         CONCAT(LOWER(sr.song_title), '::', LOWER(sr.artist))
      )
@@ -95,6 +116,7 @@ $stmt->execute([
     ':guest_token_mine'  => $guestToken,
     ':guest_token_vote'  => $guestToken,
     ':guest_token_boost' => $guestToken,
+    ':event_id_boosts'   => $eventId,
     ':event_id'          => $eventId
 ]);
 

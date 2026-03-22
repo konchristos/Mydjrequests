@@ -58,6 +58,11 @@ function mdjr_format_local_datetime(?string $utcTs, string $timezone): string
     }
 }
 
+function mdjr_reports_score(int $requestCount, int $voteCount, int $boostCount): int
+{
+    return mdjr_compute_score($requestCount, $voteCount, $boostCount);
+}
+
 if ($dateFrom === '') {
     $dateFrom = date('Y-m-d', strtotime('-30 days'));
 }
@@ -472,6 +477,23 @@ try {
         $voteTotalsStmt = $db->prepare($voteTotalsSql);
         $voteTotalsStmt->execute($activityParams);
 
+        $boostTotalsSql = "
+            SELECT
+                eb.guest_token,
+                NULLIF(TRIM(eb.patron_name), '') AS patron_name,
+                COUNT(*) AS boost_count
+            FROM event_track_boosts eb
+            INNER JOIN events e ON e.id = eb.event_id
+            WHERE eb.created_at BETWEEN ? AND ?
+              AND e.user_id = ?
+              AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
+              AND eb.status = 'succeeded'
+              $activityEventClause
+            GROUP BY eb.guest_token, NULLIF(TRIM(eb.patron_name), '')
+        ";
+        $boostTotalsStmt = $db->prepare($boostTotalsSql);
+        $boostTotalsStmt->execute($activityParams);
+
         $combinedMap = [];
         foreach ($requestTotalsStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $token = trim((string)($row['guest_token'] ?? ''));
@@ -481,7 +503,7 @@ try {
                 continue;
             }
             if (!isset($combinedMap[$key])) {
-                $combinedMap[$key] = ['patron_name' => $name !== '' ? $name : 'Guest', 'request_count' => 0, 'vote_count' => 0];
+                $combinedMap[$key] = ['patron_name' => $name !== '' ? $name : 'Guest', 'request_count' => 0, 'vote_count' => 0, 'boost_count' => 0, 'score' => 0];
             }
             $combinedMap[$key]['request_count'] += (int)$row['request_count'];
             if ($name !== '' && $combinedMap[$key]['patron_name'] === 'Guest') {
@@ -497,9 +519,25 @@ try {
                 continue;
             }
             if (!isset($combinedMap[$key])) {
-                $combinedMap[$key] = ['patron_name' => $name !== '' ? $name : 'Guest', 'request_count' => 0, 'vote_count' => 0];
+                $combinedMap[$key] = ['patron_name' => $name !== '' ? $name : 'Guest', 'request_count' => 0, 'vote_count' => 0, 'boost_count' => 0, 'score' => 0];
             }
             $combinedMap[$key]['vote_count'] += (int)$row['vote_count'];
+            if ($name !== '' && $combinedMap[$key]['patron_name'] === 'Guest') {
+                $combinedMap[$key]['patron_name'] = $name;
+            }
+        }
+
+        foreach ($boostTotalsStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $token = trim((string)($row['guest_token'] ?? ''));
+            $name = trim((string)($row['patron_name'] ?? ''));
+            $key = $token !== '' ? ('t:' . $token) : ($name !== '' ? ('n:' . strtolower($name)) : '');
+            if ($key === '') {
+                continue;
+            }
+            if (!isset($combinedMap[$key])) {
+                $combinedMap[$key] = ['patron_name' => $name !== '' ? $name : 'Guest', 'request_count' => 0, 'vote_count' => 0, 'boost_count' => 0, 'score' => 0];
+            }
+            $combinedMap[$key]['boost_count'] += (int)$row['boost_count'];
             if ($name !== '' && $combinedMap[$key]['patron_name'] === 'Guest') {
                 $combinedMap[$key]['patron_name'] = $name;
             }
@@ -508,6 +546,7 @@ try {
         $topCombinedActivity = array_values($combinedMap);
         foreach ($topCombinedActivity as &$row) {
             $row['combined_total'] = (int)$row['request_count'] + (int)$row['vote_count'];
+            $row['score'] = mdjr_reports_score((int)$row['request_count'], (int)$row['vote_count'], (int)($row['boost_count'] ?? 0));
         }
         unset($row);
 
@@ -624,6 +663,29 @@ try {
         ], $selectedEventId > 0 ? [$selectedEventId] : []));
         $voteRows = $voteRowsStmt->fetchAll(PDO::FETCH_ASSOC);
 
+        $boostRowsSql = "
+            SELECT
+                eb.event_id,
+                eb.created_at,
+                COALESCE(NULLIF(TRIM(eb.patron_name), ''), '') AS patron_name,
+                COALESCE(eb.guest_token, '') AS guest_token,
+                COALESCE(NULLIF(TRIM(eb.track_key), ''), '') AS track_key,
+                COALESCE(NULLIF(TRIM(eb.song_title), ''), 'Unknown Track') AS track_title,
+                COALESCE(NULLIF(TRIM(eb.artist), ''), 'Unknown Artist') AS artist_name
+            FROM event_track_boosts eb
+            INNER JOIN events e ON e.id = eb.event_id
+            WHERE eb.created_at BETWEEN ? AND ?
+              AND e.user_id = ?
+              AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
+              AND eb.status = 'succeeded'
+              {$analyticsEventClause}
+        ";
+        $boostRowsStmt = $db->prepare($boostRowsSql);
+        $boostRowsStmt->execute(array_merge([
+            $fromTs, $toTs, $djId, $dateFrom, $dateTo,
+        ], $selectedEventId > 0 ? [$selectedEventId] : []));
+        $boostRows = $boostRowsStmt->fetchAll(PDO::FETCH_ASSOC);
+
         $hourBucketsReq = array_fill(0, 24, 0);
         $hourBucketsVote = array_fill(0, 24, 0);
         $repeatPatronMap = [];
@@ -657,6 +719,7 @@ try {
                     'event_ids' => [],
                     'total_requests' => 0,
                     'total_votes' => 0,
+                    'total_boosts' => 0,
                 ];
             }
             $repeatPatronMap[$key]['event_ids'][(int)($rr['event_id'] ?? 0)] = true;
@@ -695,10 +758,36 @@ try {
                     'event_ids' => [],
                     'total_requests' => 0,
                     'total_votes' => 0,
+                    'total_boosts' => 0,
                 ];
             }
             $repeatPatronMap[$key]['event_ids'][(int)($vr['event_id'] ?? 0)] = true;
             $repeatPatronMap[$key]['total_votes']++;
+            if ($name !== '' && $repeatPatronMap[$key]['patron_name'] === '') {
+                $repeatPatronMap[$key]['patron_name'] = $name;
+            }
+        }
+
+        foreach ($boostRows as $br) {
+            $token = trim((string)($br['guest_token'] ?? ''));
+            $name = trim((string)($br['patron_name'] ?? ''));
+            $key = $name !== '' ? ('n:' . strtolower($name)) : ($token !== '' ? ('t:' . $token) : '');
+            if ($key === '') {
+                continue;
+            }
+            if (!isset($repeatPatronMap[$key])) {
+                $repeatPatronMap[$key] = [
+                    'key' => $key,
+                    'guest_token' => $token,
+                    'patron_name' => $name,
+                    'event_ids' => [],
+                    'total_requests' => 0,
+                    'total_votes' => 0,
+                    'total_boosts' => 0,
+                ];
+            }
+            $repeatPatronMap[$key]['event_ids'][(int)($br['event_id'] ?? 0)] = true;
+            $repeatPatronMap[$key]['total_boosts']++;
             if ($name !== '' && $repeatPatronMap[$key]['patron_name'] === '') {
                 $repeatPatronMap[$key]['patron_name'] = $name;
             }
@@ -732,7 +821,9 @@ try {
                 'events_count' => $eventsCount,
                 'total_requests' => (int)$patron['total_requests'],
                 'total_votes' => (int)($patron['total_votes'] ?? 0),
+                'total_boosts' => (int)($patron['total_boosts'] ?? 0),
                 'total_activity' => (int)$patron['total_requests'] + (int)($patron['total_votes'] ?? 0),
+                'score' => mdjr_reports_score((int)$patron['total_requests'], (int)($patron['total_votes'] ?? 0), (int)($patron['total_boosts'] ?? 0)),
             ];
         }
         usort($advancedRepeatPatrons, static function (array $a, array $b): int {
@@ -751,7 +842,9 @@ try {
                 'events_count' => count((array)$patronMeta['event_ids']),
                 'total_requests' => (int)$patronMeta['total_requests'],
                 'total_votes' => (int)($patronMeta['total_votes'] ?? 0),
+                'total_boosts' => (int)($patronMeta['total_boosts'] ?? 0),
                 'total_activity' => (int)$patronMeta['total_requests'] + (int)($patronMeta['total_votes'] ?? 0),
+                'score' => mdjr_reports_score((int)$patronMeta['total_requests'], (int)($patronMeta['total_votes'] ?? 0), (int)($patronMeta['total_boosts'] ?? 0)),
             ];
 
             $requestsAgg = [];
@@ -773,7 +866,9 @@ try {
                         'artist_name' => $artist !== '' ? $artist : 'Unknown Artist',
                         'request_count' => 0,
                         'vote_count' => 0,
+                        'boost_count' => 0,
                         'popularity' => 0,
+                        'score' => 0,
                     ];
                 }
                 $requestsAgg[$songKey]['request_count']++;
@@ -797,14 +892,43 @@ try {
                         'artist_name' => $artist !== '' ? $artist : 'Unknown Artist',
                         'request_count' => 0,
                         'vote_count' => 0,
+                        'boost_count' => 0,
                         'popularity' => 0,
+                        'score' => 0,
                     ];
                 }
                 $requestsAgg[$songKey]['vote_count']++;
             }
 
+            foreach ($boostRows as $br) {
+                $token = trim((string)($br['guest_token'] ?? ''));
+                $name = trim((string)($br['patron_name'] ?? ''));
+                $rowKey = $name !== '' ? ('n:' . strtolower($name)) : ($token !== '' ? ('t:' . $token) : '');
+                if ($rowKey !== $selectedRepeatPatronKey) {
+                    continue;
+                }
+
+                $trackKey = trim((string)($br['track_key'] ?? ''));
+                $title = trim((string)($br['track_title'] ?? 'Unknown Track'));
+                $artist = trim((string)($br['artist_name'] ?? 'Unknown Artist'));
+                $songKey = $trackKey !== '' ? ('k:' . strtolower($trackKey)) : ('n:' . strtolower($title . '||' . $artist));
+                if (!isset($requestsAgg[$songKey])) {
+                    $requestsAgg[$songKey] = [
+                        'track_title' => $title !== '' ? $title : 'Unknown Track',
+                        'artist_name' => $artist !== '' ? $artist : 'Unknown Artist',
+                        'request_count' => 0,
+                        'vote_count' => 0,
+                        'boost_count' => 0,
+                        'popularity' => 0,
+                        'score' => 0,
+                    ];
+                }
+                $requestsAgg[$songKey]['boost_count']++;
+            }
+
             foreach ($requestsAgg as &$agg) {
                 $agg['popularity'] = (int)$agg['request_count'] + (int)$agg['vote_count'];
+                $agg['score'] = mdjr_reports_score((int)$agg['request_count'], (int)$agg['vote_count'], (int)($agg['boost_count'] ?? 0));
             }
             unset($agg);
 

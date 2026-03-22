@@ -140,6 +140,7 @@ require_once APP_ROOT . '/app/helpers/notifications.php';
 require_once APP_ROOT . '/app/helpers/premium_features.php';
 require_once APP_ROOT . '/app/helpers/dj_theme.php';
 require_once APP_ROOT . '/app/helpers/bpm_access.php';
+require_once APP_ROOT . '/app/helpers/scoring.php';
 require_once APP_ROOT . '/app/helpers/track_identity.php';
 require_once APP_ROOT . '/app/helpers/dj_playlist_preferences.php';
 

@@ -33,6 +33,7 @@ require_once APP_ROOT . '/app/config/csrf.php';
 require_once APP_ROOT . '/app/helpers/event_state.php';
 require_once APP_ROOT . '/app/helpers/premium_features.php';
 require_once APP_ROOT . '/app/helpers/bpm_access.php';
+require_once APP_ROOT . '/app/helpers/scoring.php';
 require_once APP_ROOT . '/app/helpers/track_identity.php';
 require_once APP_ROOT . '/app/helpers/dj_playlist_preferences.php';
 require_once __DIR__ . '/config/app.php';
