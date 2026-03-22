@@ -206,6 +206,7 @@ function groupDjRows(rows) {
         artist: row.artist || "",
         album_art: row.album_art || "",
         popularity: 0,
+        score: 0,
         request_count: 0,
         vote_count: 0,
         boost_count: 0,
@@ -216,6 +217,7 @@ function groupDjRows(rows) {
     const group = groups.get(key);
     group.rows.push(row);
     group.popularity += Number(row.popularity || 0);
+    group.score += Number(row.score || 0);
     group.request_count += Number(row.request_count || 0);
     group.vote_count += Number(row.vote_count || 0);
     group.boost_count += Number(row.boost_count || 0);
@@ -234,6 +236,8 @@ function groupDjRows(rows) {
   const grouped = [];
   groups.forEach((group) => {
     const primary = [...group.rows].sort((a, b) => {
+      const scoreDelta = Number(b.score || 0) - Number(a.score || 0);
+      if (scoreDelta !== 0) return scoreDelta;
       const popDelta = Number(b.popularity || 0) - Number(a.popularity || 0);
       if (popDelta !== 0) return popDelta;
       return new Date(b.last_requested_at || 0) - new Date(a.last_requested_at || 0);
@@ -250,6 +254,7 @@ function groupDjRows(rows) {
       artist: group.artist || primary.artist,
       album_art: group.album_art || primary.album_art,
       popularity: group.popularity,
+      score: (group.request_count * 2) + (group.vote_count * 1) + (group.boost_count * 10),
       request_count: group.request_count,
       vote_count: group.vote_count,
       boost_count: group.boost_count,
@@ -1171,7 +1176,13 @@ switch (currentSort) {
   case "popularity":
   default:
     rows.sort(
-      (a, b) => (b.popularity || 0) - (a.popularity || 0)
+      (a, b) => {
+        const scoreDelta = (b.score || 0) - (a.score || 0);
+        if (scoreDelta !== 0) return scoreDelta;
+        const popDelta = (b.popularity || 0) - (a.popularity || 0);
+        if (popDelta !== 0) return popDelta;
+        return new Date(b.last_requested_at || 0) - new Date(a.last_requested_at || 0);
+      }
     );
 }
 
@@ -1261,6 +1272,8 @@ ${expandable ? `<button type="button" class="request-expand-btn" aria-label="Sho
       variantsWrap.className = "request-variants hidden";
 
       const sortedVariants = [...variants].sort((a, b) => {
+        const scoreDelta = Number(b.score || 0) - Number(a.score || 0);
+        if (scoreDelta !== 0) return scoreDelta;
         const popDelta = Number(b.popularity || 0) - Number(a.popularity || 0);
         if (popDelta !== 0) return popDelta;
         return new Date(b.last_requested_at || 0) - new Date(a.last_requested_at || 0);

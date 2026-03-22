@@ -198,7 +198,7 @@ LEFT JOIN (
     GROUP BY track_key
 ) b ON b.track_key = r_group.track_key
 
-ORDER BY popularity DESC, r_group.last_requested_at DESC
+ORDER BY score DESC, popularity DESC, r_group.last_requested_at DESC
 ";
 
 try {
