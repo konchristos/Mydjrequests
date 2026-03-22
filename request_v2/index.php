@@ -2957,11 +2957,16 @@ Object.values(groups).forEach(g => {
     g.popularity_count =
         Number(g.total_count || 0) +
         Number(g.vote_count || 0);
+    g.boost_count = g.variants.reduce((sum, v) => sum + Number(v.boost_count || 0), 0);
+    g.score =
+        (Number(g.total_count || 0) * 2) +
+        (Number(g.vote_count || 0) * 1) +
+        (Number(g.boost_count || 0) * 10);
 });
 
 const popularityRank = new Map();
 Object.values(groups)
-    .sort((a, b) => b.popularity_count - a.popularity_count)
+    .sort((a, b) => b.score - a.score)
     .slice(0, 3)
     .forEach((g, idx) => {
         popularityRank.set(buildGroupKey(g.base_title, g.artist), idx + 1);
@@ -2993,7 +2998,13 @@ Object.values(groups)
             break;
 
         default: // popularity
-            groupList.sort((a, b) => b.popularity_count - a.popularity_count);
+            groupList.sort((a, b) => {
+                const scoreDelta = Number(b.score || 0) - Number(a.score || 0);
+                if (scoreDelta !== 0) return scoreDelta;
+                const popularityDelta = Number(b.popularity_count || 0) - Number(a.popularity_count || 0);
+                if (popularityDelta !== 0) return popularityDelta;
+                return new Date(b.last_requested_at) - new Date(a.last_requested_at);
+            });
     }
 
     // -----------------------------------

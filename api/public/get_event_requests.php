@@ -107,7 +107,7 @@ GROUP BY
     sr.song_title,
     sr.artist
 
-ORDER BY popularity_count DESC, last_requested_at DESC";
+ORDER BY score DESC, last_requested_at DESC";
 
 
 $stmt = $db->prepare($sql);
