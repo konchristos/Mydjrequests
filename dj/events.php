@@ -64,6 +64,21 @@ if ($eventIds) {
     }
 }
 
+$eventBoostStats = [];
+
+if ($eventIds) {
+    $in = implode(',', array_fill(0, count($eventIds), '?'));
+    $stmt = $db->prepare("
+        SELECT event_id, total_boosts_count
+        FROM event_track_boost_stats
+        WHERE event_id IN ($in)
+    ");
+    $stmt->execute($eventIds);
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $eventBoostStats[(int)$row['event_id']] = (int)$row['total_boosts_count'];
+    }
+}
+
 
 $upcomingEvents = [];
 $pastEvents = [];
@@ -547,6 +562,7 @@ body > * {
                 $cardToday    = $today;
                 $requestCount = $eventStats[(int)$event['id']] ?? 0;
                 $voteCount    = $eventVoteStats[(int)$event['id']] ?? 0;
+                $boostCount   = $eventBoostStats[(int)$event['id']] ?? 0;
                 include __DIR__ . '/partials/event_card.php';
                 ?>
         <?php endforeach; ?>
@@ -558,6 +574,7 @@ body > * {
             <?php
                 $requestCount = $eventStats[(int)$event['id']] ?? 0;
                 $voteCount    = $eventVoteStats[(int)$event['id']] ?? 0;
+                $boostCount   = $eventBoostStats[(int)$event['id']] ?? 0;
                 include __DIR__ . '/partials/event_card.php';
             ?>
         <?php endforeach; ?>

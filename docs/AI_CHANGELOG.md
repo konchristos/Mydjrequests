@@ -734,3 +734,39 @@ The next phase should focus on lockdown/hardening rather than new user-facing fe
   - `Playlists`
   - `Finalize`
 - Formatted admin timestamps into local-friendly display values so slow-run investigations are easier to compare visually against the DJ-facing import history.
+
+## 2026-03-22 - Phase 4 Reports and Dashboard Scoring Alignment
+
+- Updated `dj/reports.php` so report ranking now aligns with the weighted scoring engine introduced earlier:
+  - `score = (request_count * 2) + (vote_count * 1) + (boost_count * 10)`
+- Performance report:
+  - added per-event `total_votes`, `total_boosts`, and `score`
+  - ordering now uses `score` instead of falling back to request totals
+  - table now displays requests, votes, boosts, and score together
+- Top Requested Songs report:
+  - now aggregates requests, votes, and boosts by track
+  - computes weighted `score` per track
+  - orders by `score DESC`, then request count
+  - table now includes requests, votes, boosts, and score
+- Top Activity report:
+  - per-event patron rankings now include requests, votes, boosts, and score
+  - per-event patron ordering now uses `score`
+  - combined activity ordering now uses `score` instead of request+vote totals alone
+  - headings were updated to reflect broader patron activity, not just requests
+- Advanced Analytics repeat patron section:
+  - repeat patron ranking now uses `score` instead of total activity only
+  - per-track repeat patron breakdown now uses `score`
+  - summary copy now explains requests + votes + boosts -> weighted score
+- CSV export:
+  - repeat patron CSV now includes:
+    - `request_count`
+    - `vote_count`
+    - `boost_count`
+    - `popularity`
+    - `score`
+- Dashboard:
+  - next-event summary now includes boosts alongside requests and votes so the dashboard reflects all three scoring inputs
+- Backward compatibility:
+  - existing request/vote/boost counters remain intact
+  - legacy popularity-style fields remain available for display and compatibility
+  - ranking logic now consistently follows weighted score in reports where ranking is the primary purpose

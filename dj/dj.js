@@ -1237,9 +1237,14 @@ const trackKey = row.track_key;
       
       
 <span class="req-count-wrap">
-  ${isPlayed ? `<span class="request-played-pill">Played</span>` : ``}
-  ${isSkipped ? `<span class="request-skipped-pill">Skipped</span>` : ``}
-  <span class="req-count">${row.popularity}</span>
+  <span class="req-count-top">
+    ${isPlayed ? `<span class="request-played-pill">Played</span>` : ``}
+    ${isSkipped ? `<span class="request-skipped-pill">Skipped</span>` : ``}
+  </span>
+  <span class="req-count-stack">
+    <span class="req-count-label">Popularity Score</span>
+    <span class="req-count">${row.score}</span>
+  </span>
 </span>
 ${expandable ? `<button type="button" class="request-expand-btn" aria-label="Show versions">+</button>` : ``}
       
@@ -1480,7 +1485,7 @@ panelEl.innerHTML = `
     <div class="track-artist">${track.artist || ""}</div>
 
     <div class="track-meta">
-      <span>Popularity: <strong>${track.popularity}</strong></span>
+      <span>Popularity Score: <strong>${track.score}</strong></span>
       <span class="meta-dot">•</span>
       <span>Requests: <strong>${track.request_count}</strong></span>
       <span class="meta-dot">•</span>

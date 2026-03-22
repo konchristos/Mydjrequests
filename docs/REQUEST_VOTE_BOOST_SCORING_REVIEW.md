@@ -12,16 +12,24 @@ This document explains how MyDJRequests currently:
 This is intended as a handoff document for ChatGPT before changing the weighting of requests, votes, and boosts.
 
 ## Executive Summary
-Current behavior is not driven by one central scoring engine.
+MyDJRequests now has a shared weighted scoring layer for request ranking, but raw counters and monthly rollups are still stored separately.
 
-Instead, the app uses a few separate patterns:
+Current live behavior is:
 - Requests are counted in `song_requests` and rolled up into monthly and per-event stats.
 - Votes are counted in `song_votes` and rolled up into monthly and per-event stats.
 - Boosts are counted in `event_track_boosts` and rolled up into monthly and per-event boost stats.
-- The main request ordering logic on the patron page and DJ page currently uses:
-  - `popularity = request_count + vote_count`
-- Boosts are tracked and displayed, but are **not currently part of the numeric popularity score** used by the main request lists.
-- I could not find a dedicated "monthly stars" accumulation model for requests / votes / boosts. Monthly persistence today is simple monthly counters, not a weighted star score.
+- A shared computed score now exists:
+  - `score = (request_count * 2) + (vote_count * 1) + (boost_count * 10)`
+- DJ page ordering now uses `score`.
+- Patron page ordering now uses `score`.
+- Reports and report-style rankings now use `score`.
+- Dashboard and event list UI now expose boosts more consistently, but dashboard KPI rollups are still raw counts / revenue summaries rather than one single weighted scoreboard.
+- There is still no dedicated monthly "stars" accumulation model for requests / votes / boosts. Monthly persistence remains raw counters, not a monthly weighted score history.
+
+In short:
+- **raw counts are still the source of truth**
+- **weighted score is now the live ranking layer**
+- **monthly stats are still count-based, not score-based**
 
 ## Primary Tables
 
@@ -197,10 +205,10 @@ Default patron-page ordering is:
 - then `last_requested_at DESC`
 
 ### Important note about boosts on patron page
-Boosts are shown and bubbled up to the grouped track state (`hasBoosted`), but the patron request list score is still:
-- `requests + votes`
+Boosts are now part of the patron-page ranking score.
 
-Boosts do **not** currently add to `popularity_count` on the patron page.
+The patron page still keeps the legacy `popularity_count` field around for compatibility/display, but ordering now follows:
+- `score = (request_count * 2) + (vote_count * 1) + (boost_count * 10)`
 
 ## 9. DJ Page Wiring
 Sources:
@@ -235,23 +243,29 @@ In [dj/dj.js](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/d
   - `group.boost_count += row.boost_count`
 
 ### DJ page default sorting
-Default sort is:
-- `popularity DESC`
+The DJ page now ranks by weighted score first:
+- `score DESC`
+- then `popularity DESC`
+- then `last_requested_at DESC`
 
 ### DJ page detail panel
 The center track detail panel shows:
-- `Popularity`
+- `Popularity Score`
 - `Requests`
 - `Votes`
 - a separate Boost section if boosts exist
 
 ### Important note about boosts on DJ page
-Boosts are visible and filterable:
+Boosts are now part of DJ-page ranking through the weighted score.
+
+The DJ page also now surfaces that more clearly in the UI:
 - boosted rows get special styling
 - there is a `Boosted` filter
 - boost count is carried through group state
+- the request tile now shows `Popularity Score`
+- the center detail tile now shows `Popularity Score`
 
-But boosts are **not part of the numeric popularity score** used for default ordering.
+The legacy `popularity` field still exists for compatibility, but it is no longer the primary ranking signal.
 
 ## 10. Top Patron Logic on DJ Page
 Sources:
@@ -272,8 +286,10 @@ Top patrons are sorted by:
 4. `patron_name ASC`
 
 ### Important note
-Boosts are **not included** in Top Patron ranking.
-Top Patron is currently a requests-plus-votes activity rank.
+Boosts are **still not included** in Top Patron ranking.
+Top Patron remains a requests-plus-votes activity rank.
+
+This is one of the main remaining intentional inconsistencies after the weighted scoring rollout.
 
 ## 11. Dashboard Wiring
 Source: [dj/dashboard.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/dj/dashboard.php)
@@ -299,8 +315,12 @@ From `event_track_boost_stats` and `event_track_boost_stats_monthly`:
 Dashboard computes:
 - `voteEngagementRate = round((lifetimeVotes / lifetimeRequests) * 100)`
 
-So dashboard does **not** currently use a unified star score either.
-It uses separate request, vote, and boost summaries.
+So dashboard does **not** currently use one single weighted score for top-level KPIs.
+It still uses separate request, vote, and boost summaries.
+
+However, recent UI alignment work did change a few surfaces:
+- the dashboard no longer shows a boost badge on the upcoming-event banner, because boosts only make sense once an event is live
+- the My Events page now shows requests, votes, and boosts per event card
 
 ## 12. Reports Wiring
 Source: [dj/reports.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/dj/reports.php)
@@ -308,20 +328,65 @@ Source: [dj/reports.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/pu
 Reports use several separate query models depending on the report tab.
 
 ### Performance report
-Uses raw `song_requests`, `messages`, and `event_page_views` grouped per event.
-This is more of an event-performance view than a scoring engine.
+Uses raw event activity plus weighted score:
+- requests
+- votes
+- boosts
+- messages
+- connected patrons
 
-### Top songs / activity report
-For patron combined activity:
-- `combined_total = request_count + vote_count`
-- sorted descending by `combined_total`
+It now computes and displays:
+- `total_requests`
+- `total_votes`
+- `total_boosts`
+- `score`
+
+Ordering now follows weighted score.
+
+### Top Requested Songs
+This report now aggregates:
+- requests
+- votes
+- boosts
+
+It computes:
+- `request_count`
+- `vote_count`
+- `boost_count`
+- `score`
+
+Ordering now follows:
+- `score DESC`
+- then `request_count DESC`
+
+### Top Activity report
+Patron activity ranking now includes boosts and weighted score.
+
+It computes:
+- `request_count`
+- `vote_count`
+- `boost_count`
+- `score`
+
+Ordering now follows weighted score both:
+- per event
+- in combined patron activity views
 
 ### Repeat patron activity
-In advanced analytics / repeat patron breakdown:
-- `total_activity = total_requests + total_votes`
+Advanced analytics / repeat patron breakdown now includes boosts and weighted score.
 
-### Song popularity inside repeat patron analysis
-- `popularity = request_count + vote_count`
+It computes:
+- `total_requests`
+- `total_votes`
+- `total_boosts`
+- `score`
+
+Per-track repeat-patron breakdown also computes:
+- `request_count`
+- `vote_count`
+- `boost_count`
+- `popularity`
+- `score`
 
 ### Revenue report
 Boosts are handled in the monetary reporting layer, not the popularity layer.
@@ -332,9 +397,11 @@ The revenue report separately summarizes:
 - `boost_amount`
 
 ### Important note
-Reports are currently consistent with the DJ/patron pages in one important way:
-- requests and votes are combined into activity/popularity
-- boosts are tracked separately, usually for money/revenue views
+Reports are now mostly aligned with the weighted ranking model used by DJ/patron lists.
+
+The remaining distinction is:
+- revenue views still treat boosts as money events
+- KPI/monthly rollup views still store raw counts rather than persisted weighted scores
 
 ## 13. Event Details Wiring
 Source: [dj/event_details.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/dj/event_details.php)
@@ -357,7 +424,7 @@ Admin event summaries currently surface:
 This is event-level reporting, not weighted ranking.
 
 ## 15. What "Monthly Stars" Currently Means in Code
-I could not find a dedicated monthly "stars" accumulation model for requests, votes, and boosts.
+There is still no dedicated monthly "stars" accumulation model for requests, votes, and boosts.
 
 What *does* exist monthly is:
 - `song_request_stats_monthly.total_requests`
@@ -370,57 +437,69 @@ What *does* exist monthly is:
 There is also a separate concept of track ratings / stars from Rekordbox import, but that is unrelated to request/vote/boost monthly scoring.
 Those imported stars are about library track metadata, not audience activity.
 
-So if ChatGPT is asking to "change the scoring weight of requests, votes, and boosts," that would be a **new weighted scoring layer**, not a small tweak to an existing monthly star engine.
+So if ChatGPT is asking to "change the scoring weight of requests, votes, and boosts," that would now mean:
+- changing the **shared live weighted scoring layer**
+- not changing any existing monthly star engine, because one still does not exist
 
 ## 16. Current Scoring Formulas
 
-### Patron page popularity
-- `popularity = request_count + vote_count`
+### Shared weighted score
+- `score = (request_count * 2) + (vote_count * 1) + (boost_count * 10)`
 
-### DJ page popularity
-- `popularity = request_count + vote_count`
+This formula is now implemented centrally through:
+- [app/helpers/scoring.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/app/helpers/scoring.php)
+
+### DJ page ordering
+- sorted by `score DESC`
+- legacy `popularity` still exists as:
+  - `popularity = request_count + vote_count`
+
+### Patron page ordering
+- sorted by `score DESC`
+- legacy `popularity_count` still exists for compatibility/display
+
+### Reports
+- main ranking-focused report views now use `score`
 
 ### Top Patron ranking
-- `total_actions = request_count + vote_count`
+- still uses:
+  - `total_actions = request_count + vote_count`
+- boosts are still excluded there
 
-### Reports combined activity
-- `combined_total = request_count + vote_count`
+### Dashboard / monthly stats
+- still raw-count driven
+- not persisted as monthly weighted score
 
-### Boost treatment today
-- boost count is tracked
-- boost count is displayed
-- boost filters and boost history exist
-- boost revenue is reported
-- boost is **not currently added into the popularity / activity score** in the main request-ranking logic we reviewed
+## 17. Practical Implication For Weight Changes
+Changing weights is much safer now than it was before the scoring rollout, because the shared score helper exists.
 
-## 17. Practical Implication for Weight Changes
-If ChatGPT wants to change the weighting of requests, votes, and boosts, there is **not one single place** to edit.
-The current score behavior is duplicated across several surfaces.
+Primary scoring helper:
+- [app/helpers/scoring.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/app/helpers/scoring.php)
 
-At minimum, the weighting decision would likely need to be updated in:
+Main places already wired to that model:
 - [api/public/get_event_requests.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/api/public/get_event_requests.php)
 - [request/index.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/request/index.php)
 - [request_v2/index.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/request_v2/index.php)
 - [api/dj/get_requests.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/api/dj/get_requests.php)
 - [dj/dj.js](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/dj/dj.js)
-- [api/dj/get_event_insights.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/api/dj/get_event_insights.php) if Top Patron should change
-- [dj/reports.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/dj/reports.php) if reports should match the new scoring model
+- [dj/reports.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/dj/reports.php)
 
-## 18. Recommended Refactor Before Changing Weights
-Before changing weights, the safest architecture would be:
-1. define one shared score formula in one helper or SQL expression builder
-2. decide explicitly whether boosts should affect:
-  - patron-page ordering
-  - DJ-page ordering
-  - Top Patron ranking
-  - reports / leaderboards
-3. decide whether monthly weighted scores should be persisted or computed live
-4. keep raw counters unchanged, and derive weighted score separately
+Places that would still need explicit product decisions if weights change:
+- [api/dj/get_event_insights.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/api/dj/get_event_insights.php) if Top Patron should start using boosts
+- dashboard KPI summaries if monthly/lifetime weighted score should become visible
+- any future admin exports that should expose weighted score directly
 
-A cleaner target model would be something like:
+## 18. Recommended Refactor Before Changing Weights Again
+The scoring rollout solved the biggest inconsistency, but there are still some follow-up decisions worth making before another weighting change:
+1. decide whether Top Patron should move to weighted score or remain requests+votes only
+2. decide whether monthly weighted scores should be persisted for historical analytics
+3. decide whether dashboards should expose weighted score directly, or remain raw-count KPI views
+4. keep raw counters unchanged, and continue deriving weighted score separately
+
+The target model is still:
 - `weighted_score = (request_weight * request_count) + (vote_weight * vote_count) + (boost_weight * boost_count)`
 
-Then all pages can reuse the same score source instead of each page implementing its own `requests + votes` logic.
+The difference now is that the app already has a shared implementation path for this.
 
 ## 19. Review Notes / Risks
 
@@ -438,24 +517,54 @@ So a future weighting refactor should decide whether to:
 - fully trust `event_tracks`, or
 - keep composing counts from multiple sources
 
-### C. Boosts are business-critical but score-neutral
-Boosts matter financially and visually, but they currently do not affect:
-- patron page popularity
-- DJ page popularity
-- Top Patron
-- activity leaderboards
+### C. Top Patron still lags behind the rest of the scoring model
+Boosts now affect:
+- patron page ordering
+- DJ page ordering
+- report rankings
 
-That is an intentional behavior today, but it is the biggest product decision to revisit if ChatGPT wants new scoring weights.
+But boosts still do **not** affect:
+- Top Patron ranking
+
+That is the biggest remaining product decision if ChatGPT suggests deeper scoring alignment.
 
 ## 20. Short Version for ChatGPT
-The system currently stores raw audience actions in separate tables and monthly rollups, but popularity is still mostly defined as:
-- `requests + votes`
+The system stores raw audience actions in separate tables and monthly rollups, and it now uses a shared weighted score for most ranking surfaces:
+- `score = (request_count * 2) + (vote_count * 1) + (boost_count * 10)`
 
-Boosts are tracked and displayed, but they are not yet part of the main popularity score.
-There is no dedicated monthly weighted star system for requests/votes/boosts right now.
-If weighting is going to change, the code should be refactored to introduce one shared scoring formula used consistently across:
-- patron page
-- DJ page
-- Top Patron
-- reports
-- dashboards if desired
+This weighted score is now live in:
+- patron page ordering
+- DJ page ordering
+- major report rankings
+
+Raw counters still remain the source of truth, and monthly tables still store raw counts rather than monthly weighted scores.
+
+The main intentional inconsistency that remains is:
+- Top Patron still uses `requests + votes`
+- not the weighted score with boosts
+
+So if ChatGPT is going to suggest the next scoring change, the key questions are:
+1. should Top Patron switch to weighted score
+2. should dashboards expose weighted score directly
+3. should monthly weighted history be persisted, or continue to be computed live
+
+## 21. Phase Rollout Summary
+
+### Phase 1 - Shared scoring helper
+- Added shared scoring helper in:
+  - [app/helpers/scoring.php](/Users/konchristopoulos/Documents/Codex/MyDjRequests/public_html/app/helpers/scoring.php)
+- Added computed `score` into API/report payloads without changing ordering yet.
+
+### Phase 2 - DJ scoring activation
+- DJ page ordering switched to weighted score.
+- DJ grouped request logic now carries `score`.
+
+### Phase 3 - Patron scoring activation
+- Patron page ordering switched to weighted score.
+- Patron grouping logic now carries `boost_count` and `score`.
+
+### Phase 4 - Reports, dashboard, and UI alignment
+- Reports ranking aligned to weighted score.
+- Dashboard/event surfaces updated to expose boosts more consistently.
+- DJ request tile and center detail panel now visibly show `Popularity Score`.
+- Boosted + played DJ tile state now uses a combined visual treatment.

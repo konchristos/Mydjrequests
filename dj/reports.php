@@ -173,6 +173,13 @@ try {
                 e.title,
                 e.event_date,
                 COALESCE(req.total_requests, 0) AS total_requests,
+                COALESCE(votes.total_votes, 0) AS total_votes,
+                COALESCE(boosts.total_boosts, 0) AS total_boosts,
+                (
+                    (COALESCE(req.total_requests, 0) * 2)
+                    + (COALESCE(votes.total_votes, 0) * 1)
+                    + (COALESCE(boosts.total_boosts, 0) * 10)
+                ) AS score,
                 COALESCE(req.unique_requesters, 0) AS unique_requesters,
                 COALESCE(msg.total_messages, 0) AS total_messages,
                 COALESCE(vw.connected_patrons, 0) AS connected_patrons
@@ -186,6 +193,23 @@ try {
                 WHERE created_at BETWEEN ? AND ?
                 GROUP BY event_id
             ) req ON req.event_id = e.id
+            LEFT JOIN (
+                SELECT
+                    event_id,
+                    COUNT(*) AS total_votes
+                FROM song_votes
+                WHERE created_at BETWEEN ? AND ?
+                GROUP BY event_id
+            ) votes ON votes.event_id = e.id
+            LEFT JOIN (
+                SELECT
+                    event_id,
+                    COUNT(*) AS total_boosts
+                FROM event_track_boosts
+                WHERE status = 'succeeded'
+                  AND created_at BETWEEN ? AND ?
+                GROUP BY event_id
+            ) boosts ON boosts.event_id = e.id
             LEFT JOIN (
                 SELECT
                     event_id,
@@ -207,14 +231,18 @@ try {
               $eventFilterSql
               AND (
                   COALESCE(req.total_requests, 0) > 0
+                  OR COALESCE(votes.total_votes, 0) > 0
+                  OR COALESCE(boosts.total_boosts, 0) > 0
                   OR COALESCE(msg.total_messages, 0) > 0
                   OR COALESCE(vw.connected_patrons, 0) > 0
               )
-            ORDER BY COALESCE(e.event_date, DATE(e.created_at)) DESC, e.created_at DESC, total_requests DESC
+            ORDER BY COALESCE(e.event_date, DATE(e.created_at)) DESC, e.created_at DESC, score DESC
             LIMIT 100
         ";
         $stmt = $db->prepare($sql);
         $stmt->execute(array_merge([
+            $fromTs, $toTs,
+            $fromTs, $toTs,
             $fromTs, $toTs,
             $fromTs, $toTs,
             $fromTs, $toTs,
@@ -232,11 +260,11 @@ try {
             $songParams[] = $selectedEventId;
         }
 
-        $topSongsSql = "
+        $requestSongsSql = "
             SELECT
+                COALESCE(NULLIF(TRIM(sr.spotify_track_id), ''), CONCAT(LOWER(COALESCE(NULLIF(TRIM(sr.song_title), ''), 'unknown track')), '::', LOWER(COALESCE(NULLIF(TRIM(sr.artist), ''), 'unknown artist')))) AS track_key,
                 COALESCE(NULLIF(sr.spotify_track_name, ''), sr.song_title) AS song_title,
-                COALESCE(NULLIF(sr.spotify_artist_name, ''), sr.artist) AS artist_name,
-                COUNT(*) AS request_count
+                COALESCE(NULLIF(sr.spotify_artist_name, ''), sr.artist) AS artist_name
             FROM song_requests sr
             INNER JOIN events e ON e.id = sr.event_id
             WHERE sr.created_at BETWEEN ? AND ?
@@ -244,16 +272,129 @@ try {
               AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
               $songEventClause
               AND COALESCE(NULLIF(sr.spotify_track_name, ''), sr.song_title) <> ''
-            GROUP BY
-                COALESCE(NULLIF(sr.spotify_track_name, ''), sr.song_title),
-                COALESCE(NULLIF(sr.spotify_artist_name, ''), sr.artist)
-            ORDER BY request_count DESC, song_title ASC
-            LIMIT 25
         ";
+        $requestSongsStmt = $db->prepare($requestSongsSql);
+        $requestSongsStmt->execute($songParams);
 
-        $songStmt = $db->prepare($topSongsSql);
-        $songStmt->execute($songParams);
-        $topSongs = $songStmt->fetchAll(PDO::FETCH_ASSOC);
+        $voteEventClause = '';
+        $voteSongParams = [$fromTs, $toTs, $djId, $dateFrom, $dateTo];
+        if ($selectedEventId > 0) {
+            $voteEventClause = ' AND sv.event_id = ?';
+            $voteSongParams[] = $selectedEventId;
+        }
+        $voteSongsSql = "
+            SELECT
+                COALESCE(NULLIF(TRIM(sv.track_key), ''), CONCAT(LOWER(COALESCE(NULLIF(TRIM(sv.song_title), ''), 'unknown track')), '::', LOWER(COALESCE(NULLIF(TRIM(sv.artist), ''), 'unknown artist')))) AS track_key,
+                COALESCE(NULLIF(sv.song_title, ''), 'Unknown Track') AS song_title,
+                COALESCE(NULLIF(sv.artist, ''), 'Unknown Artist') AS artist_name
+            FROM song_votes sv
+            INNER JOIN events e ON e.id = sv.event_id
+            WHERE sv.created_at BETWEEN ? AND ?
+              AND e.user_id = ?
+              AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
+              $voteEventClause
+              AND COALESCE(NULLIF(sv.song_title, ''), '') <> ''
+        ";
+        $voteSongsStmt = $db->prepare($voteSongsSql);
+        $voteSongsStmt->execute($voteSongParams);
+
+        $boostEventClause = '';
+        $boostSongParams = [$fromTs, $toTs, $djId, $dateFrom, $dateTo];
+        if ($selectedEventId > 0) {
+            $boostEventClause = ' AND eb.event_id = ?';
+            $boostSongParams[] = $selectedEventId;
+        }
+        $boostSongsSql = "
+            SELECT
+                COALESCE(NULLIF(TRIM(eb.track_key), ''), '') AS track_key
+            FROM event_track_boosts eb
+            INNER JOIN events e ON e.id = eb.event_id
+            WHERE eb.created_at BETWEEN ? AND ?
+              AND e.user_id = ?
+              AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
+              AND eb.status = 'succeeded'
+              $boostEventClause
+              AND COALESCE(NULLIF(TRIM(eb.track_key), ''), '') <> ''
+        ";
+        $boostSongsStmt = $db->prepare($boostSongsSql);
+        $boostSongsStmt->execute($boostSongParams);
+
+        $topSongMap = [];
+        foreach ($requestSongsStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $trackKey = trim((string)($row['track_key'] ?? ''));
+            $songTitle = trim((string)($row['song_title'] ?? ''));
+            $artistName = trim((string)($row['artist_name'] ?? ''));
+            if ($songTitle === '') {
+                continue;
+            }
+            $songKey = $trackKey !== '' ? strtolower($trackKey) : strtolower($songTitle . '||' . $artistName);
+            if (!isset($topSongMap[$songKey])) {
+                $topSongMap[$songKey] = [
+                    'song_title' => $songTitle,
+                    'artist_name' => $artistName,
+                    'request_count' => 0,
+                    'vote_count' => 0,
+                    'boost_count' => 0,
+                    'score' => 0,
+                ];
+            }
+            $topSongMap[$songKey]['request_count']++;
+        }
+
+        foreach ($voteSongsStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $trackKey = trim((string)($row['track_key'] ?? ''));
+            $songTitle = trim((string)($row['song_title'] ?? ''));
+            $artistName = trim((string)($row['artist_name'] ?? ''));
+            if ($songTitle === '') {
+                continue;
+            }
+            $songKey = $trackKey !== '' ? strtolower($trackKey) : strtolower($songTitle . '||' . $artistName);
+            if (!isset($topSongMap[$songKey])) {
+                $topSongMap[$songKey] = [
+                    'song_title' => $songTitle,
+                    'artist_name' => $artistName,
+                    'request_count' => 0,
+                    'vote_count' => 0,
+                    'boost_count' => 0,
+                    'score' => 0,
+                ];
+            }
+            $topSongMap[$songKey]['vote_count']++;
+        }
+
+        foreach ($boostSongsStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $trackKey = strtolower(trim((string)($row['track_key'] ?? '')));
+            if ($trackKey === '') {
+                continue;
+            }
+            if (!isset($topSongMap[$trackKey])) {
+                $topSongMap[$trackKey] = [
+                    'song_title' => 'Unknown Track',
+                    'artist_name' => 'Unknown Artist',
+                    'request_count' => 0,
+                    'vote_count' => 0,
+                    'boost_count' => 0,
+                    'score' => 0,
+                ];
+            }
+            $topSongMap[$trackKey]['boost_count']++;
+        }
+
+        $topSongs = array_values($topSongMap);
+        foreach ($topSongs as &$row) {
+            $row['score'] = mdjr_reports_score((int)$row['request_count'], (int)$row['vote_count'], (int)$row['boost_count']);
+        }
+        unset($row);
+        usort($topSongs, static function (array $a, array $b): int {
+            if ((int)$a['score'] === (int)$b['score']) {
+                if ((int)$a['request_count'] === (int)$b['request_count']) {
+                    return strcasecmp((string)$a['song_title'], (string)$b['song_title']);
+                }
+                return ((int)$b['request_count'] <=> (int)$a['request_count']);
+            }
+            return ((int)$b['score'] <=> (int)$a['score']);
+        });
+        $topSongs = array_slice($topSongs, 0, 25);
     }
 
     if ($view === 'revenue') {
@@ -418,6 +559,9 @@ try {
                 $perEvent[$eventId]['rows'][$key] = [
                     'patron_name' => $name !== '' ? $name : 'Guest',
                     'request_count' => 0,
+                    'vote_count' => 0,
+                    'boost_count' => 0,
+                    'score' => 0,
                 ];
             }
             $perEvent[$eventId]['rows'][$key]['request_count'] += (int)$row['request_count'];
@@ -426,13 +570,104 @@ try {
             }
         }
 
+        $votesByEventSql = "
+            SELECT
+                e.id AS event_id,
+                sv.guest_token,
+                NULLIF(TRIM(sv.patron_name), '') AS patron_name,
+                COUNT(*) AS vote_count
+            FROM song_votes sv
+            INNER JOIN events e ON e.id = sv.event_id
+            WHERE sv.created_at BETWEEN ? AND ?
+              AND e.user_id = ?
+              AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
+              $activityEventClause
+            GROUP BY e.id, sv.guest_token, NULLIF(TRIM(sv.patron_name), '')
+        ";
+        $votesByEventStmt = $db->prepare($votesByEventSql);
+        $votesByEventStmt->execute($activityParams);
+        foreach ($votesByEventStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $token = trim((string)($row['guest_token'] ?? ''));
+            $name = trim((string)($row['patron_name'] ?? ''));
+            $key = $token !== '' ? ('t:' . $token) : ($name !== '' ? ('n:' . strtolower($name)) : '');
+            if ($key === '') {
+                continue;
+            }
+
+            $eventId = (int)$row['event_id'];
+            if (!isset($perEvent[$eventId])) {
+                continue;
+            }
+            if (!isset($perEvent[$eventId]['rows'][$key])) {
+                $perEvent[$eventId]['rows'][$key] = [
+                    'patron_name' => $name !== '' ? $name : 'Guest',
+                    'request_count' => 0,
+                    'vote_count' => 0,
+                    'boost_count' => 0,
+                    'score' => 0,
+                ];
+            }
+            $perEvent[$eventId]['rows'][$key]['vote_count'] += (int)$row['vote_count'];
+            if ($name !== '' && $perEvent[$eventId]['rows'][$key]['patron_name'] === 'Guest') {
+                $perEvent[$eventId]['rows'][$key]['patron_name'] = $name;
+            }
+        }
+
+        $boostsByEventSql = "
+            SELECT
+                e.id AS event_id,
+                eb.guest_token,
+                NULLIF(TRIM(eb.patron_name), '') AS patron_name,
+                COUNT(*) AS boost_count
+            FROM event_track_boosts eb
+            INNER JOIN events e ON e.id = eb.event_id
+            WHERE eb.created_at BETWEEN ? AND ?
+              AND e.user_id = ?
+              AND COALESCE(e.event_date, DATE(e.created_at)) BETWEEN ? AND ?
+              AND eb.status = 'succeeded'
+              $activityEventClause
+            GROUP BY e.id, eb.guest_token, NULLIF(TRIM(eb.patron_name), '')
+        ";
+        $boostsByEventStmt = $db->prepare($boostsByEventSql);
+        $boostsByEventStmt->execute($activityParams);
+        foreach ($boostsByEventStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $token = trim((string)($row['guest_token'] ?? ''));
+            $name = trim((string)($row['patron_name'] ?? ''));
+            $key = $token !== '' ? ('t:' . $token) : ($name !== '' ? ('n:' . strtolower($name)) : '');
+            if ($key === '') {
+                continue;
+            }
+
+            $eventId = (int)$row['event_id'];
+            if (!isset($perEvent[$eventId])) {
+                continue;
+            }
+            if (!isset($perEvent[$eventId]['rows'][$key])) {
+                $perEvent[$eventId]['rows'][$key] = [
+                    'patron_name' => $name !== '' ? $name : 'Guest',
+                    'request_count' => 0,
+                    'vote_count' => 0,
+                    'boost_count' => 0,
+                    'score' => 0,
+                ];
+            }
+            $perEvent[$eventId]['rows'][$key]['boost_count'] += (int)$row['boost_count'];
+            if ($name !== '' && $perEvent[$eventId]['rows'][$key]['patron_name'] === 'Guest') {
+                $perEvent[$eventId]['rows'][$key]['patron_name'] = $name;
+            }
+        }
+
         foreach ($perEvent as $eventId => $eventData) {
             $eventRows = array_values($eventData['rows']);
+            foreach ($eventRows as &$eventRow) {
+                $eventRow['score'] = mdjr_reports_score((int)$eventRow['request_count'], (int)$eventRow['vote_count'], (int)$eventRow['boost_count']);
+            }
+            unset($eventRow);
             usort($eventRows, static function ($a, $b) {
-                if ((int)$a['request_count'] === (int)$b['request_count']) {
+                if ((int)$a['score'] === (int)$b['score']) {
                     return strcasecmp((string)$a['patron_name'], (string)$b['patron_name']);
                 }
-                return ((int)$b['request_count'] <=> (int)$a['request_count']);
+                return ((int)$b['score'] <=> (int)$a['score']);
             });
             $topRequestersPerEvent[] = [
                 'event_id' => $eventId,
@@ -551,10 +786,10 @@ try {
         unset($row);
 
         usort($topCombinedActivity, static function ($a, $b) {
-            if ((int)$a['combined_total'] === (int)$b['combined_total']) {
+            if ((int)$a['score'] === (int)$b['score']) {
                 return strcasecmp((string)$a['patron_name'], (string)$b['patron_name']);
             }
-            return ((int)$b['combined_total'] <=> (int)$a['combined_total']);
+            return ((int)$b['score'] <=> (int)$a['score']);
         });
         $topCombinedActivity = array_slice($topCombinedActivity, 0, 10);
     }
@@ -663,6 +898,30 @@ try {
         ], $selectedEventId > 0 ? [$selectedEventId] : []));
         $voteRows = $voteRowsStmt->fetchAll(PDO::FETCH_ASSOC);
 
+        $trackLabelMap = [];
+        foreach ($requestRows as $rr) {
+            $trackKey = strtolower(trim((string)($rr['track_key'] ?? '')));
+            if ($trackKey === '') {
+                continue;
+            }
+            $trackLabelMap[$trackKey] = [
+                'track_title' => trim((string)($rr['track_title'] ?? 'Unknown Track')) ?: 'Unknown Track',
+                'artist_name' => trim((string)($rr['artist_name'] ?? 'Unknown Artist')) ?: 'Unknown Artist',
+            ];
+        }
+        foreach ($voteRows as $vr) {
+            $trackKey = strtolower(trim((string)($vr['track_key'] ?? '')));
+            if ($trackKey === '') {
+                continue;
+            }
+            if (!isset($trackLabelMap[$trackKey])) {
+                $trackLabelMap[$trackKey] = [
+                    'track_title' => trim((string)($vr['track_title'] ?? 'Unknown Track')) ?: 'Unknown Track',
+                    'artist_name' => trim((string)($vr['artist_name'] ?? 'Unknown Artist')) ?: 'Unknown Artist',
+                ];
+            }
+        }
+
         $boostRowsSql = "
             SELECT
                 eb.event_id,
@@ -670,8 +929,8 @@ try {
                 COALESCE(NULLIF(TRIM(eb.patron_name), ''), '') AS patron_name,
                 COALESCE(eb.guest_token, '') AS guest_token,
                 COALESCE(NULLIF(TRIM(eb.track_key), ''), '') AS track_key,
-                COALESCE(NULLIF(TRIM(eb.song_title), ''), 'Unknown Track') AS track_title,
-                COALESCE(NULLIF(TRIM(eb.artist), ''), 'Unknown Artist') AS artist_name
+                'Unknown Track' AS track_title,
+                'Unknown Artist' AS artist_name
             FROM event_track_boosts eb
             INNER JOIN events e ON e.id = eb.event_id
             WHERE eb.created_at BETWEEN ? AND ?
@@ -827,10 +1086,10 @@ try {
             ];
         }
         usort($advancedRepeatPatrons, static function (array $a, array $b): int {
-            if ((int)$a['total_activity'] === (int)$b['total_activity']) {
+            if ((int)$a['score'] === (int)$b['score']) {
                 return ((int)$b['events_count'] <=> (int)$a['events_count']);
             }
-            return ((int)$b['total_activity'] <=> (int)$a['total_activity']);
+            return ((int)$b['score'] <=> (int)$a['score']);
         });
         $advancedRepeatPatrons = array_slice($advancedRepeatPatrons, 0, 10);
 
@@ -909,8 +1168,9 @@ try {
                 }
 
                 $trackKey = trim((string)($br['track_key'] ?? ''));
-                $title = trim((string)($br['track_title'] ?? 'Unknown Track'));
-                $artist = trim((string)($br['artist_name'] ?? 'Unknown Artist'));
+                $labelMeta = $trackKey !== '' ? ($trackLabelMap[strtolower($trackKey)] ?? null) : null;
+                $title = trim((string)($labelMeta['track_title'] ?? ($br['track_title'] ?? 'Unknown Track')));
+                $artist = trim((string)($labelMeta['artist_name'] ?? ($br['artist_name'] ?? 'Unknown Artist')));
                 $songKey = $trackKey !== '' ? ('k:' . strtolower($trackKey)) : ('n:' . strtolower($title . '||' . $artist));
                 if (!isset($requestsAgg[$songKey])) {
                     $requestsAgg[$songKey] = [
@@ -934,10 +1194,10 @@ try {
 
             $advancedSelectedRepeatRequests = array_values($requestsAgg);
             usort($advancedSelectedRepeatRequests, static function (array $a, array $b): int {
-                if ((int)$a['popularity'] === (int)$b['popularity']) {
+                if ((int)$a['score'] === (int)$b['score']) {
                     return strcasecmp((string)$a['track_title'], (string)$b['track_title']);
                 }
-                return ((int)$b['popularity'] <=> (int)$a['popularity']);
+                return ((int)$b['score'] <=> (int)$a['score']);
             });
 
             if ($exportFormat === 'csv') {
@@ -951,7 +1211,7 @@ try {
                 header('Content-Disposition: attachment; filename="' . $filename . '"');
                 $out = fopen('php://output', 'w');
                 if ($out !== false) {
-                    fputcsv($out, ['Patron', 'Track', 'Artist', 'Requests', 'Votes', 'Popularity', 'From', 'To', 'Event Filter']);
+                    fputcsv($out, ['Patron', 'Track', 'Artist', 'Requests', 'Votes', 'Boosts', 'Popularity', 'Score', 'From', 'To', 'Event Filter']);
                     foreach ($advancedSelectedRepeatRequests as $req) {
                         fputcsv($out, [
                             (string)$advancedSelectedRepeatPatron['patron_name'],
@@ -959,7 +1219,9 @@ try {
                             (string)$req['artist_name'],
                             (int)$req['request_count'],
                             (int)$req['vote_count'],
+                            (int)$req['boost_count'],
                             (int)$req['popularity'],
+                            (int)$req['score'],
                             $dateFrom,
                             $dateTo,
                             $selectedEventId > 0 ? ('Event #' . $selectedEventId) : 'All events',
@@ -1494,6 +1756,9 @@ require __DIR__ . '/layout.php';
                                 <th>Event</th>
                                 <th>Event Date</th>
                                 <th>Requests</th>
+                                <th>Votes</th>
+                                <th>Boosts</th>
+                                <th>Score</th>
                                 <th>Unique Requesters</th>
                                 <th>Messages</th>
                                 <th>Connected Patrons</th>
@@ -1509,6 +1774,9 @@ require __DIR__ . '/layout.php';
                                     </td>
                                     <td><?php echo e((string)($row['event_date'] ?: '—')); ?></td>
                                     <td><?php echo (int)$row['total_requests']; ?></td>
+                                    <td><?php echo (int)$row['total_votes']; ?></td>
+                                    <td><?php echo (int)$row['total_boosts']; ?></td>
+                                    <td><?php echo (int)$row['score']; ?></td>
                                     <td><?php echo (int)$row['unique_requesters']; ?></td>
                                     <td><?php echo (int)$row['total_messages']; ?></td>
                                     <td><?php echo (int)$row['connected_patrons']; ?></td>
@@ -1532,6 +1800,9 @@ require __DIR__ . '/layout.php';
                                 <th>Song</th>
                                 <th>Artist</th>
                                 <th>Requests</th>
+                                <th>Votes</th>
+                                <th>Boosts</th>
+                                <th>Score</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1541,6 +1812,9 @@ require __DIR__ . '/layout.php';
                                     <td><?php echo e((string)$row['song_title']); ?></td>
                                     <td><?php echo e((string)($row['artist_name'] ?: '—')); ?></td>
                                     <td><?php echo (int)$row['request_count']; ?></td>
+                                    <td><?php echo (int)$row['vote_count']; ?></td>
+                                    <td><?php echo (int)$row['boost_count']; ?></td>
+                                    <td><?php echo (int)$row['score']; ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -1594,9 +1868,9 @@ require __DIR__ . '/layout.php';
         <?php endif; ?>
 
         <?php if ($view === 'top_activity'): ?>
-            <h3 style="margin:16px 0 10px;">Top 10 Requesters Per Event</h3>
+            <h3 style="margin:16px 0 10px;">Top 10 Patrons Per Event</h3>
             <?php if (empty($topRequestersPerEvent)): ?>
-                <p class="reports-empty">No requester activity for this period.</p>
+                <p class="reports-empty">No patron activity for this period.</p>
             <?php else: ?>
                 <?php foreach ($topRequestersPerEvent as $eventBlock): ?>
                     <h4 style="margin:14px 0 8px; color:#d3d4e2;"><?php echo e($eventBlock['event_title']); ?></h4>
@@ -1605,8 +1879,11 @@ require __DIR__ . '/layout.php';
                             <thead>
                                 <tr>
                                     <th>#</th>
-                                    <th>Requester</th>
+                                <th>Patron</th>
                                     <th>Requests</th>
+                                    <th>Votes</th>
+                                    <th>Boosts</th>
+                                    <th>Score</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1615,6 +1892,9 @@ require __DIR__ . '/layout.php';
                                         <td><?php echo (int)$i + 1; ?></td>
                                         <td><?php echo e((string)$row['patron_name']); ?></td>
                                         <td><?php echo (int)$row['request_count']; ?></td>
+                                        <td><?php echo (int)$row['vote_count']; ?></td>
+                                        <td><?php echo (int)$row['boost_count']; ?></td>
+                                        <td><?php echo (int)$row['score']; ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
@@ -1623,7 +1903,7 @@ require __DIR__ . '/layout.php';
                 <?php endforeach; ?>
             <?php endif; ?>
 
-            <h3 style="margin:18px 0 10px;">Top 10 Combined Requesters And Votes</h3>
+            <h3 style="margin:18px 0 10px;">Top 10 Weighted Patron Activity</h3>
             <?php if (empty($topCombinedActivity)): ?>
                 <p class="reports-empty">No combined requester/vote activity for this period.</p>
             <?php else: ?>
@@ -1635,7 +1915,9 @@ require __DIR__ . '/layout.php';
                                 <th>Patron</th>
                                 <th>Requests</th>
                                 <th>Votes</th>
+                                <th>Boosts</th>
                                 <th>Total Activity</th>
+                                <th>Score</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1645,7 +1927,9 @@ require __DIR__ . '/layout.php';
                                     <td><?php echo e((string)$row['patron_name']); ?></td>
                                     <td><?php echo (int)$row['request_count']; ?></td>
                                     <td><?php echo (int)$row['vote_count']; ?></td>
+                                    <td><?php echo (int)$row['boost_count']; ?></td>
                                     <td><?php echo (int)$row['combined_total']; ?></td>
+                                    <td><?php echo (int)$row['score']; ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -1862,7 +2146,9 @@ require __DIR__ . '/layout.php';
                                 <th>Events</th>
                                 <th>Requests</th>
                                 <th>Votes</th>
+                                <th>Boosts</th>
                                 <th>Total Activity</th>
+                                <th>Score</th>
                             </tr>
                             </thead>
                             <tbody>
@@ -1884,7 +2170,9 @@ require __DIR__ . '/layout.php';
                                     <td><?php echo (int)$row['events_count']; ?></td>
                                     <td><?php echo (int)$row['total_requests']; ?></td>
                                     <td><?php echo (int)$row['total_votes']; ?></td>
+                                    <td><?php echo (int)$row['total_boosts']; ?></td>
                                     <td><?php echo (int)$row['total_activity']; ?></td>
+                                    <td><?php echo (int)$row['score']; ?></td>
                                 </tr>
                             <?php endforeach; ?>
                             </tbody>
@@ -1895,7 +2183,7 @@ require __DIR__ . '/layout.php';
                 <?php if ($advancedSelectedRepeatPatron !== null): ?>
                     <h3 class="reports-section-title" id="repeat-patron-detail">Amalgamated Requests: <?php echo e((string)$advancedSelectedRepeatPatron['patron_name']); ?></h3>
                     <div class="reports-help" style="margin-top:0;">
-                        Period total: <?php echo (int)$advancedSelectedRepeatPatron['total_requests']; ?> requests + <?php echo (int)$advancedSelectedRepeatPatron['total_votes']; ?> votes = <?php echo (int)$advancedSelectedRepeatPatron['total_activity']; ?> total activity across <?php echo (int)$advancedSelectedRepeatPatron['events_count']; ?> events.
+                        Period total: <?php echo (int)$advancedSelectedRepeatPatron['total_requests']; ?> requests + <?php echo (int)$advancedSelectedRepeatPatron['total_votes']; ?> votes + <?php echo (int)$advancedSelectedRepeatPatron['total_boosts']; ?> boosts = <?php echo (int)$advancedSelectedRepeatPatron['score']; ?> weighted score across <?php echo (int)$advancedSelectedRepeatPatron['events_count']; ?> events.
                     </div>
                     <?php
                         $exportCsvUrl = url('dj/reports.php?view=advanced_analytics'
@@ -1920,7 +2208,9 @@ require __DIR__ . '/layout.php';
                                     <th>Artist</th>
                                     <th>Requests</th>
                                     <th>Votes</th>
+                                    <th>Boosts</th>
                                     <th>Popularity</th>
+                                    <th>Score</th>
                                 </tr>
                                 </thead>
                                 <tbody>
@@ -1931,7 +2221,9 @@ require __DIR__ . '/layout.php';
                                         <td><?php echo e((string)$req['artist_name']); ?></td>
                                         <td><?php echo (int)$req['request_count']; ?></td>
                                         <td><?php echo (int)$req['vote_count']; ?></td>
+                                        <td><?php echo (int)$req['boost_count']; ?></td>
                                         <td><?php echo (int)$req['popularity']; ?></td>
+                                        <td><?php echo (int)$req['score']; ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                                 </tbody>

@@ -1,5 +1,7 @@
 <?php
 $requestCount = isset($requestCount) ? (int)$requestCount : 0;
+$voteCount = isset($voteCount) ? (int)$voteCount : 0;
+$boostCount = isset($boostCount) ? (int)$boostCount : 0;
 
 $state = $event['event_state'] ?? 'upcoming';
 
@@ -70,6 +72,9 @@ if (!empty($event['event_date'])) {
 </span>
 <span class="badge-votes <?= $voteCount === 0 ? 'zero' : '' ?>">
     <?= $voteCount ?> votes
+</span>
+<span class="badge-votes <?= $boostCount === 0 ? 'zero' : '' ?>">
+    <?= $boostCount ?> boosts
 </span>
 
 

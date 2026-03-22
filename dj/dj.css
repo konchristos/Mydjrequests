@@ -327,14 +327,50 @@ body {
   border: 1px solid rgba(48, 209, 88, 0.6);
 }
 
+.request-row.boosted.played {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(0, 160, 255, 0.22) 0%,
+      rgba(0, 160, 255, 0.18) 34%,
+      rgba(36, 190, 132, 0.18) 58%,
+      rgba(48, 209, 88, 0.22) 100%
+    );
+  border: 1px solid rgba(48, 209, 88, 0.6);
+  border-left: 4px solid #00aaff;
+}
+
 .request-row.played .req-count {
   color: #30d158;
 }
 
 .req-count-wrap {
   display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.req-count-top {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.req-count-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1;
+  gap: 3px;
+}
+
+.req-count-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.48);
 }
 
 .request-played-pill {
